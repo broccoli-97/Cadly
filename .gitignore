@@ -1,0 +1,17 @@
+build/
+build-*/
+out/
+.cache/
+.vscode/
+.idea/
+*.user
+*.user.*
+compile_commands.json
+CMakeUserPresets.json
+vcpkg_installed/
+.vcpkg-root
+*.swp
+*.swo
+*~
+.DS_Store
+test_files/
