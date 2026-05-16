@@ -69,6 +69,7 @@ private:
   void update_frame_uniforms();
   void draw_background(const renderer::DisplayMode& mode);
   void draw_grid(const renderer::DisplayMode& mode);
+  void draw_pivot(const renderer::DisplayMode& mode);
 
   QOpenGLFunctions_4_1_Core gl_;
   bool   initialised_{false};
@@ -79,6 +80,7 @@ private:
   GLProgram prog_pbr_;
   GLProgram prog_background_;
   GLProgram prog_grid_;
+  GLProgram prog_pivot_;
 
   // Frame UBO.
   GLuint   ubo_frame_{0};
@@ -90,6 +92,9 @@ private:
   // Grid quad.
   GLuint   vao_grid_{0};
   GLuint   vbo_grid_{0};
+
+  // Rotation-pivot indicator (empty VAO; uses gl_VertexID).
+  GLuint   vao_pivot_{0};
 
   // Scene + GPU mesh cache.
   std::shared_ptr<scene::Scene> scene_;
@@ -150,6 +155,9 @@ void GLRendererImpl::initialize() {
   gl_.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
   gl_.glBindVertexArray(0);
 
+  // Pivot indicator: empty VAO, geometry emitted from gl_VertexID.
+  gl_.glGenVertexArrays(1, &vao_pivot_);
+
   initialised_ = true;
   CADLY_LOG_INFO("OpenGL renderer initialised: GL_VERSION='{}'",
                  reinterpret_cast<const char*>(gl_.glGetString(GL_VERSION)));
@@ -177,6 +185,7 @@ bool GLRendererImpl::build_programs() {
   build(prog_pbr_,        "pbr.vert",        "pbr.frag",        "pbr");
   build(prog_background_, "background.vert", "background.frag", "background");
   build(prog_grid_,       "grid.vert",       "grid.frag",       "grid");
+  build(prog_pivot_,      "pivot.vert",      "pivot.frag",      "pivot");
   return all_ok;
 }
 
@@ -311,6 +320,41 @@ void GLRendererImpl::draw_grid(const renderer::DisplayMode& mode) {
   gl_.glDisable(GL_BLEND);
 }
 
+void GLRendererImpl::draw_pivot(const renderer::DisplayMode& mode) {
+  if (!mode.show_rotation_pivot || !prog_pivot_.valid() || !scene_) return;
+
+  // Always on top: depth test off, depth write off, alpha blended.
+  gl_.glEnable(GL_BLEND);
+  gl_.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  gl_.glDisable(GL_DEPTH_TEST);
+  gl_.glDepthMask(GL_FALSE);
+
+  gl_.glUseProgram(prog_pivot_.id());
+  const scene::mat4 vp = scene_->camera.view_proj();
+  gl_.glUniformMatrix4fv(prog_pivot_.uniform(gl_, "u_view_proj"),
+                         1, GL_FALSE, glm::value_ptr(vp));
+  gl_.glUniform3fv(prog_pivot_.uniform(gl_, "u_world_pos"),
+                   1, &mode.rotation_pivot.x);
+  gl_.glUniform1f(prog_pivot_.uniform(gl_, "u_size_px"), 30.0f);
+  const scene::vec2 vp_px{static_cast<float>(viewport_w_),
+                          static_cast<float>(viewport_h_)};
+  gl_.glUniform2fv(prog_pivot_.uniform(gl_, "u_viewport_px"), 1, &vp_px.x);
+
+  // Warm amber fill with a dark ring reads well against most backgrounds.
+  const scene::vec4 fill{1.00f, 0.78f, 0.20f, 0.70f};
+  const scene::vec4 ring{0.05f, 0.05f, 0.06f, 0.90f};
+  gl_.glUniform4fv(prog_pivot_.uniform(gl_, "u_fill_color"), 1, &fill.x);
+  gl_.glUniform4fv(prog_pivot_.uniform(gl_, "u_ring_color"), 1, &ring.x);
+
+  gl_.glBindVertexArray(vao_pivot_);
+  gl_.glDrawArrays(GL_TRIANGLES, 0, 6);
+  gl_.glBindVertexArray(0);
+
+  gl_.glDepthMask(GL_TRUE);
+  gl_.glEnable(GL_DEPTH_TEST);
+  gl_.glDisable(GL_BLEND);
+}
+
 void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (!initialised_) initialize();
   if (!initialised_) return;
@@ -323,6 +367,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
 
   if (!scene_ || scene_->nodes.empty()) {
     draw_grid(mode);
+    draw_pivot(mode);
     return;
   }
 
@@ -334,6 +379,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (!prog_pbr_.valid()) {
     CADLY_LOG_WARN("PBR program not available; skipping mesh draw.");
     draw_grid(mode);
+    draw_pivot(mode);
     return;
   }
 
@@ -406,6 +452,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   }
 
   draw_grid(mode);
+  draw_pivot(mode);
 }
 
 void GLRendererImpl::shutdown() {
@@ -420,10 +467,12 @@ void GLRendererImpl::shutdown() {
   if (vao_background_) gl_.glDeleteVertexArrays(1, &vao_background_);
   if (vao_grid_)       gl_.glDeleteVertexArrays(1, &vao_grid_);
   if (vbo_grid_)       gl_.glDeleteBuffers(1, &vbo_grid_);
-  ubo_frame_ = vao_background_ = vao_grid_ = vbo_grid_ = 0;
+  if (vao_pivot_)      gl_.glDeleteVertexArrays(1, &vao_pivot_);
+  ubo_frame_ = vao_background_ = vao_grid_ = vbo_grid_ = vao_pivot_ = 0;
   prog_pbr_.destroy(gl_);
   prog_background_.destroy(gl_);
   prog_grid_.destroy(gl_);
+  prog_pivot_.destroy(gl_);
   initialised_ = false;
 }
 

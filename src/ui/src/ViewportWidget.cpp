@@ -29,6 +29,16 @@ ViewportWidget::ViewportWidget(QWidget* parent)
 
   connect(camera_, &CameraController::changed, this,
           QOverload<>::of(&ViewportWidget::update));
+
+  // Mirror the controller's pivot state into the renderer's display mode so a
+  // marker appears while the user is rotating. Keeping the bridging here (and
+  // not inside the controller) leaves the controller free of renderer types.
+  connect(camera_, &CameraController::rotation_pivot_visibility_changed,
+          this, [this](scene::vec3 pivot, bool visible) {
+            display_mode_.show_rotation_pivot = visible;
+            display_mode_.rotation_pivot      = pivot;
+            update();
+          });
 }
 
 ViewportWidget::~ViewportWidget() {

@@ -6,39 +6,70 @@
 namespace cadly::scene {
 
 namespace {
-// Clamp pitch to avoid flipping at the poles while still allowing the user to
-// look nearly straight up/down — a common CAD camera need.
-constexpr float kPitchEpsilon = 0.001f;
+constexpr vec3 kWorldUp{0.0f, 1.0f, 0.0f};
 }
 
 vec3 Camera::position() const {
-  const float cp = std::cos(pitch);
-  const vec3 dir = {
-    cp * std::sin(yaw),
-    std::sin(pitch),
-    cp * std::cos(yaw),
-  };
-  return target - dir * distance;
+  return target - forward() * distance;
 }
 
 vec3 Camera::forward() const {
-  return glm::normalize(target - position());
+  // OpenGL convention: camera looks along its local -Z.
+  return orientation * vec3(0.0f, 0.0f, -1.0f);
 }
 
 vec3 Camera::right() const {
-  return glm::normalize(glm::cross(forward(), vec3(0.0f, 1.0f, 0.0f)));
+  return orientation * vec3(1.0f, 0.0f, 0.0f);
 }
 
 vec3 Camera::up() const {
-  return glm::normalize(glm::cross(right(), forward()));
+  return orientation * vec3(0.0f, 1.0f, 0.0f);
 }
 
 mat4 Camera::view() const {
-  return glm::lookAt(position(), target, vec3(0.0f, 1.0f, 0.0f));
+  // view = inverse(translate(position) * rotate(orientation))
+  //      = rotate(inverse(orientation)) * translate(-position)
+  return glm::mat4_cast(glm::inverse(orientation)) *
+         glm::translate(mat4(1.0f), -position());
 }
 
 mat4 Camera::projection() const {
   return glm::perspective(fov_y, std::max(aspect, 0.0001f), near_z, far_z);
+}
+
+void Camera::rotate_around(const vec3& pivot, const quat& delta) {
+  // Rotate the target offset from the pivot, then update the orientation by
+  // the same delta. Because `position()` is derived as
+  //     position = target - (orientation * -Z) * distance
+  // applying `delta` to both `target - pivot` and `orientation` yields
+  //     new_position - pivot = delta * (position - pivot)
+  // i.e. the eye orbits the pivot too, and `distance` is preserved.
+  target      = pivot + delta * (target - pivot);
+  orientation = glm::normalize(delta * orientation);
+}
+
+void Camera::orbit(float yaw_delta, float pitch_delta, const vec3& pivot) {
+  // Yaw around the world-up axis. This never injects roll — world-Y is a fixed
+  // direction independent of the camera's current orientation.
+  const quat q_yaw = glm::angleAxis(yaw_delta, kWorldUp);
+
+  // Pitch around the camera-right axis AFTER yaw, so the response matches the
+  // user's expectation across the full sphere. `right()` is in the world XZ
+  // plane in the no-roll steady state; `q_yaw * right()` is the right axis
+  // the user sees once yaw has been applied.
+  const vec3 right_after_yaw = glm::normalize(q_yaw * right());
+  const quat q_pitch = glm::angleAxis(pitch_delta, right_after_yaw);
+
+  rotate_around(pivot, q_pitch * q_yaw);
+}
+
+void Camera::set_orientation_yaw_pitch(float yaw, float pitch) {
+  // The +π on the yaw rotates the camera-local -Z (which is "look direction")
+  // to face +Z at yaw=0, matching the historical Euler convention so that
+  // existing presets and frame_bounds() output land in the same view.
+  const quat q_yaw   = glm::angleAxis(yaw + glm::pi<float>(), kWorldUp);
+  const quat q_pitch = glm::angleAxis(pitch, vec3(1.0f, 0.0f, 0.0f));
+  orientation = glm::normalize(q_yaw * q_pitch);
 }
 
 void Camera::frame_bounds(const vec3& min, const vec3& max, float fit_factor) {
@@ -56,10 +87,6 @@ void Camera::frame_bounds(const vec3& min, const vec3& max, float fit_factor) {
   near_z = std::max(distance - radius * 4.0f, radius * 0.005f);
   far_z  = distance + radius * 8.0f;
   if (far_z <= near_z) far_z = near_z + 1.0f;
-
-  pitch = std::clamp(pitch,
-                     -glm::half_pi<float>() + kPitchEpsilon,
-                      glm::half_pi<float>() - kPitchEpsilon);
 }
 
 } // namespace cadly::scene

@@ -29,6 +29,12 @@ struct DisplayMode {
   float edge_intensity  {0.65f};
   scene::vec3 background_top   {0.13f, 0.14f, 0.16f};
   scene::vec3 background_bottom{0.05f, 0.05f, 0.06f};
+
+  // Rotation pivot indicator. The UI toggles this on while the user is
+  // orbiting and feeds the world-space pivot through `rotation_pivot`. The
+  // renderer draws a small screen-space-stable marker on top of the scene.
+  bool        show_rotation_pivot{false};
+  scene::vec3 rotation_pivot     {0.0f};
 };
 
 } // namespace cadly::renderer

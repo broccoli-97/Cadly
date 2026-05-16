@@ -5,10 +5,50 @@
 #include <QObject>
 #include <QPoint>
 
+#include <memory>
+
 namespace cadly::ui {
 
+// Where a rotate-drag should pivot. Resolvers (below) build one of these at
+// the moment the user presses the rotate button; the controller then uses it
+// for every mouse-move event in the same drag.
+struct RotationPivot {
+  scene::vec3 world_position{0.0f};
+};
+
+// Strategy interface for choosing the rotation pivot. The default
+// implementation (`TargetPivotResolver`) returns the camera's current target,
+// which reproduces the historical "orbit around target" behaviour. Future
+// resolvers can supply different pivots without touching the controller:
+//
+//   - PickedPointPivotResolver — ray-cast against the scene at `screen_pos`
+//     and pivot around the hit point, so the model rotates "under the
+//     cursor".
+//   - SelectionPivotResolver   — pivot around the bounding-box centre of the
+//     current selection.
+//   - WorldOriginPivotResolver — pivot around (0, 0, 0) for layout work.
+//
+// All a new resolver needs to do is implement `resolve()` and hand an
+// instance to `CameraController::set_rotation_pivot_resolver()`.
+class RotationPivotResolver {
+public:
+  virtual ~RotationPivotResolver() = default;
+  virtual RotationPivot resolve(const scene::Camera& camera,
+                                QPoint                screen_pos) const = 0;
+};
+
+// Default pivot strategy: rotate around the camera's current target. Kept as
+// a concrete class (not an inline lambda) so callers can re-create it after
+// swapping in a custom resolver and back.
+class TargetPivotResolver final : public RotationPivotResolver {
+public:
+  RotationPivot resolve(const scene::Camera& camera, QPoint) const override;
+};
+
 // Orbit/pan/zoom controller. Owns no widget; the host viewport feeds mouse
-// events in and consults `camera()` after each step.
+// events in and consults `camera()` after each step. Rotation is performed
+// with quaternions around a pivot resolved at the start of each drag — see
+// `set_rotation_pivot_resolver()` for how to swap in custom pivot strategies.
 class CameraController : public QObject {
   Q_OBJECT
 public:
@@ -27,8 +67,28 @@ public:
   void end_drag();
   void wheel(int angle_delta);
 
+  // Replace the rotation-pivot strategy. Passing `nullptr` restores the
+  // default `TargetPivotResolver`. Safe to call mid-session; the next
+  // `begin_drag(Orbit, ...)` will use the new resolver.
+  void set_rotation_pivot_resolver(std::unique_ptr<RotationPivotResolver> r);
+
+  // True while an orbit drag is in progress.
+  bool is_rotating() const { return drag_mode_ == DragMode::Orbit; }
+
+  // The world-space pivot captured at the start of the current orbit drag.
+  // Only meaningful while `is_rotating()` is true; for non-rotation states
+  // the value is the most recent pivot (kept around so the renderer can fade
+  // the indicator out if desired).
+  const scene::vec3& rotation_pivot() const { return rotation_pivot_; }
+
 signals:
   void changed();
+
+  // Emitted when the rotation pivot becomes visible (mouse-down on orbit) or
+  // hidden (mouse-up). Carries the world-space pivot so listeners can drive
+  // an overlay or marker without having to know about the controller's
+  // internal state.
+  void rotation_pivot_visibility_changed(scene::vec3 pivot, bool visible);
 
 private:
   scene::Camera camera_;
@@ -36,6 +96,9 @@ private:
   QPoint        last_pos_{};
   int           viewport_w_{1};
   int           viewport_h_{1};
+
+  std::unique_ptr<RotationPivotResolver> pivot_resolver_;
+  scene::vec3                            rotation_pivot_{0.0f};
 };
 
 } // namespace cadly::ui
