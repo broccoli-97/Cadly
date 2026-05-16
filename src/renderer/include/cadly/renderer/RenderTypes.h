@@ -23,7 +23,7 @@ struct MaterialHandle : ResourceHandle {};
 struct DisplayMode {
   bool wireframe        {false};
   bool show_edges       {false};   // outline at sharp creases
-  bool show_grid        {true};
+  bool show_grid        {false};
   bool show_axes        {true};
   bool draw_background  {true};
   float edge_intensity  {0.65f};

@@ -254,17 +254,28 @@ void GLRendererImpl::ensure_mesh_upload(const scene::Mesh& mesh,
 void GLRendererImpl::update_frame_uniforms() {
   if (!scene_) return;
 
+  // Light directions in LightEnvironment are camera-local; rotate them into
+  // world space using the camera's orientation so the lighting rig follows
+  // the user as they orbit. Avoids any dependency on the engine's camera
+  // convention (whether +Z or -Z happens to face the viewer) and keeps the
+  // model consistently lit from any angle — the standard inspection-viewer
+  // "headlight" pattern.
+  const scene::quat cam_orient = scene_->camera.orientation;
+  const scene::vec3 key_world  = cam_orient * scene_->environment.key_direction;
+  const scene::vec3 fill_world = cam_orient * scene_->environment.fill_direction;
+  const scene::vec3 rim_world  = cam_orient * scene_->environment.rim_direction;
+
   FrameBlock fb{};
   fb.view       = scene_->camera.view();
   fb.proj       = scene_->camera.projection();
   fb.view_proj  = fb.proj * fb.view;
   fb.camera_pos = scene::vec4(scene_->camera.position(), 1.0f);
   fb.ambient    = scene::vec4(scene_->environment.ambient, 1.0f);
-  fb.key_dir    = scene::vec4(glm::normalize(scene_->environment.key_direction), 0.0f);
+  fb.key_dir    = scene::vec4(glm::normalize(key_world),  0.0f);
   fb.key_color  = scene::vec4(scene_->environment.key_color, 1.0f);
-  fb.fill_dir   = scene::vec4(glm::normalize(scene_->environment.fill_direction), 0.0f);
+  fb.fill_dir   = scene::vec4(glm::normalize(fill_world), 0.0f);
   fb.fill_color = scene::vec4(scene_->environment.fill_color, 1.0f);
-  fb.rim_dir    = scene::vec4(glm::normalize(scene_->environment.rim_direction), 0.0f);
+  fb.rim_dir    = scene::vec4(glm::normalize(rim_world),  0.0f);
   fb.rim_color  = scene::vec4(scene_->environment.rim_color, 1.0f);
 
   gl_.glBindBuffer(GL_UNIFORM_BUFFER, ubo_frame_);

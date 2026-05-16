@@ -68,9 +68,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   build_status_bar();
   build_docks();
 
-  // Default display mode: shaded with grid, no wireframe.
+  // Default display mode: shaded, no wireframe, no grid.
   auto mode = viewport_->display_mode();
-  mode.show_grid = true;
+  mode.show_grid = false;
   viewport_->set_display_mode(mode);
 }
 
@@ -102,7 +102,7 @@ void MainWindow::build_menus() {
 
   act_grid_ = new QAction(tr("Show grid"), this);
   act_grid_->setCheckable(true);
-  act_grid_->setChecked(true);
+  act_grid_->setChecked(false);
   connect(act_grid_, &QAction::toggled, this, &MainWindow::on_toggle_grid);
   view_menu->addAction(act_grid_);
 
