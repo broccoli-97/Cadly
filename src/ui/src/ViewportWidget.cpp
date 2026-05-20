@@ -26,6 +26,9 @@ ViewportWidget::ViewportWidget(QWidget* parent)
 
   setMouseTracking(true);
   setFocusPolicy(Qt::StrongFocus);
+  // Right-button is used for orbit. Suppress the system context menu so a
+  // right-click-drag doesn't pop a menu mid-rotation.
+  setContextMenuPolicy(Qt::PreventContextMenu);
 
   connect(camera_, &CameraController::changed, this,
           QOverload<>::of(&ViewportWidget::update));
@@ -95,9 +98,11 @@ void ViewportWidget::fit_view() {
 void ViewportWidget::mousePressEvent(QMouseEvent* e) {
   using DM = CameraController::DragMode;
   DM mode = DM::None;
-  if (e->button() == Qt::LeftButton)        mode = DM::Orbit;
+  // Right-button orbits, middle-button pans. Left-button is reserved for
+  // picking/highlight (not yet implemented) — passed through to the base
+  // class so a future pick handler can consume it.
+  if      (e->button() == Qt::RightButton)  mode = DM::Orbit;
   else if (e->button() == Qt::MiddleButton) mode = DM::Pan;
-  else if (e->button() == Qt::RightButton)  mode = DM::Dolly;
   if (mode != DM::None) {
     camera_->begin_drag(mode, e->pos());
     setCursor(Qt::ClosedHandCursor);
