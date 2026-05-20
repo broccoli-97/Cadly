@@ -71,6 +71,17 @@ private:
   void draw_grid(const renderer::DisplayMode& mode);
   void draw_pivot(const renderer::DisplayMode& mode);
 
+  // IBL bake — runs once at init. The four targets together implement the
+  // Karis split-sum approximation: irradiance for diffuse, prefilter +
+  // brdf_lut for specular.
+  bool   bake_ibl();
+  GLuint create_cubemap(int size, int mip_count);
+  void   bake_env_cube();
+  void   bake_irradiance();
+  void   bake_prefilter();
+  void   bake_brdf_lut();
+  static scene::mat3 cube_face_basis(int face);
+
   QOpenGLFunctions_4_1_Core gl_;
   bool   initialised_{false};
   GLint  viewport_w_{1};
@@ -81,6 +92,10 @@ private:
   GLProgram prog_background_;
   GLProgram prog_grid_;
   GLProgram prog_pivot_;
+  GLProgram prog_env_capture_;
+  GLProgram prog_irradiance_;
+  GLProgram prog_prefilter_;
+  GLProgram prog_brdf_lut_;
 
   // Frame UBO.
   GLuint   ubo_frame_{0};
@@ -95,6 +110,20 @@ private:
 
   // Rotation-pivot indicator (empty VAO; uses gl_VertexID).
   GLuint   vao_pivot_{0};
+
+  // IBL bake state. Cubemaps stay resident for the life of the renderer;
+  // the FBO + depth RBO are reused across the bake passes and freed at the
+  // end of `bake_ibl`.
+  GLuint   env_cube_{0};
+  GLuint   irradiance_cube_{0};
+  GLuint   prefilter_cube_{0};
+  GLuint   brdf_lut_{0};
+  int      env_cube_size_{128};
+  int      irradiance_size_{32};
+  int      prefilter_size_{128};
+  int      prefilter_mip_count_{5};
+  int      brdf_lut_size_{256};
+  GLuint   vao_quad_{0};
 
   // Scene + GPU mesh cache.
   std::shared_ptr<scene::Scene> scene_;
@@ -158,6 +187,17 @@ void GLRendererImpl::initialize() {
   // Pivot indicator: empty VAO, geometry emitted from gl_VertexID.
   gl_.glGenVertexArrays(1, &vao_pivot_);
 
+  // Dummy VAO for the IBL bake passes — they draw a single fullscreen
+  // triangle with no vertex attributes and pull positions from gl_VertexID.
+  gl_.glGenVertexArrays(1, &vao_quad_);
+
+  // Bake the IBL targets once. Failure is non-fatal (the PBR shader falls
+  // back to its constant ambient if the cubemaps are zero) but the user
+  // would lose all environment lighting, so log loudly.
+  if (!bake_ibl()) {
+    CADLY_LOG_WARN("IBL bake failed — falling back to analytical ambient.");
+  }
+
   initialised_ = true;
   CADLY_LOG_INFO("OpenGL renderer initialised: GL_VERSION='{}'",
                  reinterpret_cast<const char*>(gl_.glGetString(GL_VERSION)));
@@ -182,10 +222,14 @@ bool GLRendererImpl::build_programs() {
     }
   };
 
-  build(prog_pbr_,        "pbr.vert",        "pbr.frag",        "pbr");
-  build(prog_background_, "background.vert", "background.frag", "background");
-  build(prog_grid_,       "grid.vert",       "grid.frag",       "grid");
-  build(prog_pivot_,      "pivot.vert",      "pivot.frag",      "pivot");
+  build(prog_pbr_,         "pbr.vert",         "pbr.frag",         "pbr");
+  build(prog_background_,  "background.vert",  "background.frag",  "background");
+  build(prog_grid_,        "grid.vert",        "grid.frag",        "grid");
+  build(prog_pivot_,       "pivot.vert",       "pivot.frag",       "pivot");
+  build(prog_env_capture_, "env_capture.vert", "env_capture.frag", "env_capture");
+  build(prog_irradiance_,  "irradiance.vert",  "irradiance.frag",  "irradiance");
+  build(prog_prefilter_,   "prefilter.vert",   "prefilter.frag",   "prefilter");
+  build(prog_brdf_lut_,    "brdf_lut.vert",    "brdf_lut.frag",    "brdf_lut");
   return all_ok;
 }
 
@@ -251,19 +295,219 @@ void GLRendererImpl::ensure_mesh_upload(const scene::Mesh& mesh,
   meshes_.emplace(const_cast<scene::Mesh*>(&mesh), g);
 }
 
+// IBL bake ------------------------------------------------------------------
+
+scene::mat3 GLRendererImpl::cube_face_basis(int face) {
+  // Columns are (right, up, fwd) such that a clipspace vertex (x,y) on the
+  // fullscreen triangle maps to world-space sample direction
+  //     dir = right * x + up * y + fwd
+  // matching the OpenGL cubemap convention (RenderMan: Y-down within faces).
+  switch (face) {
+    case 0: return scene::mat3(scene::vec3( 0, 0,-1), scene::vec3(0,-1, 0), scene::vec3( 1, 0, 0)); // +X
+    case 1: return scene::mat3(scene::vec3( 0, 0, 1), scene::vec3(0,-1, 0), scene::vec3(-1, 0, 0)); // -X
+    case 2: return scene::mat3(scene::vec3( 1, 0, 0), scene::vec3(0, 0, 1), scene::vec3( 0, 1, 0)); // +Y
+    case 3: return scene::mat3(scene::vec3( 1, 0, 0), scene::vec3(0, 0,-1), scene::vec3( 0,-1, 0)); // -Y
+    case 4: return scene::mat3(scene::vec3( 1, 0, 0), scene::vec3(0,-1, 0), scene::vec3( 0, 0, 1)); // +Z
+    case 5: return scene::mat3(scene::vec3(-1, 0, 0), scene::vec3(0,-1, 0), scene::vec3( 0, 0,-1)); // -Z
+  }
+  return scene::mat3(1.0f);
+}
+
+GLuint GLRendererImpl::create_cubemap(int size, int mip_count) {
+  GLuint tex = 0;
+  gl_.glGenTextures(1, &tex);
+  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+  for (int face = 0; face < 6; ++face) {
+    // glTexImage2D once per face, then mips are allocated by glGenerateMipmap
+    // (or by us via subsequent glTexImage2D calls per level for prefilter).
+    gl_.glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0,
+                     GL_RGBA16F, size, size, 0, GL_RGBA, GL_FLOAT, nullptr);
+  }
+  gl_.glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  gl_.glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  gl_.glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  gl_.glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER,
+                      mip_count > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+  gl_.glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  if (mip_count > 1) {
+    // Allocate the full mip chain up front so glFramebufferTexture2D can
+    // attach any level; the prefilter pass writes them explicitly.
+    gl_.glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_BASE_LEVEL, 0);
+    gl_.glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_LEVEL, mip_count - 1);
+    int level_size = size;
+    for (int level = 1; level < mip_count; ++level) {
+      level_size = std::max(1, level_size / 2);
+      for (int face = 0; face < 6; ++face) {
+        gl_.glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, level,
+                         GL_RGBA16F, level_size, level_size, 0,
+                         GL_RGBA, GL_FLOAT, nullptr);
+      }
+    }
+  }
+  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+  return tex;
+}
+
+bool GLRendererImpl::bake_ibl() {
+  if (!prog_env_capture_.valid() || !prog_irradiance_.valid() ||
+      !prog_prefilter_.valid()  || !prog_brdf_lut_.valid()) {
+    return false;
+  }
+
+  // Snapshot GL state we're going to clobber so the caller's setup survives.
+  GLint prev_fbo = 0, prev_viewport[4] = {0, 0, 0, 0};
+  gl_.glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+  gl_.glGetIntegerv(GL_VIEWPORT, prev_viewport);
+
+  // env_cube needs a mip chain because the prefilter pass samples it with
+  // textureLod at PDF-matched mip levels to dodge fireflies.
+  const int env_mip_count = static_cast<int>(std::floor(std::log2(env_cube_size_))) + 1;
+  env_cube_        = create_cubemap(env_cube_size_,   env_mip_count);
+  irradiance_cube_ = create_cubemap(irradiance_size_, 1);
+  prefilter_cube_  = create_cubemap(prefilter_size_,  prefilter_mip_count_);
+
+  gl_.glGenTextures(1, &brdf_lut_);
+  gl_.glBindTexture(GL_TEXTURE_2D, brdf_lut_);
+  gl_.glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, brdf_lut_size_, brdf_lut_size_,
+                   0, GL_RG, GL_FLOAT, nullptr);
+  gl_.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  gl_.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  gl_.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  gl_.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  gl_.glBindTexture(GL_TEXTURE_2D, 0);
+
+  gl_.glDisable(GL_DEPTH_TEST);
+  gl_.glDisable(GL_CULL_FACE);
+  gl_.glDisable(GL_BLEND);
+  gl_.glBindVertexArray(vao_quad_);
+
+  bake_env_cube();
+
+  // Generate mip chain of env cube — the prefilter shader samples mip levels
+  // via textureLod to keep importance-sampled specular free of fireflies.
+  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, env_cube_);
+  gl_.glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+
+  bake_irradiance();
+  bake_prefilter();
+  bake_brdf_lut();
+
+  gl_.glBindVertexArray(0);
+  gl_.glEnable(GL_DEPTH_TEST);
+  gl_.glEnable(GL_CULL_FACE);
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prev_fbo));
+  gl_.glViewport(prev_viewport[0], prev_viewport[1],
+                 prev_viewport[2], prev_viewport[3]);
+  return true;
+}
+
+void GLRendererImpl::bake_env_cube() {
+  GLuint fbo = 0;
+  gl_.glGenFramebuffers(1, &fbo);
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  gl_.glViewport(0, 0, env_cube_size_, env_cube_size_);
+  gl_.glUseProgram(prog_env_capture_.id());
+  const GLint loc_basis = prog_env_capture_.uniform(gl_, "u_face_basis");
+
+  for (int face = 0; face < 6; ++face) {
+    gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+                               env_cube_, 0);
+    const scene::mat3 basis = cube_face_basis(face);
+    gl_.glUniformMatrix3fv(loc_basis, 1, GL_FALSE, glm::value_ptr(basis));
+    gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
+  }
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  gl_.glDeleteFramebuffers(1, &fbo);
+}
+
+void GLRendererImpl::bake_irradiance() {
+  GLuint fbo = 0;
+  gl_.glGenFramebuffers(1, &fbo);
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  gl_.glViewport(0, 0, irradiance_size_, irradiance_size_);
+
+  gl_.glUseProgram(prog_irradiance_.id());
+  const GLint loc_basis = prog_irradiance_.uniform(gl_, "u_face_basis");
+  const GLint loc_env   = prog_irradiance_.uniform(gl_, "u_env_cube");
+  gl_.glUniform1i(loc_env, 0);
+  gl_.glActiveTexture(GL_TEXTURE0);
+  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, env_cube_);
+
+  for (int face = 0; face < 6; ++face) {
+    gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+                               irradiance_cube_, 0);
+    const scene::mat3 basis = cube_face_basis(face);
+    gl_.glUniformMatrix3fv(loc_basis, 1, GL_FALSE, glm::value_ptr(basis));
+    gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
+  }
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  gl_.glDeleteFramebuffers(1, &fbo);
+}
+
+void GLRendererImpl::bake_prefilter() {
+  GLuint fbo = 0;
+  gl_.glGenFramebuffers(1, &fbo);
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+  gl_.glUseProgram(prog_prefilter_.id());
+  const GLint loc_basis = prog_prefilter_.uniform(gl_, "u_face_basis");
+  const GLint loc_env   = prog_prefilter_.uniform(gl_, "u_env_cube");
+  const GLint loc_rough = prog_prefilter_.uniform(gl_, "u_roughness");
+  const GLint loc_res   = prog_prefilter_.uniform(gl_, "u_env_resolution");
+  gl_.glUniform1i(loc_env, 0);
+  gl_.glUniform1f(loc_res, static_cast<float>(env_cube_size_));
+  gl_.glActiveTexture(GL_TEXTURE0);
+  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, env_cube_);
+
+  for (int mip = 0; mip < prefilter_mip_count_; ++mip) {
+    const int mip_size = std::max(1, prefilter_size_ >> mip);
+    gl_.glViewport(0, 0, mip_size, mip_size);
+    const float roughness = prefilter_mip_count_ > 1
+      ? static_cast<float>(mip) / static_cast<float>(prefilter_mip_count_ - 1)
+      : 0.0f;
+    gl_.glUniform1f(loc_rough, roughness);
+    for (int face = 0; face < 6; ++face) {
+      gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                 GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+                                 prefilter_cube_, mip);
+      const scene::mat3 basis = cube_face_basis(face);
+      gl_.glUniformMatrix3fv(loc_basis, 1, GL_FALSE, glm::value_ptr(basis));
+      gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+  }
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  gl_.glDeleteFramebuffers(1, &fbo);
+}
+
+void GLRendererImpl::bake_brdf_lut() {
+  GLuint fbo = 0;
+  gl_.glGenFramebuffers(1, &fbo);
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                             GL_TEXTURE_2D, brdf_lut_, 0);
+  gl_.glViewport(0, 0, brdf_lut_size_, brdf_lut_size_);
+  gl_.glUseProgram(prog_brdf_lut_.id());
+  gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  gl_.glDeleteFramebuffers(1, &fbo);
+}
+
 void GLRendererImpl::update_frame_uniforms() {
   if (!scene_) return;
 
-  // Light directions in LightEnvironment are camera-local; rotate them into
-  // world space using the camera's orientation so the lighting rig follows
-  // the user as they orbit. Avoids any dependency on the engine's camera
-  // convention (whether +Z or -Z happens to face the viewer) and keeps the
-  // model consistently lit from any angle — the standard inspection-viewer
-  // "headlight" pattern.
-  const scene::quat cam_orient = scene_->camera.orientation;
-  const scene::vec3 key_world  = cam_orient * scene_->environment.key_direction;
-  const scene::vec3 fill_world = cam_orient * scene_->environment.fill_direction;
-  const scene::vec3 rim_world  = cam_orient * scene_->environment.rim_direction;
+  // Light directions live in WORLD space and are NOT rotated by the camera.
+  // The previous "headlight" pattern (rotate light dirs by camera orientation
+  // every frame) kept relative L·N constant as the user orbited, which made
+  // the model feel flat from the default view and only revealed relief
+  // through the geometric trick of side walls projecting wider at oblique
+  // angles. World-fixed lighting gives the user a proper directional cue:
+  // rotating the camera now actually changes how light grazes each face.
+  const scene::vec3 key_world  = scene_->environment.key_direction;
+  const scene::vec3 fill_world = scene_->environment.fill_direction;
+  const scene::vec3 rim_world  = scene_->environment.rim_direction;
 
   FrameBlock fb{};
   fb.view       = scene_->camera.view();
@@ -401,6 +645,20 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     gl_.glDisable(GL_CULL_FACE);
   }
 
+  // Bind IBL targets to fixed texture units. The samplers don't change
+  // per-draw, so set once outside the mesh loop.
+  gl_.glActiveTexture(GL_TEXTURE0);
+  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, irradiance_cube_);
+  gl_.glUniform1i(prog_pbr_.uniform(gl_, "u_irradiance_cube"), 0);
+  gl_.glActiveTexture(GL_TEXTURE1);
+  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, prefilter_cube_);
+  gl_.glUniform1i(prog_pbr_.uniform(gl_, "u_prefilter_cube"), 1);
+  gl_.glActiveTexture(GL_TEXTURE2);
+  gl_.glBindTexture(GL_TEXTURE_2D, brdf_lut_);
+  gl_.glUniform1i(prog_pbr_.uniform(gl_, "u_brdf_lut"), 2);
+  gl_.glUniform1f(prog_pbr_.uniform(gl_, "u_prefilter_max_lod"),
+                  static_cast<float>(prefilter_mip_count_ - 1));
+
   const GLint loc_model     = prog_pbr_.uniform(gl_, "u_model");
   const GLint loc_normal_m  = prog_pbr_.uniform(gl_, "u_normal_matrix");
   const GLint loc_base      = prog_pbr_.uniform(gl_, "u_base_color");
@@ -479,11 +737,21 @@ void GLRendererImpl::shutdown() {
   if (vao_grid_)       gl_.glDeleteVertexArrays(1, &vao_grid_);
   if (vbo_grid_)       gl_.glDeleteBuffers(1, &vbo_grid_);
   if (vao_pivot_)      gl_.glDeleteVertexArrays(1, &vao_pivot_);
-  ubo_frame_ = vao_background_ = vao_grid_ = vbo_grid_ = vao_pivot_ = 0;
+  if (vao_quad_)       gl_.glDeleteVertexArrays(1, &vao_quad_);
+  if (env_cube_)        gl_.glDeleteTextures(1, &env_cube_);
+  if (irradiance_cube_) gl_.glDeleteTextures(1, &irradiance_cube_);
+  if (prefilter_cube_)  gl_.glDeleteTextures(1, &prefilter_cube_);
+  if (brdf_lut_)        gl_.glDeleteTextures(1, &brdf_lut_);
+  ubo_frame_ = vao_background_ = vao_grid_ = vbo_grid_ = vao_pivot_ = vao_quad_ = 0;
+  env_cube_ = irradiance_cube_ = prefilter_cube_ = brdf_lut_ = 0;
   prog_pbr_.destroy(gl_);
   prog_background_.destroy(gl_);
   prog_grid_.destroy(gl_);
   prog_pivot_.destroy(gl_);
+  prog_env_capture_.destroy(gl_);
+  prog_irradiance_.destroy(gl_);
+  prog_prefilter_.destroy(gl_);
+  prog_brdf_lut_.destroy(gl_);
   initialised_ = false;
 }
 

@@ -27,8 +27,8 @@ struct DisplayMode {
   bool show_axes        {true};
   bool draw_background  {true};
   float edge_intensity  {0.65f};
-  scene::vec3 background_top   {0.13f, 0.14f, 0.16f};
-  scene::vec3 background_bottom{0.05f, 0.05f, 0.06f};
+  scene::vec3 background_top   {0.42f, 0.44f, 0.48f};
+  scene::vec3 background_bottom{0.22f, 0.23f, 0.26f};
 
   // Rotation pivot indicator. The UI toggles this on while the user is
   // orbiting and feeds the world-space pivot through `rotation_pivot`. The

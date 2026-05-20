@@ -1,9 +1,10 @@
 #version 410 core
 
-// Cook-Torrance metallic-roughness with three analytical lights and a soft
-// ambient term. Intentionally avoids HDRI IBL — that's a Milestone 4 task
-// once prefiltered cubemaps are wired up. The result is bright, neutral, and
-// readable, which is what mechanical inspection needs.
+// Cook-Torrance metallic-roughness with three analytical lights and
+// image-based lighting (split-sum / Karis 2013) for ambient + reflections.
+// The IBL targets are baked once at renderer init from a procedural studio
+// environment; the analytical lights stay on top for directional definition
+// (IBL alone makes machined parts look soft).
 
 in vec3 v_world_pos;
 in vec3 v_world_normal;
@@ -29,6 +30,11 @@ uniform float u_roughness;
 uniform float u_reflectance;         // dielectric F0 control (0..1)
 uniform vec3  u_emissive_color;
 uniform float u_emissive;
+
+uniform samplerCube u_irradiance_cube;  // diffuse IBL
+uniform samplerCube u_prefilter_cube;   // specular IBL (mip chain by roughness)
+uniform sampler2D   u_brdf_lut;         // split-sum BRDF LUT
+uniform float       u_prefilter_max_lod;
 
 out vec4 frag_color;
 
@@ -77,6 +83,14 @@ vec3 evaluate_light(vec3 N, vec3 V, vec3 L_dir, vec3 light_color,
   return (diffuse + specular) * light_color * NoL;
 }
 
+vec3 fresnel_schlick_roughness(float HoV, vec3 F0, float roughness) {
+  // Roughness-aware Schlick — used only for the IBL specular branch where
+  // there's no half-vector to sample F at; replacing 1-F with this
+  // (1-max(F0,1-rough)) gives the standard energy-conserving fall-off.
+  return F0 + (max(vec3(1.0 - roughness), F0) - F0) *
+              pow(clamp(1.0 - HoV, 0.0, 1.0), 5.0);
+}
+
 void main() {
   // Two-sided fallback so missing/back-faces still shade — common in CAD.
   vec3 N = normalize(v_world_normal);
@@ -95,14 +109,57 @@ void main() {
   Lo += evaluate_light(N, V, u_fill_dir.xyz, u_fill_color.rgb, base, metallic, roughness, F0);
   Lo += evaluate_light(N, V, u_rim_dir.xyz,  u_rim_color.rgb,  base, metallic, roughness, F0);
 
-  // Hemispheric ambient lifts shadowed surfaces without flattening them.
-  float upness = 0.5 + 0.5 * N.y;
-  vec3 ambient = mix(u_ambient.rgb * 0.6, u_ambient.rgb * 1.4, upness) * base * (1.0 - metallic * 0.5);
+  // IBL split-sum (Karis 2013). The diffuse term reads the cosine-weighted
+  // irradiance cubemap; the specular term reads the GGX-prefiltered cubemap
+  // at the mip level matching this surface's roughness, weighted by the
+  // BRDF LUT that encodes the (NoV, roughness) -> (scale, bias) integral.
+  float NoV = max(dot(N, V), 0.0);
+  vec3  F_ibl = fresnel_schlick_roughness(NoV, F0, roughness);
+  vec3  kS_ibl = F_ibl;
+  vec3  kD_ibl = (vec3(1.0) - kS_ibl) * (1.0 - metallic);
+
+  vec3 irradiance = texture(u_irradiance_cube, N).rgb;
+  vec3 diffuse_ibl = irradiance * base;
+
+  vec3  R = reflect(-V, N);
+  vec3  prefiltered = textureLod(u_prefilter_cube, R,
+                                 roughness * u_prefilter_max_lod).rgb;
+  vec2  brdf = texture(u_brdf_lut, vec2(NoV, roughness)).rg;
+  vec3  specular_ibl = prefiltered * (F_ibl * brdf.x + brdf.y);
+
+  // Mild fallback if the IBL textures weren't bound (zero samples). The
+  // analytical `u_ambient` keeps the constant-ambient behaviour as a
+  // floor — invisible whenever IBL is healthy, visible if the bake failed.
+  vec3 ibl = kD_ibl * diffuse_ibl + specular_ibl;
+  vec3 ambient_fallback = u_ambient.rgb * base * (1.0 - metallic * 0.5);
+  vec3 ambient = ibl + ambient_fallback * 0.15;
 
   vec3 color = ambient + Lo + u_emissive_color * u_emissive;
 
-  // Reinhard-ish tonemap + gamma for the swapchain (no sRGB framebuffer yet).
-  color = color / (color + vec3(1.0));
+  // Screen-space feature-edge enhancement. The face-on view of an embossed
+  // CAD part hides relief by construction — the plate face and the raised
+  // letter face share the same normal, while the side walls between them
+  // project to ~0 pixels. The fragment derivatives of the world normal spike
+  // exactly across those tiny strips (and across silhouettes against the
+  // background), so we use them as an outline mask. Without this the user
+  // sees a flat grey rectangle no matter how the lights are tuned.
+  vec3 dNx = dFdx(N);
+  vec3 dNy = dFdy(N);
+  float edge = sqrt(dot(dNx, dNx) + dot(dNy, dNy));
+  // Also tap depth derivative — catches silhouettes and crease folds where
+  // the two surfaces happen to share a normal direction.
+  float depth_edge = fwidth(gl_FragCoord.z) * 200.0;
+  edge = clamp(max(edge * 2.5, depth_edge), 0.0, 1.0);
+  // Pull edges toward black with a soft curve so the effect reads as
+  // shading, not a hard cartoon outline.
+  color *= mix(1.0, 0.55, edge * edge);
+
+  // Soft-knee tonemap. Pure Reinhard (c/(c+1)) crushes the 0.5–1.5 range —
+  // exactly where well-lit CAD surfaces land — and would erase the contrast
+  // we just generated. Apply exposure-style compression only above 1.0 and
+  // leave the low/mid range linear.
+  color = color / (1.0 + 0.35 * max(color - vec3(0.4), vec3(0.0)));
+  color = clamp(color, 0.0, 1.0);
   color = pow(color, vec3(1.0 / 2.2));
 
   frag_color = vec4(color, u_base_color.a);

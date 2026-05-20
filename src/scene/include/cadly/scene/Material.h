@@ -11,7 +11,7 @@ namespace cadly::scene {
 struct Material {
   std::string name;
 
-  vec4  base_color{0.78f, 0.78f, 0.80f, 1.0f}; // linear RGBA
+  vec4  base_color{0.55f, 0.56f, 0.58f, 1.0f}; // linear RGBA
   float metallic   {0.0f};
   float roughness  {0.55f};
   float reflectance{0.5f};                     // F0 for dielectric
