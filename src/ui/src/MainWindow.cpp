@@ -106,6 +106,14 @@ void MainWindow::build_menus() {
   connect(act_grid_, &QAction::toggled, this, &MainWindow::on_toggle_grid);
   view_menu->addAction(act_grid_);
 
+  act_edges_ = new QAction(tr("Show edges"), this);
+  act_edges_->setCheckable(true);
+  act_edges_->setChecked(false);
+  act_edges_->setShortcut(Qt::Key_E);
+  act_edges_->setToolTip(tr("Overlay the BRep edges of the model"));
+  connect(act_edges_, &QAction::toggled, this, &MainWindow::on_toggle_edges);
+  view_menu->addAction(act_edges_);
+
   auto* help_menu = menuBar()->addMenu(tr("&Help"));
   act_about_ = new QAction(tr("About Cadly"), this);
   connect(act_about_, &QAction::triggered, this, &MainWindow::on_about);
@@ -122,6 +130,7 @@ void MainWindow::build_toolbar() {
   tb->addAction(act_fit_);
   tb->addAction(act_wireframe_);
   tb->addAction(act_grid_);
+  tb->addAction(act_edges_);
 }
 
 void MainWindow::build_status_bar() {
@@ -243,11 +252,31 @@ void MainWindow::update_status_for_scene() {
 
 void MainWindow::on_fit_view()        { viewport_->fit_view(); }
 void MainWindow::on_toggle_wireframe(bool on) {
-  auto mode = viewport_->display_mode(); mode.wireframe = on;
+  // Wireframe and edge overlay both draw line work over (or instead of)
+  // the surface, so enabling them together is ambiguous. The first one
+  // turned on wins; the other is silently unchecked. Done with a blocked
+  // signal so we don't bounce back into the partner slot.
+  if (on && act_edges_ && act_edges_->isChecked()) {
+    QSignalBlocker block(act_edges_);
+    act_edges_->setChecked(false);
+  }
+  auto mode = viewport_->display_mode();
+  mode.wireframe = on;
+  if (on) mode.show_edges = false;
   viewport_->set_display_mode(mode);
 }
 void MainWindow::on_toggle_grid(bool on) {
   auto mode = viewport_->display_mode(); mode.show_grid = on;
+  viewport_->set_display_mode(mode);
+}
+void MainWindow::on_toggle_edges(bool on) {
+  if (on && act_wireframe_ && act_wireframe_->isChecked()) {
+    QSignalBlocker block(act_wireframe_);
+    act_wireframe_->setChecked(false);
+  }
+  auto mode = viewport_->display_mode();
+  mode.show_edges = on;
+  if (on) mode.wireframe = false;
   viewport_->set_display_mode(mode);
 }
 

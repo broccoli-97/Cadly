@@ -42,7 +42,16 @@ struct Mesh {
   std::vector<Submesh>       submeshes;
   Aabb bounds = Aabb::empty();
 
+  // BRep edge polylines extracted from the source CAD shape (NOT triangle
+  // boundaries — these are the analytical edges of the brep, the curves
+  // bounding faces). Stored as a flat vec3 vertex array plus GL_LINES-style
+  // index pairs, so a single glDrawElements(GL_LINES, ...) renders the whole
+  // wireframe outline. Empty for non-BRep meshes.
+  std::vector<vec3>          edge_vertices;
+  std::vector<std::uint32_t> edge_indices;
+
   std::size_t triangle_count() const { return indices.size() / 3; }
+  std::size_t edge_segment_count() const { return edge_indices.size() / 2; }
 };
 
 } // namespace cadly::scene

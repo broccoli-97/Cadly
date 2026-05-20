@@ -46,6 +46,12 @@ struct MeshGpu {
   GLuint vbo{0};
   GLuint ibo{0};
   GLsizei index_count{0};
+  // BRep edge buffers (optional). Allocated only if the source mesh has
+  // edge polylines from the importer.
+  GLuint edge_vao{0};
+  GLuint edge_vbo{0};
+  GLuint edge_ibo{0};
+  GLsizei edge_index_count{0};
   std::shared_ptr<scene::Mesh> source; // keeps the CPU data alive
 };
 
@@ -70,6 +76,7 @@ private:
   void draw_background(const renderer::DisplayMode& mode);
   void draw_grid(const renderer::DisplayMode& mode);
   void draw_pivot(const renderer::DisplayMode& mode);
+  void draw_edges(const renderer::DisplayMode& mode);
 
   // IBL bake — runs once at init. The four targets together implement the
   // Karis split-sum approximation: irradiance for diffuse, prefilter +
@@ -92,6 +99,7 @@ private:
   GLProgram prog_background_;
   GLProgram prog_grid_;
   GLProgram prog_pivot_;
+  GLProgram prog_edges_;
   GLProgram prog_env_capture_;
   GLProgram prog_irradiance_;
   GLProgram prog_prefilter_;
@@ -158,7 +166,7 @@ void GLRendererImpl::initialize() {
   gl_.glBindBufferBase(GL_UNIFORM_BUFFER, frame_binding_, ubo_frame_);
 
   // Bind FrameBlock from each program to the same binding point.
-  for (GLProgram* p : {&prog_pbr_}) {
+  for (GLProgram* p : {&prog_pbr_, &prog_edges_}) {
     if (!p->valid()) continue;
     GLuint idx = p->uniform_block(gl_, "FrameBlock");
     if (idx != GL_INVALID_INDEX) {
@@ -226,6 +234,7 @@ bool GLRendererImpl::build_programs() {
   build(prog_background_,  "background.vert",  "background.frag",  "background");
   build(prog_grid_,        "grid.vert",        "grid.frag",        "grid");
   build(prog_pivot_,       "pivot.vert",       "pivot.frag",       "pivot");
+  build(prog_edges_,       "edges.vert",       "edges.frag",       "edges");
   build(prog_env_capture_, "env_capture.vert", "env_capture.frag", "env_capture");
   build(prog_irradiance_,  "irradiance.vert",  "irradiance.frag",  "irradiance");
   build(prog_prefilter_,   "prefilter.vert",   "prefilter.frag",   "prefilter");
@@ -291,6 +300,32 @@ void GLRendererImpl::ensure_mesh_upload(const scene::Mesh& mesh,
                             reinterpret_cast<void*>(offsetof(scene::Vertex, color_rgba8)));
 
   gl_.glBindVertexArray(0);
+
+  // Edge polylines, if the importer captured any. Vertex layout is a flat
+  // packed array of vec3 positions; indices come in GL_LINES pairs.
+  if (!mesh.edge_vertices.empty() && !mesh.edge_indices.empty()) {
+    gl_.glGenVertexArrays(1, &g.edge_vao);
+    gl_.glGenBuffers(1, &g.edge_vbo);
+    gl_.glGenBuffers(1, &g.edge_ibo);
+    gl_.glBindVertexArray(g.edge_vao);
+    gl_.glBindBuffer(GL_ARRAY_BUFFER, g.edge_vbo);
+    gl_.glBufferData(GL_ARRAY_BUFFER,
+                     static_cast<GLsizeiptr>(mesh.edge_vertices.size() *
+                                             sizeof(scene::vec3)),
+                     mesh.edge_vertices.data(),
+                     GL_STATIC_DRAW);
+    gl_.glEnableVertexAttribArray(0);
+    gl_.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              sizeof(scene::vec3), nullptr);
+    gl_.glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g.edge_ibo);
+    gl_.glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                     static_cast<GLsizeiptr>(mesh.edge_indices.size() *
+                                             sizeof(std::uint32_t)),
+                     mesh.edge_indices.data(),
+                     GL_STATIC_DRAW);
+    g.edge_index_count = static_cast<GLsizei>(mesh.edge_indices.size());
+    gl_.glBindVertexArray(0);
+  }
 
   meshes_.emplace(const_cast<scene::Mesh*>(&mesh), g);
 }
@@ -610,6 +645,58 @@ void GLRendererImpl::draw_pivot(const renderer::DisplayMode& mode) {
   gl_.glDisable(GL_BLEND);
 }
 
+void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
+  if (!mode.show_edges || !prog_edges_.valid() || !scene_) return;
+
+  gl_.glUseProgram(prog_edges_.id());
+  const GLint loc_model = prog_edges_.uniform(gl_, "u_model");
+  const GLint loc_color = prog_edges_.uniform(gl_, "u_color");
+  const GLint loc_bias  = prog_edges_.uniform(gl_, "u_view_bias");
+  // No view-space bias — depth fighting between edges and faces is
+  // resolved on the surface side via glPolygonOffset (see render()),
+  // which gives proper hidden-line behaviour: edges belonging to a
+  // visible face pass the depth test (the face was pushed slightly
+  // farther), but edges on the BACK of the part are still occluded by
+  // the front-facing surface's real-ish depth.
+  gl_.glUniform1f(loc_bias, 0.0f);
+
+  // Depth test ON so back-of-part edges stay hidden. Depth write OFF so
+  // the edge overlay doesn't pollute the depth buffer for any subsequent
+  // pass (grid, pivot).
+  gl_.glDepthMask(GL_FALSE);
+
+  // Dark line over warm surfaces reads as ink; intensity slider in
+  // DisplayMode controls overall strength.
+  const float a = std::clamp(mode.edge_intensity, 0.0f, 1.0f);
+  const scene::vec4 ec{0.05f, 0.06f, 0.08f, a};
+  gl_.glUniform4fv(loc_color, 1, &ec.x);
+
+  gl_.glEnable(GL_BLEND);
+  gl_.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  // Drivers ignore this in core profile but it costs nothing and helps the
+  // permissive ones (Mesa, some Intel) draw 1.2 px lines.
+  gl_.glLineWidth(1.2f);
+
+  for (const auto& node : scene_->nodes) {
+    if (!node.visible || !node.mesh_index) continue;
+    if (*node.mesh_index >= scene_->meshes.size()) continue;
+    const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
+    if (!mesh_ptr) continue;
+    auto mit = meshes_.find(mesh_ptr.get());
+    if (mit == meshes_.end()) continue;
+    const auto& g = mit->second;
+    if (!g.edge_vao || g.edge_index_count == 0) continue;
+
+    gl_.glUniformMatrix4fv(loc_model, 1, GL_FALSE,
+                           glm::value_ptr(node.world_matrix));
+    gl_.glBindVertexArray(g.edge_vao);
+    gl_.glDrawElements(GL_LINES, g.edge_index_count, GL_UNSIGNED_INT, nullptr);
+  }
+  gl_.glBindVertexArray(0);
+  gl_.glDisable(GL_BLEND);
+  gl_.glDepthMask(GL_TRUE);
+}
+
 void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (!initialised_) initialize();
   if (!initialised_) return;
@@ -643,6 +730,18 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (mode.wireframe) {
     gl_.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     gl_.glDisable(GL_CULL_FACE);
+  }
+
+  // When the edge overlay is on, push the surface fragments slightly away
+  // from the camera in depth space. The edges keep their true depth, so:
+  //   - edges on a visible face pass the depth test against the pushed-back
+  //     surface and draw on top of it (no Z-fighting),
+  //   - edges on the BACK of the part still fail the depth test against
+  //     the front-facing surface — i.e. hidden lines stay hidden.
+  // This is the classic CAD "shaded with edges" recipe.
+  if (mode.show_edges) {
+    gl_.glEnable(GL_POLYGON_OFFSET_FILL);
+    gl_.glPolygonOffset(1.0f, 1.0f);
   }
 
   // Bind IBL targets to fixed texture units. The samplers don't change
@@ -719,7 +818,11 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     gl_.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     gl_.glEnable(GL_CULL_FACE);
   }
+  if (mode.show_edges) {
+    gl_.glDisable(GL_POLYGON_OFFSET_FILL);
+  }
 
+  draw_edges(mode);
   draw_grid(mode);
   draw_pivot(mode);
 }
@@ -730,6 +833,9 @@ void GLRendererImpl::shutdown() {
     if (g.vao) gl_.glDeleteVertexArrays(1, &g.vao);
     if (g.vbo) gl_.glDeleteBuffers(1, &g.vbo);
     if (g.ibo) gl_.glDeleteBuffers(1, &g.ibo);
+    if (g.edge_vao) gl_.glDeleteVertexArrays(1, &g.edge_vao);
+    if (g.edge_vbo) gl_.glDeleteBuffers(1, &g.edge_vbo);
+    if (g.edge_ibo) gl_.glDeleteBuffers(1, &g.edge_ibo);
   }
   meshes_.clear();
   if (ubo_frame_)      gl_.glDeleteBuffers(1, &ubo_frame_);
@@ -748,6 +854,7 @@ void GLRendererImpl::shutdown() {
   prog_background_.destroy(gl_);
   prog_grid_.destroy(gl_);
   prog_pivot_.destroy(gl_);
+  prog_edges_.destroy(gl_);
   prog_env_capture_.destroy(gl_);
   prog_irradiance_.destroy(gl_);
   prog_prefilter_.destroy(gl_);

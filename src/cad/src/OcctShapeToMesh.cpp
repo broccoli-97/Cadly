@@ -7,12 +7,16 @@
 #include "cadly/scene/Scene.h"
 
 #include <BRep_Tool.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepGProp.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <GCPnts_TangentialDeflection.hxx>
 #include <GProp_GProps.hxx>
+#include <Poly_Polygon3D.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Version.hxx>
+#include <TColgp_Array1OfPnt.hxx>
 #include <TDF_LabelSequence.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
@@ -21,6 +25,7 @@
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
@@ -32,6 +37,7 @@
 #include <cmath>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace cadly::cad::occt {
 
@@ -234,6 +240,76 @@ std::string read_label_name(const TDF_Label& label) {
   return {};
 }
 
+// Walk every TopoDS_Edge of the shape and append a GL_LINES-style polyline
+// for each unique one to the mesh's edge buffers. Deduplication is by the
+// underlying TShape pointer so an edge shared by two adjacent faces is only
+// emitted once. Two sources are tried per edge:
+//   1. BRep_Tool::Polygon3D — the cached 3D discretization. Present for
+//      most edges after BRepMesh has run, and follows whatever deflection
+//      the user picked for surfaces.
+//   2. BRepAdaptor_Curve + GCPnts_TangentialDeflection — analytical
+//      fallback for edges that BRepMesh did not cache (rare, but happens
+//      for free-standing wires not bounding any face).
+// Degenerate edges (e.g. the pole-collapse "edge" of a sphere) are skipped
+// because they don't have a 3D curve to walk.
+void extract_brep_edges(scene::Mesh& mesh,
+                        const TopoDS_Shape& shape,
+                        const ImportOptions& opts) {
+  std::unordered_set<const void*> seen;
+  for (TopExp_Explorer ex(shape, TopAbs_EDGE); ex.More(); ex.Next()) {
+    const TopoDS_Edge& edge = TopoDS::Edge(ex.Current());
+    if (BRep_Tool::Degenerated(edge)) continue;
+    const void* key = edge.TShape().get();
+    if (!seen.insert(key).second) continue;
+
+    std::vector<scene::vec3> pts;
+
+    TopLoc_Location poly_loc;
+    Handle(Poly_Polygon3D) poly3d = BRep_Tool::Polygon3D(edge, poly_loc);
+    if (!poly3d.IsNull()) {
+      const TColgp_Array1OfPnt& nodes = poly3d->Nodes();
+      pts.reserve(static_cast<std::size_t>(nodes.Length()));
+      const gp_Trsf trsf = poly_loc.Transformation();
+      for (Standard_Integer i = nodes.Lower(); i <= nodes.Upper(); ++i) {
+        gp_Pnt p = nodes.Value(i);
+        if (!poly_loc.IsIdentity()) p.Transform(trsf);
+        pts.emplace_back(static_cast<float>(p.X()),
+                         static_cast<float>(p.Y()),
+                         static_cast<float>(p.Z()));
+      }
+    } else {
+      // BRepAdaptor_Curve folds in edge.Location() internally, so the
+      // points are already in the shape's frame and need no extra
+      // transform here.
+      BRepAdaptor_Curve curve(edge);
+      try {
+        GCPnts_TangentialDeflection sampler(
+          curve,
+          static_cast<Standard_Real>(opts.angular_deflection),
+          static_cast<Standard_Real>(opts.linear_deflection));
+        const Standard_Integer n = sampler.NbPoints();
+        pts.reserve(static_cast<std::size_t>(n));
+        for (Standard_Integer i = 1; i <= n; ++i) {
+          const gp_Pnt& p = sampler.Value(i);
+          pts.emplace_back(static_cast<float>(p.X()),
+                           static_cast<float>(p.Y()),
+                           static_cast<float>(p.Z()));
+        }
+      } catch (...) {
+        continue;
+      }
+    }
+    if (pts.size() < 2) continue;
+
+    const auto base = static_cast<std::uint32_t>(mesh.edge_vertices.size());
+    mesh.edge_vertices.insert(mesh.edge_vertices.end(), pts.begin(), pts.end());
+    for (std::size_t i = 1; i < pts.size(); ++i) {
+      mesh.edge_indices.push_back(base + static_cast<std::uint32_t>(i - 1));
+      mesh.edge_indices.push_back(base + static_cast<std::uint32_t>(i));
+    }
+  }
+}
+
 } // namespace
 
 std::shared_ptr<scene::Mesh>
@@ -251,6 +327,7 @@ shape_to_mesh(const TopoDS_Shape& shape,
     append_face(*mesh, face, vertex_color_default, opts, stats, face_id++);
   }
   if (mesh->indices.empty()) return nullptr;
+  extract_brep_edges(*mesh, shape, opts);
   return mesh;
 }
 
