@@ -57,6 +57,25 @@ void Camera::rotate_around(const vec3& pivot, const quat& delta) {
 }
 
 void Camera::orbit(float yaw_delta, float pitch_delta, const vec3& pivot) {
+  // Clamp pitch to keep the camera right-side up. Composition of quaternions
+  // is mathematically clean, but a yaw-around-world-up + pitch-around-camera-
+  // right ("turntable") camera does NOT stay user-coherent once the camera
+  // pitches past ±90° elevation: the camera flips upside down, world-up
+  // no longer matches the user's perceived up, and yaw around world-up then
+  // looks reversed on screen. Quaternions don't rescue this — the issue is
+  // user-frame vs world-frame, not the rotation representation. So clamp the
+  // resulting pitch to a hair under ±π/2 and feed the clamped delta into the
+  // rotation. `forward().y` is the sine of the current elevation in the
+  // no-roll steady state (right() lies in the world-XZ plane, so neither
+  // yaw nor pitch ever leaks roll), so `asin(forward.y)` is the current
+  // pitch angle.
+  const float fwd_y       = glm::clamp(forward().y, -1.0f, 1.0f);
+  const float cur_pitch   = std::asin(fwd_y);
+  const float pitch_limit = glm::half_pi<float>() - glm::radians(1.0f);
+  const float new_pitch   = glm::clamp(cur_pitch + pitch_delta,
+                                       -pitch_limit, pitch_limit);
+  const float pitch_eff   = new_pitch - cur_pitch;
+
   // Yaw around the world-up axis. This never injects roll — world-Y is a fixed
   // direction independent of the camera's current orientation.
   const quat q_yaw = glm::angleAxis(yaw_delta, kWorldUp);
@@ -66,7 +85,7 @@ void Camera::orbit(float yaw_delta, float pitch_delta, const vec3& pivot) {
   // plane in the no-roll steady state; `q_yaw * right()` is the right axis
   // the user sees once yaw has been applied.
   const vec3 right_after_yaw = glm::normalize(q_yaw * right());
-  const quat q_pitch = glm::angleAxis(pitch_delta, right_after_yaw);
+  const quat q_pitch = glm::angleAxis(pitch_eff, right_after_yaw);
 
   rotate_around(pivot, q_pitch * q_yaw);
 }

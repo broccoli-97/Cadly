@@ -91,6 +91,17 @@ signals:
   void rotation_pivot_visibility_changed(scene::vec3 pivot, bool visible);
 
 private:
+  // Clamp a requested zoom distance so the resulting camera position stays
+  // outside the scene's bounding sphere with a small safety margin. With no
+  // scene loaded (`scene_radius_ == 0`) only an absolute minimum is
+  // enforced.
+  float clamp_distance(float requested) const;
+
+  // Recompute Camera::near_z / far_z from the current camera position and
+  // the cached scene bounds, so the model is never clipped at any zoom
+  // level. Cheap; safe to call on every input event.
+  void  update_clip_planes();
+
   scene::Camera camera_;
   DragMode      drag_mode_{DragMode::None};
   QPoint        last_pos_{};
@@ -99,6 +110,13 @@ private:
 
   std::unique_ptr<RotationPivotResolver> pivot_resolver_;
   scene::vec3                            rotation_pivot_{0.0f};
+
+  // Cached scene bounding sphere — populated by frame_bounds(). The
+  // controller uses this to (a) clamp zoom so the camera can't pass through
+  // the model, and (b) keep near/far adapted to the current view so close-up
+  // zoom doesn't clip the model's front face.
+  scene::vec3 scene_center_{0.0f};
+  float       scene_radius_{0.0f};
 };
 
 } // namespace cadly::ui

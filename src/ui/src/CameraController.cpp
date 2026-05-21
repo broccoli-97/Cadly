@@ -32,10 +32,61 @@ void CameraController::set_viewport(int w, int h) {
 
 void CameraController::frame_bounds(const scene::vec3& min,
                                     const scene::vec3& max) {
+  // Cache the scene's bounding sphere so subsequent zoom/orbit/pan can
+  // (a) keep the camera outside the model and (b) keep near/far adapted
+  // so the model never gets clipped, no matter how close the user zooms.
+  scene_center_ = 0.5f * (min + max);
+  scene_radius_ = std::max(0.5f * glm::length(max - min), 1e-4f);
   camera_.aspect = static_cast<float>(viewport_w_) /
                    static_cast<float>(viewport_h_);
   camera_.frame_bounds(min, max);
+  update_clip_planes();
   emit changed();
+}
+
+float CameraController::clamp_distance(float requested) const {
+  // Hard floor: never let distance drop below a tiny epsilon — the camera
+  // math degenerates at 0.
+  constexpr float kAbsoluteMin = 1e-4f;
+  float d = std::max(requested, kAbsoluteMin);
+  if (scene_radius_ <= 0.0f) return d;
+
+  // Camera position parameterised by distance:
+  //     c(d) = target - forward * d
+  // We want |c(d) - scene_center| >= R for R = scene_radius * safety, i.e.
+  //     d^2 - 2(f·v)d + (v·v - R^2) >= 0      where v = target - scene_center
+  // The quadratic opens upward, so the disallowed band sits between its
+  // two roots. The orbit camera typically starts with d > upper_root
+  // (camera outside on the "near target" side); zoom-in then has to stop
+  // at upper_root or it would punch into the bounding sphere.
+  const scene::vec3 v = camera_.target - scene_center_;
+  const scene::vec3 f = camera_.forward();
+  const float R       = scene_radius_ * 1.02f;        // 2% safety margin
+  const float v_dot_v = glm::dot(v, v);
+  const float f_dot_v = glm::dot(f, v);
+  const float disc    = f_dot_v * f_dot_v - (v_dot_v - R * R);
+  if (disc <= 0.0f) return d;                         // always outside; no clamp
+
+  const float d_min_outside = f_dot_v + std::sqrt(disc);
+  return std::max(d, std::max(d_min_outside, kAbsoluteMin));
+}
+
+void CameraController::update_clip_planes() {
+  // Re-derive near/far from the actual camera-to-scene-center distance.
+  // The static near/far set once by Camera::frame_bounds becomes wrong as
+  // soon as the user zooms: the model's front face ends up closer to the
+  // camera than the original near plane and gets clipped, which looks
+  // exactly like "the camera is passing through the model."
+  if (scene_radius_ <= 0.0f) return;
+  const float d_to_center  = glm::length(camera_.position() - scene_center_);
+  const float r            = scene_radius_;
+  const float near_to_face = std::max(d_to_center - r, 0.0f);
+  // Half the distance to the nearest model point gives the model plenty of
+  // headroom, while the absolute floor (a small fraction of `distance`)
+  // keeps depth precision sane when the user has zoomed very close.
+  camera_.near_z = std::max(near_to_face * 0.5f, camera_.distance * 0.001f);
+  camera_.far_z  = (d_to_center + r) * 2.0f + 1.0f;
+  if (camera_.far_z <= camera_.near_z) camera_.far_z = camera_.near_z + 1.0f;
 }
 
 void CameraController::set_rotation_pivot_resolver(
@@ -81,11 +132,14 @@ void CameraController::update_drag(QPoint to) {
     }
     case DragMode::Dolly: {
       const float factor = 1.0f + delta.y() * kZoomSpeed;
-      camera_.distance = std::max(0.001f, camera_.distance * factor);
+      camera_.distance = clamp_distance(camera_.distance * factor);
       break;
     }
     default: break;
   }
+  // Every drag step shifts the camera relative to the scene, so the near/
+  // far planes derived from that distance need to follow.
+  update_clip_planes();
   emit changed();
 }
 
@@ -99,7 +153,8 @@ void CameraController::end_drag() {
 
 void CameraController::wheel(int angle_delta) {
   const float factor = std::exp(-static_cast<float>(angle_delta) * kWheelSpeed);
-  camera_.distance = std::max(0.001f, camera_.distance * factor);
+  camera_.distance = clamp_distance(camera_.distance * factor);
+  update_clip_planes();
   emit changed();
 }
 
