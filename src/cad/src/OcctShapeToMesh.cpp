@@ -12,11 +12,9 @@
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
 #include <GProp_GProps.hxx>
-#include <Poly_Polygon3D.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Version.hxx>
-#include <TColgp_Array1OfPnt.hxx>
 #include <TDF_LabelSequence.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
@@ -240,21 +238,78 @@ std::string read_label_name(const TDF_Label& label) {
   return {};
 }
 
-// Walk every TopoDS_Edge of the shape and append a GL_LINES-style polyline
-// for each unique one to the mesh's edge buffers. Deduplication is by the
-// underlying TShape pointer so an edge shared by two adjacent faces is only
-// emitted once. Two sources are tried per edge:
-//   1. BRep_Tool::Polygon3D — the cached 3D discretization. Present for
-//      most edges after BRepMesh has run, and follows whatever deflection
-//      the user picked for surfaces.
-//   2. BRepAdaptor_Curve + GCPnts_TangentialDeflection — analytical
-//      fallback for edges that BRepMesh did not cache (rare, but happens
-//      for free-standing wires not bounding any face).
-// Degenerate edges (e.g. the pole-collapse "edge" of a sphere) are skipped
-// because they don't have a 3D curve to walk.
+// Sample one edge's 3D curve at the given deflection tolerances and append
+// the resulting polyline to `lod` as GL_LINES index pairs. Points are in the
+// shape's local frame because BRepAdaptor_Curve folds in edge.Location()
+// internally. Returns true if a non-degenerate polyline was emitted.
+bool sample_edge_into_lod(scene::Mesh::EdgeLod& lod,
+                          const TopoDS_Edge& edge,
+                          double angular_deflection,
+                          double linear_deflection) {
+  BRepAdaptor_Curve curve(edge);
+  std::vector<scene::vec3> pts;
+  try {
+    GCPnts_TangentialDeflection sampler(
+      curve,
+      static_cast<Standard_Real>(angular_deflection),
+      static_cast<Standard_Real>(linear_deflection));
+    const Standard_Integer n = sampler.NbPoints();
+    if (n < 2) return false;
+    pts.reserve(static_cast<std::size_t>(n));
+    for (Standard_Integer i = 1; i <= n; ++i) {
+      const gp_Pnt& p = sampler.Value(i);
+      pts.emplace_back(static_cast<float>(p.X()),
+                       static_cast<float>(p.Y()),
+                       static_cast<float>(p.Z()));
+    }
+  } catch (...) {
+    return false;
+  }
+
+  const auto base = static_cast<std::uint32_t>(lod.vertices.size());
+  lod.vertices.insert(lod.vertices.end(), pts.begin(), pts.end());
+  for (std::size_t i = 1; i < pts.size(); ++i) {
+    lod.indices.push_back(base + static_cast<std::uint32_t>(i - 1));
+    lod.indices.push_back(base + static_cast<std::uint32_t>(i));
+  }
+  return true;
+}
+
+// Bake a level-of-detail ladder of BRep edge polylines for the shape. Each
+// tier is a full re-discretization at a finer chord-to-curve tolerance: tier
+// 0 matches the surface mesh deflection (so edges and faces align at default
+// zoom), tier 1 is 4x finer, tier 2 is 16x finer. The renderer picks one
+// tier per frame from the camera's world-per-pixel scale and binds that
+// tier's prebuilt GPU buffers — no runtime curve evaluation, no stutter.
+//
+// Straight lines collapse to 2 samples regardless of deflection, so the
+// extra LODs are essentially free for boxy parts; curves get progressively
+// smoother polylines without ever forcing the renderer to recompute them.
+//
+// Deduplication is by the underlying TShape pointer so an edge shared by
+// two adjacent faces is only sampled once per tier. Degenerate edges (e.g.
+// the pole-collapse "edge" of a sphere) carry no 3D curve and are skipped.
 void extract_brep_edges(scene::Mesh& mesh,
                         const TopoDS_Shape& shape,
                         const ImportOptions& opts) {
+  // Tier deflection multipliers. The factor-of-4 spacing on linear
+  // deflection gives a comfortable hysteresis band when the renderer picks
+  // a tier from world-per-pixel: a flip requires zooming ~4x further, so
+  // tier oscillation during slow zooms is impossible.
+  struct Tier { double linear_mul; double angular_mul; };
+  static constexpr Tier kTiers[] = {
+    {1.0,    1.0   },  // coarse — surface-aligned
+    {0.25,   0.5   },  // fine
+    {0.0625, 0.25  },  // ultra
+  };
+  constexpr std::size_t kLodCount = sizeof(kTiers) / sizeof(kTiers[0]);
+
+  mesh.edge_lods.resize(kLodCount);
+  for (std::size_t t = 0; t < kLodCount; ++t) {
+    mesh.edge_lods[t].linear_deflection =
+      static_cast<float>(opts.linear_deflection * kTiers[t].linear_mul);
+  }
+
   std::unordered_set<const void*> seen;
   for (TopExp_Explorer ex(shape, TopAbs_EDGE); ex.More(); ex.Next()) {
     const TopoDS_Edge& edge = TopoDS::Edge(ex.Current());
@@ -262,51 +317,19 @@ void extract_brep_edges(scene::Mesh& mesh,
     const void* key = edge.TShape().get();
     if (!seen.insert(key).second) continue;
 
-    std::vector<scene::vec3> pts;
-
-    TopLoc_Location poly_loc;
-    Handle(Poly_Polygon3D) poly3d = BRep_Tool::Polygon3D(edge, poly_loc);
-    if (!poly3d.IsNull()) {
-      const TColgp_Array1OfPnt& nodes = poly3d->Nodes();
-      pts.reserve(static_cast<std::size_t>(nodes.Length()));
-      const gp_Trsf trsf = poly_loc.Transformation();
-      for (Standard_Integer i = nodes.Lower(); i <= nodes.Upper(); ++i) {
-        gp_Pnt p = nodes.Value(i);
-        if (!poly_loc.IsIdentity()) p.Transform(trsf);
-        pts.emplace_back(static_cast<float>(p.X()),
-                         static_cast<float>(p.Y()),
-                         static_cast<float>(p.Z()));
-      }
-    } else {
-      // BRepAdaptor_Curve folds in edge.Location() internally, so the
-      // points are already in the shape's frame and need no extra
-      // transform here.
-      BRepAdaptor_Curve curve(edge);
-      try {
-        GCPnts_TangentialDeflection sampler(
-          curve,
-          static_cast<Standard_Real>(opts.angular_deflection),
-          static_cast<Standard_Real>(opts.linear_deflection));
-        const Standard_Integer n = sampler.NbPoints();
-        pts.reserve(static_cast<std::size_t>(n));
-        for (Standard_Integer i = 1; i <= n; ++i) {
-          const gp_Pnt& p = sampler.Value(i);
-          pts.emplace_back(static_cast<float>(p.X()),
-                           static_cast<float>(p.Y()),
-                           static_cast<float>(p.Z()));
-        }
-      } catch (...) {
-        continue;
-      }
+    for (std::size_t t = 0; t < kLodCount; ++t) {
+      sample_edge_into_lod(
+        mesh.edge_lods[t], edge,
+        opts.angular_deflection * kTiers[t].angular_mul,
+        opts.linear_deflection  * kTiers[t].linear_mul);
     }
-    if (pts.size() < 2) continue;
+  }
 
-    const auto base = static_cast<std::uint32_t>(mesh.edge_vertices.size());
-    mesh.edge_vertices.insert(mesh.edge_vertices.end(), pts.begin(), pts.end());
-    for (std::size_t i = 1; i < pts.size(); ++i) {
-      mesh.edge_indices.push_back(base + static_cast<std::uint32_t>(i - 1));
-      mesh.edge_indices.push_back(base + static_cast<std::uint32_t>(i));
-    }
+  // Drop trailing empty tiers (e.g. all edges failed to sample at the
+  // finest tolerance) so the renderer's selection always lands on a tier
+  // with geometry.
+  while (!mesh.edge_lods.empty() && mesh.edge_lods.back().indices.empty()) {
+    mesh.edge_lods.pop_back();
   }
 }
 

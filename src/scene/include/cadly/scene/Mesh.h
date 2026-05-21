@@ -42,16 +42,30 @@ struct Mesh {
   std::vector<Submesh>       submeshes;
   Aabb bounds = Aabb::empty();
 
+  // One level-of-detail in the BRep edge LOD ladder. Each LOD is a complete
+  // GL_LINES-style polyline set covering every edge of the source shape; the
+  // renderer picks one tier per frame based on the camera's current
+  // world-per-pixel scale (finer when zoomed in, coarser when zoomed out).
+  // `linear_deflection` is the maximum chord-to-curve distance used to bake
+  // this tier — the renderer compares it against the projected pixel budget
+  // to select which tier to draw.
+  struct EdgeLod {
+    std::vector<vec3>          vertices;
+    std::vector<std::uint32_t> indices;
+    float linear_deflection {0.0f}; // world units (usually mm)
+  };
+
   // BRep edge polylines extracted from the source CAD shape (NOT triangle
   // boundaries — these are the analytical edges of the brep, the curves
-  // bounding faces). Stored as a flat vec3 vertex array plus GL_LINES-style
-  // index pairs, so a single glDrawElements(GL_LINES, ...) renders the whole
-  // wireframe outline. Empty for non-BRep meshes.
-  std::vector<vec3>          edge_vertices;
-  std::vector<std::uint32_t> edge_indices;
+  // bounding faces). Stored as a LOD ladder sorted coarsest first; the
+  // renderer selects a tier per frame based on the camera's pixel scale.
+  // Empty for non-BRep meshes.
+  std::vector<EdgeLod> edge_lods;
 
   std::size_t triangle_count() const { return indices.size() / 3; }
-  std::size_t edge_segment_count() const { return edge_indices.size() / 2; }
+  std::size_t edge_segment_count() const {
+    return edge_lods.empty() ? 0 : edge_lods.front().indices.size() / 2;
+  }
 };
 
 } // namespace cadly::scene

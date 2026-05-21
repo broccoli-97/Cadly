@@ -39,6 +39,16 @@ struct alignas(16) FrameBlock {
   scene::vec4 rim_color;
 };
 
+// One GL buffer set per BRep edge LOD tier (vao + vbo + ibo + index count).
+// Allocated lazily as part of MeshGpu when the source mesh carries edges.
+struct EdgeLodGpu {
+  GLuint  vao        {0};
+  GLuint  vbo        {0};
+  GLuint  ibo        {0};
+  GLsizei index_count{0};
+  float   linear_deflection{0.0f}; // copied from scene::Mesh::EdgeLod
+};
+
 // One per scene::Mesh. Cached so re-uploading happens only when the source
 // pointer changes.
 struct MeshGpu {
@@ -46,12 +56,11 @@ struct MeshGpu {
   GLuint vbo{0};
   GLuint ibo{0};
   GLsizei index_count{0};
-  // BRep edge buffers (optional). Allocated only if the source mesh has
-  // edge polylines from the importer.
-  GLuint edge_vao{0};
-  GLuint edge_vbo{0};
-  GLuint edge_ibo{0};
-  GLsizei edge_index_count{0};
+  // BRep edge LOD ladder. Each entry is a complete GL_LINES set at a
+  // different chord deflection; the renderer picks one tier per frame based
+  // on world-per-pixel. Empty for meshes that came from triangle-only
+  // sources (STL, OBJ) with no BRep edges.
+  std::vector<EdgeLodGpu> edge_lods;
   std::shared_ptr<scene::Mesh> source; // keeps the CPU data alive
 };
 
@@ -301,31 +310,39 @@ void GLRendererImpl::ensure_mesh_upload(const scene::Mesh& mesh,
 
   gl_.glBindVertexArray(0);
 
-  // Edge polylines, if the importer captured any. Vertex layout is a flat
-  // packed array of vec3 positions; indices come in GL_LINES pairs.
-  if (!mesh.edge_vertices.empty() && !mesh.edge_indices.empty()) {
-    gl_.glGenVertexArrays(1, &g.edge_vao);
-    gl_.glGenBuffers(1, &g.edge_vbo);
-    gl_.glGenBuffers(1, &g.edge_ibo);
-    gl_.glBindVertexArray(g.edge_vao);
-    gl_.glBindBuffer(GL_ARRAY_BUFFER, g.edge_vbo);
+  // Edge polylines, if the importer captured any. The mesh carries a LOD
+  // ladder (coarse → fine); each tier becomes its own VAO/VBO/IBO so the
+  // draw pass can switch tiers with a single glBindVertexArray. Vertex
+  // layout is a flat packed array of vec3 positions; indices come in
+  // GL_LINES pairs.
+  g.edge_lods.reserve(mesh.edge_lods.size());
+  for (const auto& lod : mesh.edge_lods) {
+    if (lod.vertices.empty() || lod.indices.empty()) continue;
+    EdgeLodGpu gl_lod{};
+    gl_.glGenVertexArrays(1, &gl_lod.vao);
+    gl_.glGenBuffers(1, &gl_lod.vbo);
+    gl_.glGenBuffers(1, &gl_lod.ibo);
+    gl_.glBindVertexArray(gl_lod.vao);
+    gl_.glBindBuffer(GL_ARRAY_BUFFER, gl_lod.vbo);
     gl_.glBufferData(GL_ARRAY_BUFFER,
-                     static_cast<GLsizeiptr>(mesh.edge_vertices.size() *
+                     static_cast<GLsizeiptr>(lod.vertices.size() *
                                              sizeof(scene::vec3)),
-                     mesh.edge_vertices.data(),
+                     lod.vertices.data(),
                      GL_STATIC_DRAW);
     gl_.glEnableVertexAttribArray(0);
     gl_.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
                               sizeof(scene::vec3), nullptr);
-    gl_.glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g.edge_ibo);
+    gl_.glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_lod.ibo);
     gl_.glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-                     static_cast<GLsizeiptr>(mesh.edge_indices.size() *
+                     static_cast<GLsizeiptr>(lod.indices.size() *
                                              sizeof(std::uint32_t)),
-                     mesh.edge_indices.data(),
+                     lod.indices.data(),
                      GL_STATIC_DRAW);
-    g.edge_index_count = static_cast<GLsizei>(mesh.edge_indices.size());
-    gl_.glBindVertexArray(0);
+    gl_lod.index_count       = static_cast<GLsizei>(lod.indices.size());
+    gl_lod.linear_deflection = lod.linear_deflection;
+    g.edge_lods.push_back(gl_lod);
   }
+  gl_.glBindVertexArray(0);
 
   meshes_.emplace(const_cast<scene::Mesh*>(&mesh), g);
 }
@@ -677,6 +694,41 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
   // permissive ones (Mesa, some Intel) draw 1.2 px lines.
   gl_.glLineWidth(1.2f);
 
+  // World-units-per-pixel at the camera's target distance. The formula is
+  // identical for orthographic and perspective: the ortho frustum's
+  // half-height is `distance * tan(fov_y/2)` by construction (see
+  // Camera::projection), so screen-height-in-world = 2 * distance *
+  // tan(fov_y/2) in both modes. We compare LOD deflections to this to pick
+  // the finest tier whose chord error is still ≤ 1 pixel; the 4x linear
+  // spacing between tiers produces enough hysteresis to keep zoom flicker
+  // out without explicit state.
+  constexpr float kPixelBudget = 1.0f;
+  const auto& cam = scene_->camera;
+  const float screen_height_world =
+    2.0f * std::max(cam.distance, 1e-6f) * std::tan(0.5f * cam.fov_y);
+  const float world_per_pixel =
+    screen_height_world / std::max(static_cast<float>(viewport_h_), 1.0f);
+  const float deflection_budget = kPixelBudget * world_per_pixel;
+
+  auto select_lod = [&](const std::vector<EdgeLodGpu>& lods) -> const EdgeLodGpu* {
+    if (lods.empty()) return nullptr;
+    // Tiers are stored coarsest first; pick the finest tier whose chord
+    // deflection still satisfies the per-pixel budget. Falls back to the
+    // finest tier when zoomed in further than the ladder reaches, and to
+    // the coarsest tier when zoomed out beyond what tier 0 covers.
+    const EdgeLodGpu* chosen = &lods.front();
+    for (const auto& lod : lods) {
+      if (lod.index_count == 0) continue;
+      if (lod.linear_deflection <= deflection_budget) chosen = &lod;
+    }
+    if (chosen->index_count == 0) {
+      for (const auto& lod : lods) {
+        if (lod.index_count != 0) { chosen = &lod; break; }
+      }
+    }
+    return chosen->index_count == 0 ? nullptr : chosen;
+  };
+
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;
     if (*node.mesh_index >= scene_->meshes.size()) continue;
@@ -685,12 +737,13 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
     auto mit = meshes_.find(mesh_ptr.get());
     if (mit == meshes_.end()) continue;
     const auto& g = mit->second;
-    if (!g.edge_vao || g.edge_index_count == 0) continue;
+    const EdgeLodGpu* lod = select_lod(g.edge_lods);
+    if (!lod) continue;
 
     gl_.glUniformMatrix4fv(loc_model, 1, GL_FALSE,
                            glm::value_ptr(node.world_matrix));
-    gl_.glBindVertexArray(g.edge_vao);
-    gl_.glDrawElements(GL_LINES, g.edge_index_count, GL_UNSIGNED_INT, nullptr);
+    gl_.glBindVertexArray(lod->vao);
+    gl_.glDrawElements(GL_LINES, lod->index_count, GL_UNSIGNED_INT, nullptr);
   }
   gl_.glBindVertexArray(0);
   gl_.glDisable(GL_BLEND);
@@ -833,9 +886,11 @@ void GLRendererImpl::shutdown() {
     if (g.vao) gl_.glDeleteVertexArrays(1, &g.vao);
     if (g.vbo) gl_.glDeleteBuffers(1, &g.vbo);
     if (g.ibo) gl_.glDeleteBuffers(1, &g.ibo);
-    if (g.edge_vao) gl_.glDeleteVertexArrays(1, &g.edge_vao);
-    if (g.edge_vbo) gl_.glDeleteBuffers(1, &g.edge_vbo);
-    if (g.edge_ibo) gl_.glDeleteBuffers(1, &g.edge_ibo);
+    for (auto& lod : g.edge_lods) {
+      if (lod.vao) gl_.glDeleteVertexArrays(1, &lod.vao);
+      if (lod.vbo) gl_.glDeleteBuffers(1, &lod.vbo);
+      if (lod.ibo) gl_.glDeleteBuffers(1, &lod.ibo);
+    }
   }
   meshes_.clear();
   if (ubo_frame_)      gl_.glDeleteBuffers(1, &ubo_frame_);
