@@ -276,17 +276,29 @@ void MainWindow::update_status_for_scene() {
 
 void MainWindow::on_fit_view()        { viewport_->fit_view(); }
 void MainWindow::on_toggle_wireframe(bool on) {
-  // Wireframe and edge overlay both draw line work over (or instead of)
-  // the surface, so enabling them together is ambiguous. The first one
-  // turned on wins; the other is silently unchecked. Done with a blocked
-  // signal so we don't bounce back into the partner slot.
-  if (on && act_edges_ && act_edges_->isChecked()) {
-    QSignalBlocker block(act_edges_);
-    act_edges_->setChecked(false);
+  // Wireframe, edge overlay, and triangle-mesh overlay all interact with
+  // the shaded surface (or replace it). Triangle mesh in particular relies
+  // on the filled surface to occlude back-of-part triangles; without it
+  // those lines leak through the silhouette and the background shows
+  // through, so the three modes are made mutually exclusive at the UI
+  // layer. The first toggle turned on wins; the others are silently
+  // unchecked through blocked signals so we don't bounce into their slots.
+  if (on) {
+    if (act_edges_ && act_edges_->isChecked()) {
+      QSignalBlocker block(act_edges_);
+      act_edges_->setChecked(false);
+    }
+    if (act_triangle_mesh_ && act_triangle_mesh_->isChecked()) {
+      QSignalBlocker block(act_triangle_mesh_);
+      act_triangle_mesh_->setChecked(false);
+    }
   }
   auto mode = viewport_->display_mode();
   mode.wireframe = on;
-  if (on) mode.show_edges = false;
+  if (on) {
+    mode.show_edges         = false;
+    mode.show_triangle_mesh = false;
+  }
   viewport_->set_display_mode(mode);
 }
 void MainWindow::on_toggle_grid(bool on) {
@@ -294,8 +306,16 @@ void MainWindow::on_toggle_grid(bool on) {
   viewport_->set_display_mode(mode);
 }
 void MainWindow::on_toggle_triangle_mesh(bool on) {
+  // Triangle-mesh overlay needs the shaded surface to occlude back-of-part
+  // triangles, so it cannot coexist with wireframe mode (which skips that
+  // surface). Force wireframe off when this toggle is turned on.
+  if (on && act_wireframe_ && act_wireframe_->isChecked()) {
+    QSignalBlocker block(act_wireframe_);
+    act_wireframe_->setChecked(false);
+  }
   auto mode = viewport_->display_mode();
   mode.show_triangle_mesh = on;
+  if (on) mode.wireframe = false;
   viewport_->set_display_mode(mode);
 }
 void MainWindow::on_toggle_perspective(bool on) {

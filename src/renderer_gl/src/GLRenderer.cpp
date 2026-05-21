@@ -893,12 +893,13 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   // below using the analytical LOD ladder). Skip the entire shaded surface
   // pass so triangle-mesh edges are never drawn implicitly — the old
   // behaviour of flipping glPolygonMode to GL_LINE produced exactly that
-  // and is the thing this mode is meant to avoid. The triangle-mesh debug
-  // overlay can still be turned on explicitly; in that case both line
-  // passes run with no surface fill, giving a see-through wireframe
-  // where BRep edges and triangulation are both visible.
+  // and is the thing this mode is meant to avoid. The triangle-mesh
+  // overlay is also skipped here: it relies on the filled surface to
+  // occlude back-of-part triangles, and without it the overlay penetrates
+  // the silhouette and lets the background show through. The UI keeps the
+  // two modes mutually exclusive so this branch should never see
+  // show_triangle_mesh set, but guard anyway.
   if (mode.wireframe) {
-    draw_triangle_mesh(mode);
     draw_edges(mode);
     draw_grid(mode);
     draw_pivot(mode);
