@@ -34,7 +34,15 @@ mat4 Camera::view() const {
 }
 
 mat4 Camera::projection() const {
-  return glm::perspective(fov_y, std::max(aspect, 0.0001f), near_z, far_z);
+  const float a = std::max(aspect, 0.0001f);
+  if (projection_mode == Projection::Perspective) {
+    return glm::perspective(fov_y, a, near_z, far_z);
+  }
+  // Match the apparent height at the target plane so toggling preserves
+  // on-screen scale, and so distance-based zoom keeps behaving the same.
+  const float half_h = distance * std::tan(0.5f * fov_y);
+  const float half_w = half_h * a;
+  return glm::ortho(-half_w, half_w, -half_h, half_h, near_z, far_z);
 }
 
 void Camera::rotate_around(const vec3& pivot, const quat& delta) {

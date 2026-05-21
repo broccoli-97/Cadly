@@ -14,6 +14,11 @@ namespace cadly::scene {
 // CAD-style "no roll" behaviour is preserved by always feeding orbit input
 // through `orbit()`, which decomposes the delta into yaw-around-world-up and
 // pitch-around-camera-right.
+enum class Projection {
+  Orthographic,
+  Perspective,
+};
+
 struct Camera {
   vec3 target{0.0f};
 
@@ -31,6 +36,12 @@ struct Camera {
   float near_z {0.05f};
   float far_z  {1500.0f};
   float aspect {1.0f};
+
+  // CAD inspection traditionally defaults to orthographic so that parallel
+  // features stay parallel on screen and measurements are not foreshortened.
+  // Ortho extents are derived from `distance` and `fov_y` (see projection()),
+  // which keeps zoom-via-distance and frame_bounds() working in both modes.
+  Projection projection_mode{Projection::Orthographic};
 
   vec3 position() const;
   vec3 forward()  const;   // unit direction from eye toward target

@@ -114,6 +114,17 @@ void MainWindow::build_menus() {
   connect(act_edges_, &QAction::toggled, this, &MainWindow::on_toggle_edges);
   view_menu->addAction(act_edges_);
 
+  view_menu->addSeparator();
+  act_perspective_ = new QAction(tr("Perspective projection"), this);
+  act_perspective_->setCheckable(true);
+  act_perspective_->setChecked(false);  // default is orthographic
+  act_perspective_->setShortcut(Qt::Key_P);
+  act_perspective_->setToolTip(
+    tr("Toggle between orthographic (default) and perspective projection"));
+  connect(act_perspective_, &QAction::toggled,
+          this, &MainWindow::on_toggle_perspective);
+  view_menu->addAction(act_perspective_);
+
   auto* help_menu = menuBar()->addMenu(tr("&Help"));
   act_about_ = new QAction(tr("About Cadly"), this);
   connect(act_about_, &QAction::triggered, this, &MainWindow::on_about);
@@ -268,6 +279,13 @@ void MainWindow::on_toggle_wireframe(bool on) {
 void MainWindow::on_toggle_grid(bool on) {
   auto mode = viewport_->display_mode(); mode.show_grid = on;
   viewport_->set_display_mode(mode);
+}
+void MainWindow::on_toggle_perspective(bool on) {
+  auto* ctrl = viewport_->camera_controller();
+  if (!ctrl) return;
+  ctrl->camera().projection_mode =
+    on ? scene::Projection::Perspective : scene::Projection::Orthographic;
+  viewport_->update();
 }
 void MainWindow::on_toggle_edges(bool on) {
   if (on && act_wireframe_ && act_wireframe_->isChecked()) {

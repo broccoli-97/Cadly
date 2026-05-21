@@ -34,6 +34,7 @@ private slots:
   void on_toggle_wireframe(bool on);
   void on_toggle_grid(bool on);
   void on_toggle_edges(bool on);
+  void on_toggle_perspective(bool on);
   void on_about();
 
 private:
@@ -58,6 +59,7 @@ private:
   QAction* act_wireframe_{nullptr};
   QAction* act_grid_{nullptr};
   QAction* act_edges_{nullptr};
+  QAction* act_perspective_{nullptr};
   QAction* act_about_{nullptr};
 
   QLabel*  status_stats_{nullptr};
