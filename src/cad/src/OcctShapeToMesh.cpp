@@ -12,9 +12,11 @@
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
 #include <GProp_GProps.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Version.hxx>
+#include <TColStd_Array1OfInteger.hxx>
 #include <TDF_LabelSequence.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
@@ -63,13 +65,17 @@ void tessellate(const TopoDS_Shape& shape, const ImportOptions& opts) {
 }
 
 // Push one face's triangulation into the running Mesh buffers. Returns the
-// number of triangles emitted.
+// number of triangles emitted. `seen_edges` is shared across all faces of a
+// shape and tracks which TopoDS_Edges have already had their mesh-coupled
+// polyline emitted — an edge bordering two faces would otherwise be drawn
+// twice from each face's own copy of the boundary nodes.
 std::size_t append_face(scene::Mesh& mesh,
                         const TopoDS_Face& face,
                         const std::optional<Quantity_Color>& face_color,
                         const ImportOptions& opts,
                         ConversionStats& stats,
-                        std::uint32_t source_face_id) {
+                        std::uint32_t source_face_id,
+                        std::unordered_set<const void*>& seen_edges) {
   TopLoc_Location loc;
   Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
   if (tri.IsNull()) return 0;
@@ -190,6 +196,37 @@ std::size_t append_face(scene::Mesh& mesh,
   sub.index_count = static_cast<std::uint32_t>(emitted * 3);
   mesh.submeshes.push_back(sub);
   mesh.bounds.expand(sub.bounds);
+
+  // Mesh-coupled BRep edge polylines. Each TopoDS_Edge of the face carries
+  // a Poly_PolygonOnTriangulation: a 1-based array of integers indexing
+  // into THIS face's node array. Emit GL_LINES pairs that point into the
+  // global `mesh.vertices` (offset by `base_vertex`) — the resulting edge
+  // vertices are literally the same memory as the corresponding face
+  // vertices, so the "shaded with edges" overlay needs only glPolygonOffset
+  // to keep edges visible: their depth values are identical before offset.
+  //
+  // Dedup is keyed on TShape*. An edge shared by two faces produces a
+  // valid PolygonOnTriangulation under each face's triangulation, but
+  // OCCT seeds both with the same boundary sample points so it does not
+  // matter which face we use — picking the first one we see is correct.
+  for (TopExp_Explorer ex_e(face, TopAbs_EDGE); ex_e.More(); ex_e.Next()) {
+    const TopoDS_Edge& edge = TopoDS::Edge(ex_e.Current());
+    if (BRep_Tool::Degenerated(edge)) continue;
+    const void* key = edge.TShape().get();
+    if (!seen_edges.insert(key).second) continue;
+
+    Handle(Poly_PolygonOnTriangulation) poly =
+      BRep_Tool::PolygonOnTriangulation(edge, tri, loc);
+    if (poly.IsNull()) continue;
+    const TColStd_Array1OfInteger& nodes = poly->Nodes();
+    if (nodes.Length() < 2) continue;
+    for (Standard_Integer i = nodes.Lower(); i < nodes.Upper(); ++i) {
+      mesh.edge_strip_indices.push_back(
+        base_vertex + static_cast<std::uint32_t>(nodes.Value(i)     - 1));
+      mesh.edge_strip_indices.push_back(
+        base_vertex + static_cast<std::uint32_t>(nodes.Value(i + 1) - 1));
+    }
+  }
 
   stats.triangle_count += emitted;
   stats.vertex_count   += node_count;
@@ -345,9 +382,11 @@ shape_to_mesh(const TopoDS_Shape& shape,
 
   auto mesh = std::make_shared<scene::Mesh>();
   std::uint32_t face_id = 0;
+  std::unordered_set<const void*> seen_strip_edges;
   for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
     const TopoDS_Face& face = TopoDS::Face(ex.Current());
-    append_face(*mesh, face, vertex_color_default, opts, stats, face_id++);
+    append_face(*mesh, face, vertex_color_default, opts, stats, face_id++,
+                seen_strip_edges);
   }
   if (mesh->indices.empty()) return nullptr;
   extract_brep_edges(*mesh, shape, opts);
@@ -415,8 +454,11 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
       static_cast<float>(c->Green()),
       static_cast<float>(c->Blue()),
       1.0f);
-    m.metallic   = 0.1f;
-    m.roughness  = 0.55f;
+    // Fully dielectric + matte. A faintly metallic / mid-roughness default
+    // turns residual facet error into visible specular banding from the IBL
+    // probe — see Material::plastic() for the same reasoning.
+    m.metallic   = 0.0f;
+    m.roughness  = 0.75f;
     const std::uint32_t idx = scn->add_material(std::move(m));
     material_cache.emplace(key, idx);
     return idx;

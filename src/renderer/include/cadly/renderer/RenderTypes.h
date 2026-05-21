@@ -26,6 +26,10 @@ struct DisplayMode {
   bool show_grid        {false};
   bool show_axes        {true};
   bool draw_background  {true};
+  // Debug overlay: draw every triangle edge of the face triangulation on
+  // top of the shaded surface. Independent of show_edges (BRep edges) and
+  // wireframe (BRep-only line view); orthogonal to both.
+  bool show_triangle_mesh {false};
   float edge_intensity  {0.65f};
   scene::vec3 background_top   {0.42f, 0.44f, 0.48f};
   scene::vec3 background_bottom{0.22f, 0.23f, 0.26f};

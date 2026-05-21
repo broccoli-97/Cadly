@@ -14,9 +14,14 @@ namespace cadly::cad {
 // Knobs the user can tweak in the Import Options dialog. Defaults are tuned
 // for industrial assemblies in millimetres; the CLI uses the same defaults.
 struct ImportOptions {
-  // BRepMesh_IncrementalMesh parameters.
-  double linear_deflection  {0.5};   // in model units (usually mm)
-  double angular_deflection {0.5};   // radians
+  // BRepMesh_IncrementalMesh parameters. Defaults are tuned for visualization
+  // (not simulation): fine enough that cylindrical features render with
+  // ~30+ facets per circle so silhouettes don't look polygonal, but not so
+  // fine that import time or triangle budget blows up on large assemblies.
+  // The angular budget dominates on small radii; the linear budget dominates
+  // on large radii — both matter.
+  double linear_deflection  {0.1};   // in model units (usually mm)
+  double angular_deflection {0.35};  // radians (~20°)
   bool   relative_deflection{false};
   bool   parallel_meshing   {true};
 

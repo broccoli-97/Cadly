@@ -97,6 +97,8 @@ void MainWindow::build_menus() {
   act_wireframe_ = new QAction(tr("Wireframe"), this);
   act_wireframe_->setCheckable(true);
   act_wireframe_->setShortcut(Qt::Key_W);
+  act_wireframe_->setToolTip(
+    tr("Show only the BRep wireframe (analytical edges, auto-refined on zoom)"));
   connect(act_wireframe_, &QAction::toggled, this, &MainWindow::on_toggle_wireframe);
   view_menu->addAction(act_wireframe_);
 
@@ -113,6 +115,16 @@ void MainWindow::build_menus() {
   act_edges_->setToolTip(tr("Overlay the BRep edges of the model"));
   connect(act_edges_, &QAction::toggled, this, &MainWindow::on_toggle_edges);
   view_menu->addAction(act_edges_);
+
+  act_triangle_mesh_ = new QAction(tr("Show triangle mesh"), this);
+  act_triangle_mesh_->setCheckable(true);
+  act_triangle_mesh_->setChecked(false);
+  act_triangle_mesh_->setShortcut(Qt::Key_T);
+  act_triangle_mesh_->setToolTip(
+    tr("Debug overlay: draw every triangle edge of the face triangulation"));
+  connect(act_triangle_mesh_, &QAction::toggled,
+          this, &MainWindow::on_toggle_triangle_mesh);
+  view_menu->addAction(act_triangle_mesh_);
 
   view_menu->addSeparator();
   act_perspective_ = new QAction(tr("Perspective projection"), this);
@@ -142,6 +154,7 @@ void MainWindow::build_toolbar() {
   tb->addAction(act_wireframe_);
   tb->addAction(act_grid_);
   tb->addAction(act_edges_);
+  tb->addAction(act_triangle_mesh_);
 }
 
 void MainWindow::build_status_bar() {
@@ -278,6 +291,11 @@ void MainWindow::on_toggle_wireframe(bool on) {
 }
 void MainWindow::on_toggle_grid(bool on) {
   auto mode = viewport_->display_mode(); mode.show_grid = on;
+  viewport_->set_display_mode(mode);
+}
+void MainWindow::on_toggle_triangle_mesh(bool on) {
+  auto mode = viewport_->display_mode();
+  mode.show_triangle_mesh = on;
   viewport_->set_display_mode(mode);
 }
 void MainWindow::on_toggle_perspective(bool on) {

@@ -39,7 +39,10 @@ struct Material {
     Material m; m.name = "plastic";
     m.base_color = vec4(0.85f, 0.85f, 0.85f, 1.0f);
     m.metallic   = 0.0f;
-    m.roughness  = 0.55f;
+    // Matte enough that residual surface facetting does not turn into
+    // visible specular banding on the IBL highlights. CAD inspection
+    // doesn't need a shiny default.
+    m.roughness  = 0.75f;
     return m;
   }
   static Material rubber() {

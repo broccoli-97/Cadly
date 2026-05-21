@@ -56,10 +56,18 @@ struct MeshGpu {
   GLuint vbo{0};
   GLuint ibo{0};
   GLsizei index_count{0};
-  // BRep edge LOD ladder. Each entry is a complete GL_LINES set at a
-  // different chord deflection; the renderer picks one tier per frame based
-  // on world-per-pixel. Empty for meshes that came from triangle-only
-  // sources (STL, OBJ) with no BRep edges.
+  // Mesh-coupled BRep edge buffer. Reuses `vbo` (the surface vertex
+  // buffer) so edge vertices and face vertices share identical depth
+  // before polygon offset is applied — the "shaded with edges" overlay
+  // can rely on offset alone to keep edges in front of their faces.
+  // Allocated only when the source mesh carries `edge_strip_indices`.
+  GLuint strip_vao  {0};
+  GLuint strip_ibo  {0};
+  GLsizei strip_index_count{0};
+  // BRep edge LOD ladder, sampled analytically. Kept around for the
+  // "edges without surfaces" view; not used by the default shaded-with-
+  // edges path because mesh-coupled indices are guaranteed consistent
+  // with the face triangulation, while the analytical curve is not.
   std::vector<EdgeLodGpu> edge_lods;
   std::shared_ptr<scene::Mesh> source; // keeps the CPU data alive
 };
@@ -86,6 +94,7 @@ private:
   void draw_grid(const renderer::DisplayMode& mode);
   void draw_pivot(const renderer::DisplayMode& mode);
   void draw_edges(const renderer::DisplayMode& mode);
+  void draw_triangle_mesh(const renderer::DisplayMode& mode);
 
   // IBL bake — runs once at init. The four targets together implement the
   // Karis split-sum approximation: irradiance for diffuse, prefilter +
@@ -309,6 +318,32 @@ void GLRendererImpl::ensure_mesh_upload(const scene::Mesh& mesh,
                             reinterpret_cast<void*>(offsetof(scene::Vertex, color_rgba8)));
 
   gl_.glBindVertexArray(0);
+
+  // Mesh-coupled BRep edge strip. Indices point into the surface VBO we
+  // just uploaded, so we share the VBO (no extra vertex storage), bind a
+  // fresh VAO with the position attribute set up the same way, and attach
+  // a new IBO that contains only the GL_LINES pairs from the face
+  // triangulation's boundary. The edge shader reads attribute 0 only;
+  // normal/color attributes from the surface layout are ignored.
+  if (!mesh.edge_strip_indices.empty()) {
+    gl_.glGenVertexArrays(1, &g.strip_vao);
+    gl_.glGenBuffers(1, &g.strip_ibo);
+    gl_.glBindVertexArray(g.strip_vao);
+    gl_.glBindBuffer(GL_ARRAY_BUFFER, g.vbo);
+    gl_.glEnableVertexAttribArray(0);
+    gl_.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              sizeof(scene::Vertex),
+                              reinterpret_cast<void*>(offsetof(scene::Vertex, position)));
+    gl_.glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g.strip_ibo);
+    gl_.glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                     static_cast<GLsizeiptr>(mesh.edge_strip_indices.size() *
+                                             sizeof(std::uint32_t)),
+                     mesh.edge_strip_indices.data(),
+                     GL_STATIC_DRAW);
+    g.strip_index_count =
+      static_cast<GLsizei>(mesh.edge_strip_indices.size());
+    gl_.glBindVertexArray(0);
+  }
 
   // Edge polylines, if the importer captured any. The mesh carries a LOD
   // ladder (coarse → fine); each tier becomes its own VAO/VBO/IBO so the
@@ -662,8 +697,72 @@ void GLRendererImpl::draw_pivot(const renderer::DisplayMode& mode) {
   gl_.glDisable(GL_BLEND);
 }
 
+void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
+  // Debug overlay: re-draw the surface triangles in GL_LINE polygon mode
+  // using the edges shader. Reuses the surface VAO + IBO, so the triangle
+  // edges sit exactly on the same depth values as the filled surface —
+  // glPolygonOffset on the surface (enabled in render() when any line
+  // overlay is on) keeps these lines in front of the fill without
+  // Z-fighting, and the existing depth test correctly hides triangles on
+  // the back of the part.
+  if (!mode.show_triangle_mesh || !prog_edges_.valid() || !scene_) return;
+
+  gl_.glUseProgram(prog_edges_.id());
+  const GLint loc_model = prog_edges_.uniform(gl_, "u_model");
+  const GLint loc_color = prog_edges_.uniform(gl_, "u_color");
+  const GLint loc_bias  = prog_edges_.uniform(gl_, "u_view_bias");
+  gl_.glUniform1f(loc_bias, 0.0f);
+  // Cooler / lighter than the BRep edge ink so the two overlays are
+  // distinguishable when both are on. Mid-alpha to soften the inevitable
+  // double-draw where a triangle edge coincides with a BRep edge.
+  const scene::vec4 tc{0.20f, 0.45f, 0.60f, 0.55f};
+  gl_.glUniform4fv(loc_color, 1, &tc.x);
+
+  gl_.glEnable(GL_BLEND);
+  gl_.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  gl_.glDepthMask(GL_FALSE);
+  gl_.glLineWidth(1.0f);
+  gl_.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+  // Triangles are not "facing" in line mode — drop culling for the pass
+  // so back-of-part triangles also draw, then let the depth test hide
+  // those that the front-facing surface already covers.
+  gl_.glDisable(GL_CULL_FACE);
+
+  for (const auto& node : scene_->nodes) {
+    if (!node.visible || !node.mesh_index) continue;
+    if (*node.mesh_index >= scene_->meshes.size()) continue;
+    const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
+    if (!mesh_ptr) continue;
+    auto mit = meshes_.find(mesh_ptr.get());
+    if (mit == meshes_.end()) continue;
+    const auto& g = mit->second;
+    if (g.vao == 0 || g.index_count == 0) continue;
+
+    gl_.glUniformMatrix4fv(loc_model, 1, GL_FALSE,
+                           glm::value_ptr(node.world_matrix));
+    gl_.glBindVertexArray(g.vao);
+    gl_.glDrawElements(GL_TRIANGLES, g.index_count, GL_UNSIGNED_INT, nullptr);
+  }
+
+  gl_.glBindVertexArray(0);
+  gl_.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+  gl_.glEnable(GL_CULL_FACE);
+  gl_.glDisable(GL_BLEND);
+  gl_.glDepthMask(GL_TRUE);
+}
+
 void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
-  if (!mode.show_edges || !prog_edges_.valid() || !scene_) return;
+  // Two display modes feed this pass:
+  //   - mode.show_edges : overlay BRep edges on the shaded surface using
+  //                       the mesh-coupled strip (depth-matched, no
+  //                       LOD selection needed).
+  //   - mode.wireframe  : draw ONLY the BRep wireframe — the analytical
+  //                       LOD ladder, refined per frame from the
+  //                       camera's world-per-pixel, since there is no
+  //                       triangulated face to anchor against.
+  // The two modes are mutually exclusive at the UI level.
+  if (!prog_edges_.valid() || !scene_) return;
+  if (!mode.show_edges && !mode.wireframe) return;
 
   gl_.glUseProgram(prog_edges_.id());
   const GLint loc_model = prog_edges_.uniform(gl_, "u_model");
@@ -694,14 +793,12 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
   // permissive ones (Mesa, some Intel) draw 1.2 px lines.
   gl_.glLineWidth(1.2f);
 
-  // World-units-per-pixel at the camera's target distance. The formula is
-  // identical for orthographic and perspective: the ortho frustum's
-  // half-height is `distance * tan(fov_y/2)` by construction (see
-  // Camera::projection), so screen-height-in-world = 2 * distance *
-  // tan(fov_y/2) in both modes. We compare LOD deflections to this to pick
-  // the finest tier whose chord error is still ≤ 1 pixel; the 4x linear
-  // spacing between tiers produces enough hysteresis to keep zoom flicker
-  // out without explicit state.
+  // Camera-driven LOD selection used by the wireframe path. World-per-pixel
+  // at the camera's target plane is the same formula in orthographic and
+  // perspective: the ortho frustum's half-height is `distance *
+  // tan(fov_y/2)` by construction (see Camera::projection), so the
+  // screen-height-in-world is identical in both modes. Computed once per
+  // frame and reused for every node.
   constexpr float kPixelBudget = 1.0f;
   const auto& cam = scene_->camera;
   const float screen_height_world =
@@ -711,22 +808,21 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
   const float deflection_budget = kPixelBudget * world_per_pixel;
 
   auto select_lod = [&](const std::vector<EdgeLodGpu>& lods) -> const EdgeLodGpu* {
-    if (lods.empty()) return nullptr;
-    // Tiers are stored coarsest first; pick the finest tier whose chord
-    // deflection still satisfies the per-pixel budget. Falls back to the
-    // finest tier when zoomed in further than the ladder reaches, and to
-    // the coarsest tier when zoomed out beyond what tier 0 covers.
-    const EdgeLodGpu* chosen = &lods.front();
+    // Tiers are stored coarsest first. Pick the COARSEST tier whose chord
+    // deflection still fits the per-pixel budget — going finer would draw
+    // more segments without any visual change. If we are zoomed in past
+    // the whole ladder, fall through to the finest non-empty tier.
+    const EdgeLodGpu* chosen = nullptr;
     for (const auto& lod : lods) {
       if (lod.index_count == 0) continue;
-      if (lod.linear_deflection <= deflection_budget) chosen = &lod;
+      if (lod.linear_deflection <= deflection_budget) { chosen = &lod; break; }
     }
-    if (chosen->index_count == 0) {
-      for (const auto& lod : lods) {
-        if (lod.index_count != 0) { chosen = &lod; break; }
+    if (!chosen) {
+      for (auto it = lods.rbegin(); it != lods.rend(); ++it) {
+        if (it->index_count != 0) { chosen = &*it; break; }
       }
     }
-    return chosen->index_count == 0 ? nullptr : chosen;
+    return chosen;
   };
 
   for (const auto& node : scene_->nodes) {
@@ -737,13 +833,28 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
     auto mit = meshes_.find(mesh_ptr.get());
     if (mit == meshes_.end()) continue;
     const auto& g = mit->second;
-    const EdgeLodGpu* lod = select_lod(g.edge_lods);
-    if (!lod) continue;
+
+    GLuint  vao   = 0;
+    GLsizei count = 0;
+    if (mode.wireframe) {
+      // BRep wireframe: refined polylines from the analytical LOD ladder.
+      const EdgeLodGpu* lod = select_lod(g.edge_lods);
+      if (!lod) continue;
+      vao   = lod->vao;
+      count = lod->index_count;
+    } else {
+      // Shaded-with-edges overlay: mesh-coupled strip indices into the
+      // surface VBO. Polygon offset on the surface (see render()) keeps
+      // these edges in front of their faces without geometric divergence.
+      if (g.strip_vao == 0 || g.strip_index_count == 0) continue;
+      vao   = g.strip_vao;
+      count = g.strip_index_count;
+    }
 
     gl_.glUniformMatrix4fv(loc_model, 1, GL_FALSE,
                            glm::value_ptr(node.world_matrix));
-    gl_.glBindVertexArray(lod->vao);
-    gl_.glDrawElements(GL_LINES, lod->index_count, GL_UNSIGNED_INT, nullptr);
+    gl_.glBindVertexArray(vao);
+    gl_.glDrawElements(GL_LINES, count, GL_UNSIGNED_INT, nullptr);
   }
   gl_.glBindVertexArray(0);
   gl_.glDisable(GL_BLEND);
@@ -778,22 +889,40 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     return;
   }
 
-  gl_.glUseProgram(prog_pbr_.id());
-
+  // Wireframe mode shows ONLY the BRep wireframe (handled by draw_edges
+  // below using the analytical LOD ladder). Skip the entire shaded surface
+  // pass so triangle-mesh edges are never drawn implicitly — the old
+  // behaviour of flipping glPolygonMode to GL_LINE produced exactly that
+  // and is the thing this mode is meant to avoid. The triangle-mesh debug
+  // overlay can still be turned on explicitly; in that case both line
+  // passes run with no surface fill, giving a see-through wireframe
+  // where BRep edges and triangulation are both visible.
   if (mode.wireframe) {
-    gl_.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    gl_.glDisable(GL_CULL_FACE);
+    draw_triangle_mesh(mode);
+    draw_edges(mode);
+    draw_grid(mode);
+    draw_pivot(mode);
+    return;
   }
 
-  // When the edge overlay is on, push the surface fragments slightly away
-  // from the camera in depth space. The edges keep their true depth, so:
-  //   - edges on a visible face pass the depth test against the pushed-back
+  gl_.glUseProgram(prog_pbr_.id());
+
+  // When any line overlay is on (BRep edges or the triangle-mesh debug
+  // view), push the surface fragments slightly away from the camera in
+  // depth space. The lines keep their true depth, so:
+  //   - lines on a visible face pass the depth test against the pushed-back
   //     surface and draw on top of it (no Z-fighting),
-  //   - edges on the BACK of the part still fail the depth test against
+  //   - lines on the BACK of the part still fail the depth test against
   //     the front-facing surface — i.e. hidden lines stay hidden.
   // This is the classic CAD "shaded with edges" recipe.
-  if (mode.show_edges) {
+  const bool line_overlay = mode.show_edges || mode.show_triangle_mesh;
+  if (line_overlay) {
     gl_.glEnable(GL_POLYGON_OFFSET_FILL);
+    // Mesh-coupled BRep edges and triangle-mesh lines both index the
+    // surface VBO directly, so lines and faces have identical depth
+    // values BEFORE this offset is applied — (1, 1) is plenty to give
+    // the line a stable win on every visible face while still letting
+    // the front-facing surface occlude back-of-part lines.
     gl_.glPolygonOffset(1.0f, 1.0f);
   }
 
@@ -867,14 +996,11 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     gl_.glBindVertexArray(0);
   }
 
-  if (mode.wireframe) {
-    gl_.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    gl_.glEnable(GL_CULL_FACE);
-  }
-  if (mode.show_edges) {
+  if (line_overlay) {
     gl_.glDisable(GL_POLYGON_OFFSET_FILL);
   }
 
+  draw_triangle_mesh(mode);
   draw_edges(mode);
   draw_grid(mode);
   draw_pivot(mode);
@@ -886,6 +1012,9 @@ void GLRendererImpl::shutdown() {
     if (g.vao) gl_.glDeleteVertexArrays(1, &g.vao);
     if (g.vbo) gl_.glDeleteBuffers(1, &g.vbo);
     if (g.ibo) gl_.glDeleteBuffers(1, &g.ibo);
+    // strip_vao reuses g.vbo, so only the VAO + IBO are owned here.
+    if (g.strip_vao) gl_.glDeleteVertexArrays(1, &g.strip_vao);
+    if (g.strip_ibo) gl_.glDeleteBuffers(1, &g.strip_ibo);
     for (auto& lod : g.edge_lods) {
       if (lod.vao) gl_.glDeleteVertexArrays(1, &lod.vao);
       if (lod.vbo) gl_.glDeleteBuffers(1, &lod.vbo);

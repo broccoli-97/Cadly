@@ -60,7 +60,25 @@ struct Mesh {
   // bounding faces). Stored as a LOD ladder sorted coarsest first; the
   // renderer selects a tier per frame based on the camera's pixel scale.
   // Empty for non-BRep meshes.
+  //
+  // Used for "edges without surfaces" views where there is no triangulated
+  // face to anchor against; the LOD selector then chooses smoothness per
+  // frame from the camera scale. NOT used for the "shaded with edges"
+  // overlay — that path uses `edge_strip_indices` below, which is
+  // guaranteed to sit exactly on the face triangulation.
   std::vector<EdgeLod> edge_lods;
+
+  // Mesh-coupled BRep edge polylines: GL_LINES index pairs that point
+  // straight into `vertices`, sampled at exactly the face triangulation's
+  // boundary nodes (via OCCT's Poly_PolygonOnTriangulation). Because every
+  // edge vertex IS a face vertex, their depth values are identical before
+  // glPolygonOffset is applied; the renderer's "shaded with edges" overlay
+  // can rely on polygon offset alone to keep edges in front of their faces
+  // — no Z fighting, no edges disappearing into the surface where the
+  // analytical curve diverges from the chord polygon.
+  //
+  // Empty for non-BRep meshes (STL, OBJ, ...).
+  std::vector<std::uint32_t> edge_strip_indices;
 
   std::size_t triangle_count() const { return indices.size() / 3; }
   std::size_t edge_segment_count() const {
