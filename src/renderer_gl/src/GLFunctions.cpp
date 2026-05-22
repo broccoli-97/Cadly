@@ -39,11 +39,13 @@ bool GLFunctions::load(const GLLoadProc& proc) {
   CADLY_LOAD(glBindTexture);
   CADLY_LOAD(glBindVertexArray);
   CADLY_LOAD(glBlendFunc);
+  CADLY_LOAD(glBlendFuncSeparate);
   CADLY_LOAD(glBlitFramebuffer);
   CADLY_LOAD(glBufferData);
   CADLY_LOAD(glBufferSubData);
   CADLY_LOAD(glCheckFramebufferStatus);
   CADLY_LOAD(glClear);
+  CADLY_LOAD(glClearColor);
   CADLY_LOAD(glClearDepthf);
   CADLY_LOAD(glCompileShader);
   CADLY_LOAD(glCreateProgram);

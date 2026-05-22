@@ -219,6 +219,16 @@ void GLRendererImpl::initialize() {
   gl_.glFrontFace(GL_CCW);
   gl_.glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
+  // Always clear the colour buffer to opaque black (alpha = 1). The OpenGL
+  // default clear colour is (0,0,0,0) — alpha = 0 — which gets presented to
+  // the OS compositor as a fully-transparent window region anywhere the
+  // background pass doesn't run or fails to cover. Setting it explicitly
+  // here (persistent state, set once) means the wireframe/edges/grid/pivot
+  // passes can rely on dst alpha starting at 1 even if mode.draw_background
+  // is ever toggled off, and the alpha-preserving blend funcs below keep
+  // it there.
+  gl_.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
   if (!build_programs()) {
     CADLY_LOG_ERROR("Renderer initialisation failed; shaders did not compile.");
     return;
@@ -711,7 +721,13 @@ void GLRendererImpl::draw_background(const renderer::DisplayMode& mode) {
 void GLRendererImpl::draw_grid(const renderer::DisplayMode& mode) {
   if (!mode.show_grid || !prog_grid_.valid() || !scene_) return;
   gl_.glEnable(GL_BLEND);
-  gl_.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  // Alpha-preserving blend: src.rgb blends in normally with SRC_ALPHA, but
+  // dst.alpha is left untouched (factor ZERO on src, ONE on dst). Without
+  // this, every blended pixel would decay dst.alpha toward zero — and the
+  // OS compositor would punch holes wherever a faded line or grid cell
+  // crosses the screen.
+  gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                          GL_ZERO,      GL_ONE);
   gl_.glUseProgram(prog_grid_.id());
 
   const scene::mat4 vp     = scene_->camera.view_proj();
@@ -746,8 +762,11 @@ void GLRendererImpl::draw_pivot(const renderer::DisplayMode& mode) {
   if (!mode.show_rotation_pivot || !prog_pivot_.valid() || !scene_) return;
 
   // Always on top: depth test off, depth write off, alpha blended.
+  // Alpha-preserving blend (dst.alpha unchanged) so the pivot marker
+  // doesn't leave a translucent halo against the compositor.
   gl_.glEnable(GL_BLEND);
-  gl_.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                          GL_ZERO,      GL_ONE);
   gl_.glDisable(GL_DEPTH_TEST);
   gl_.glDepthMask(GL_FALSE);
 
@@ -799,7 +818,9 @@ void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
   gl_.glUniform4fv(loc_color, 1, &tc.x);
 
   gl_.glEnable(GL_BLEND);
-  gl_.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  // Alpha-preserving blend (see draw_grid for the why).
+  gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                          GL_ZERO,      GL_ONE);
   gl_.glDepthMask(GL_FALSE);
   gl_.glLineWidth(1.0f);
   gl_.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
@@ -868,7 +889,15 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
   gl_.glUniform4fv(loc_color, 1, &ec.x);
 
   gl_.glEnable(GL_BLEND);
-  gl_.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  // Alpha-preserving blend: the edge ink blends into RGB normally, but
+  // dst.alpha is left at whatever the surface/background pass wrote (1.0
+  // in the default configuration). Using plain glBlendFunc here would
+  // decay dst.alpha to (1 - src.a)*dst.a + src.a*src.a along every drawn
+  // line, leaving the wireframe at ~0.77 alpha after one pass and lower
+  // after overlaps — the OS compositor would then make those exact
+  // pixels translucent and the desktop would bleed through the lines.
+  gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                          GL_ZERO,      GL_ONE);
   // Drivers ignore this in core profile but it costs nothing and helps the
   // permissive ones (Mesa, some Intel) draw 1.2 px lines.
   gl_.glLineWidth(1.2f);

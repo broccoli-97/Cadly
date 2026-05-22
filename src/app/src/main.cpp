@@ -24,11 +24,21 @@ int main(int argc, char** argv) {
   // Qt for a multisample default framebuffer here would force a second blit
   // pass and turn the resolve into a sample-count mismatch under any
   // non-matching MSAA setting.
+  //
+  // setAlphaBufferSize(0) tells the platform we don't want an alpha channel
+  // in the default framebuffer. The OS compositor (DWM / Quartz / Wayland /
+  // X) then treats the window as fully opaque regardless of what the GL
+  // pipeline writes to the colour buffer's alpha — which protects us from a
+  // class of bugs where a blended pass (lines, grid, pivot) reduces dst
+  // alpha and the desktop bleeds through "transparent" pixels. The renderer
+  // also clears with alpha=1 and uses alpha-preserving blend funcs (see
+  // GLRenderer.cpp), so this is defence-in-depth rather than the sole fix.
   QSurfaceFormat fmt;
   fmt.setVersion(4, 1);
   fmt.setProfile(QSurfaceFormat::CoreProfile);
   fmt.setDepthBufferSize(24);
   fmt.setStencilBufferSize(8);
+  fmt.setAlphaBufferSize(0);
   QSurfaceFormat::setDefaultFormat(fmt);
 
   QApplication app(argc, argv);

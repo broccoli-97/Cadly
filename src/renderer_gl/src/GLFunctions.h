@@ -27,11 +27,13 @@ struct GLFunctions {
   PFNGLBINDTEXTUREPROC             glBindTexture             = nullptr;
   PFNGLBINDVERTEXARRAYPROC         glBindVertexArray         = nullptr;
   PFNGLBLENDFUNCPROC               glBlendFunc               = nullptr;
+  PFNGLBLENDFUNCSEPARATEPROC       glBlendFuncSeparate       = nullptr;
   PFNGLBLITFRAMEBUFFERPROC         glBlitFramebuffer         = nullptr;
   PFNGLBUFFERDATAPROC              glBufferData              = nullptr;
   PFNGLBUFFERSUBDATAPROC           glBufferSubData           = nullptr;
   PFNGLCHECKFRAMEBUFFERSTATUSPROC  glCheckFramebufferStatus  = nullptr;
   PFNGLCLEARPROC                   glClear                   = nullptr;
+  PFNGLCLEARCOLORPROC              glClearColor              = nullptr;
   PFNGLCLEARDEPTHFPROC             glClearDepthf             = nullptr;
   PFNGLCOMPILESHADERPROC           glCompileShader           = nullptr;
   PFNGLCREATEPROGRAMPROC           glCreateProgram           = nullptr;

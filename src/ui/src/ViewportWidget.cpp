@@ -21,11 +21,16 @@ ViewportWidget::ViewportWidget(QWidget* parent)
   // framebuffer stays single-sample on purpose so the resolve blit at end
   // of frame is well-defined regardless of which sample count the user
   // picks at runtime — see GLRenderer's ensure_msaa_target.
+  //
+  // setAlphaBufferSize(0) marks the surface as fully opaque to the OS
+  // compositor; mirrors main.cpp because QOpenGLWidget uses the widget-
+  // local format and not setDefaultFormat when both are present.
   QSurfaceFormat fmt;
   fmt.setVersion(4, 1);
   fmt.setProfile(QSurfaceFormat::CoreProfile);
   fmt.setDepthBufferSize(24);
   fmt.setStencilBufferSize(8);
+  fmt.setAlphaBufferSize(0);
   fmt.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
   setFormat(fmt);
 
