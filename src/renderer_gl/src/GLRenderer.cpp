@@ -873,6 +873,19 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
   // permissive ones (Mesa, some Intel) draw 1.2 px lines.
   gl_.glLineWidth(1.2f);
 
+  // Primitive restart lets a single GL_LINE_STRIP draw cover the whole edge
+  // buffer: each polyline is a contiguous run of indices, separated by the
+  // 0xFFFFFFFF sentinel that the importer writes between strips
+  // (OcctShapeToMesh.cpp). The previous GL_LINES layout repeated every
+  // interior polyline vertex in two consecutive segments, so the joint
+  // pixel rasterised twice and the alpha-blended ink stacked on itself —
+  // visible as dark dots evenly spaced along every curved edge that
+  // seemed to migrate as the camera rotated (joints have fixed world
+  // positions but their screen projection slides). Strips render the joint
+  // exactly once and the artifact is gone.
+  gl_.glEnable(GL_PRIMITIVE_RESTART);
+  gl_.glPrimitiveRestartIndex(0xFFFFFFFFu);
+
   // Camera-driven LOD selection used by the wireframe path. World-per-pixel
   // at the camera's target plane is the same formula in orthographic and
   // perspective: the ortho frustum's half-height is `distance *
@@ -934,9 +947,10 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
     gl_.glUniformMatrix4fv(loc_model, 1, GL_FALSE,
                            glm::value_ptr(node.world_matrix));
     gl_.glBindVertexArray(vao);
-    gl_.glDrawElements(GL_LINES, count, GL_UNSIGNED_INT, nullptr);
+    gl_.glDrawElements(GL_LINE_STRIP, count, GL_UNSIGNED_INT, nullptr);
   }
   gl_.glBindVertexArray(0);
+  gl_.glDisable(GL_PRIMITIVE_RESTART);
   gl_.glDisable(GL_BLEND);
   gl_.glDepthMask(GL_TRUE);
 }

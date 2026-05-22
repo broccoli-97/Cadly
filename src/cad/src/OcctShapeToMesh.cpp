@@ -199,11 +199,18 @@ std::size_t append_face(scene::Mesh& mesh,
 
   // Mesh-coupled BRep edge polylines. Each TopoDS_Edge of the face carries
   // a Poly_PolygonOnTriangulation: a 1-based array of integers indexing
-  // into THIS face's node array. Emit GL_LINES pairs that point into the
-  // global `mesh.vertices` (offset by `base_vertex`) — the resulting edge
-  // vertices are literally the same memory as the corresponding face
-  // vertices, so the "shaded with edges" overlay needs only glPolygonOffset
-  // to keep edges visible: their depth values are identical before offset.
+  // into THIS face's node array. Emit one GL_LINE_STRIP per edge,
+  // terminated by the 0xFFFFFFFF primitive-restart sentinel, with indices
+  // pointing into the global `mesh.vertices` (offset by `base_vertex`).
+  // The resulting edge vertices are literally the same memory as the
+  // corresponding face vertices, so the "shaded with edges" overlay needs
+  // only glPolygonOffset to keep edges visible: their depth values are
+  // identical before offset.
+  //
+  // Strip + restart instead of GL_LINES pairs: the old layout repeated each
+  // interior node in two consecutive segments, and draw_edges' alpha-blended
+  // ink rasterised the joint pixel twice, leaving a row of dark "dots" along
+  // every curved edge. Strips render each joint once and the dots disappear.
   //
   // Dedup is keyed on TShape*. An edge shared by two faces produces a
   // valid PolygonOnTriangulation under each face's triangulation, but
@@ -220,12 +227,11 @@ std::size_t append_face(scene::Mesh& mesh,
     if (poly.IsNull()) continue;
     const TColStd_Array1OfInteger& nodes = poly->Nodes();
     if (nodes.Length() < 2) continue;
-    for (Standard_Integer i = nodes.Lower(); i < nodes.Upper(); ++i) {
+    for (Standard_Integer i = nodes.Lower(); i <= nodes.Upper(); ++i) {
       mesh.edge_strip_indices.push_back(
-        base_vertex + static_cast<std::uint32_t>(nodes.Value(i)     - 1));
-      mesh.edge_strip_indices.push_back(
-        base_vertex + static_cast<std::uint32_t>(nodes.Value(i + 1) - 1));
+        base_vertex + static_cast<std::uint32_t>(nodes.Value(i) - 1));
     }
+    mesh.edge_strip_indices.push_back(0xFFFFFFFFu);
   }
 
   stats.triangle_count += emitted;
@@ -276,9 +282,18 @@ std::string read_label_name(const TDF_Label& label) {
 }
 
 // Sample one edge's 3D curve at the given deflection tolerances and append
-// the resulting polyline to `lod` as GL_LINES index pairs. Points are in the
-// shape's local frame because BRepAdaptor_Curve folds in edge.Location()
-// internally. Returns true if a non-degenerate polyline was emitted.
+// the resulting polyline to `lod` as a GL_LINE_STRIP run terminated by the
+// 0xFFFFFFFF primitive-restart sentinel. Points are in the shape's local
+// frame because BRepAdaptor_Curve folds in edge.Location() internally.
+// Returns true if a non-degenerate polyline was emitted.
+//
+// Why a strip + restart and NOT pair-indices for GL_LINES: the old layout
+// pushed every interior polyline vertex into two consecutive segments, so
+// the rasterizer produced two fragments at every joint pixel. With the
+// alpha-blended ink in draw_edges (depth_mask off, no depth filtering),
+// the joint pixel ended up blended twice — visibly darker than the rest of
+// the line — and a row of evenly-spaced "dots" appeared along every curved
+// edge. Strip + restart makes each joint a single fragment.
 bool sample_edge_into_lod(scene::Mesh::EdgeLod& lod,
                           const TopoDS_Edge& edge,
                           double angular_deflection,
@@ -305,10 +320,14 @@ bool sample_edge_into_lod(scene::Mesh::EdgeLod& lod,
 
   const auto base = static_cast<std::uint32_t>(lod.vertices.size());
   lod.vertices.insert(lod.vertices.end(), pts.begin(), pts.end());
-  for (std::size_t i = 1; i < pts.size(); ++i) {
-    lod.indices.push_back(base + static_cast<std::uint32_t>(i - 1));
+  for (std::size_t i = 0; i < pts.size(); ++i) {
     lod.indices.push_back(base + static_cast<std::uint32_t>(i));
   }
+  // Restart sentinel separates this polyline from the next so the renderer
+  // can issue a single GL_LINE_STRIP draw across the whole LOD buffer
+  // without the strips bleeding into each other. The renderer binds 0xFFFFFFFFu
+  // via glPrimitiveRestartIndex; keep both sides in sync if it ever changes.
+  lod.indices.push_back(0xFFFFFFFFu);
   return true;
 }
 

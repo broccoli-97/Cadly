@@ -43,12 +43,14 @@ struct Mesh {
   Aabb bounds = Aabb::empty();
 
   // One level-of-detail in the BRep edge LOD ladder. Each LOD is a complete
-  // GL_LINES-style polyline set covering every edge of the source shape; the
-  // renderer picks one tier per frame based on the camera's current
-  // world-per-pixel scale (finer when zoomed in, coarser when zoomed out).
-  // `linear_deflection` is the maximum chord-to-curve distance used to bake
-  // this tier — the renderer compares it against the projected pixel budget
-  // to select which tier to draw.
+  // GL_LINE_STRIP polyline set covering every edge of the source shape:
+  // indices form a flat run where each per-edge strip is terminated by the
+  // 0xFFFFFFFF primitive-restart sentinel, so a single drawcall covers the
+  // whole tier. The renderer picks one tier per frame based on the camera's
+  // current world-per-pixel scale (finer when zoomed in, coarser when zoomed
+  // out). `linear_deflection` is the maximum chord-to-curve distance used to
+  // bake this tier — the renderer compares it against the projected pixel
+  // budget to select which tier to draw.
   struct EdgeLod {
     std::vector<vec3>          vertices;
     std::vector<std::uint32_t> indices;
@@ -68,22 +70,20 @@ struct Mesh {
   // guaranteed to sit exactly on the face triangulation.
   std::vector<EdgeLod> edge_lods;
 
-  // Mesh-coupled BRep edge polylines: GL_LINES index pairs that point
-  // straight into `vertices`, sampled at exactly the face triangulation's
-  // boundary nodes (via OCCT's Poly_PolygonOnTriangulation). Because every
-  // edge vertex IS a face vertex, their depth values are identical before
-  // glPolygonOffset is applied; the renderer's "shaded with edges" overlay
-  // can rely on polygon offset alone to keep edges in front of their faces
-  // — no Z fighting, no edges disappearing into the surface where the
-  // analytical curve diverges from the chord polygon.
+  // Mesh-coupled BRep edge polylines: one GL_LINE_STRIP per edge,
+  // terminated by the 0xFFFFFFFF primitive-restart sentinel, with indices
+  // pointing straight into `vertices`. Sampled at exactly the face
+  // triangulation's boundary nodes (via OCCT's Poly_PolygonOnTriangulation).
+  // Because every edge vertex IS a face vertex, their depth values are
+  // identical before glPolygonOffset is applied; the renderer's "shaded
+  // with edges" overlay can rely on polygon offset alone to keep edges in
+  // front of their faces — no Z fighting, no edges disappearing into the
+  // surface where the analytical curve diverges from the chord polygon.
   //
   // Empty for non-BRep meshes (STL, OBJ, ...).
   std::vector<std::uint32_t> edge_strip_indices;
 
   std::size_t triangle_count() const { return indices.size() / 3; }
-  std::size_t edge_segment_count() const {
-    return edge_lods.empty() ? 0 : edge_lods.front().indices.size() / 2;
-  }
 };
 
 } // namespace cadly::scene

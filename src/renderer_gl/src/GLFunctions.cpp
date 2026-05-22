@@ -85,6 +85,7 @@ bool GLFunctions::load(const GLLoadProc& proc) {
   CADLY_LOAD(glPixelStorei);
   CADLY_LOAD(glPolygonMode);
   CADLY_LOAD(glPolygonOffset);
+  CADLY_LOAD(glPrimitiveRestartIndex);
   CADLY_LOAD(glRenderbufferStorageMultisample);
   CADLY_LOAD(glShaderSource);
   CADLY_LOAD(glTexImage2D);
