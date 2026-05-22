@@ -16,12 +16,19 @@
 int main(int argc, char** argv) {
   // Request a 4.1 core context before QApplication exists; QOpenGLWidget will
   // honour this when creating its surface.
+  //
+  // setSamples is intentionally left at 0 (single-sample). The renderer owns
+  // MSAA via its own offscreen multisample framebuffer (see RenderTypes.h's
+  // DisplayMode::msaa_samples and GLRenderer's ensure_msaa_target), and
+  // resolves into this default framebuffer at the end of every frame. Asking
+  // Qt for a multisample default framebuffer here would force a second blit
+  // pass and turn the resolve into a sample-count mismatch under any
+  // non-matching MSAA setting.
   QSurfaceFormat fmt;
   fmt.setVersion(4, 1);
   fmt.setProfile(QSurfaceFormat::CoreProfile);
   fmt.setDepthBufferSize(24);
   fmt.setStencilBufferSize(8);
-  fmt.setSamples(4);
   QSurfaceFormat::setDefaultFormat(fmt);
 
   QApplication app(argc, argv);

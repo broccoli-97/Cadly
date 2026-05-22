@@ -107,6 +107,16 @@ private:
   void draw_edges(const renderer::DisplayMode& mode);
   void draw_triangle_mesh(const renderer::DisplayMode& mode);
 
+  // MSAA offscreen target. The renderer owns its own multisample colour +
+  // depth renderbuffers so anti-aliasing quality is decoupled from the host
+  // surface (Qt asks for a single-sample default framebuffer; we resolve
+  // into it at the end of the frame). The (re)allocation is lazy: it
+  // happens the first time a frame requests samples > 1 and again whenever
+  // the viewport size or requested sample count changes.
+  int  clamp_msaa_samples(int requested) const;
+  void ensure_msaa_target(int width_px, int height_px, int samples);
+  void release_msaa_target();
+
   // IBL bake — runs once at init. The four targets together implement the
   // Karis split-sum approximation: irradiance for diffuse, prefilter +
   // brdf_lut for specular.
@@ -171,6 +181,19 @@ private:
   // turn into a slow GPU-side leak across re-imports.
   std::shared_ptr<scene::Scene> scene_;
   std::unordered_map<const scene::Mesh*, MeshGpu> meshes_;
+
+  // MSAA target. fbo_msaa_ == 0 means "not allocated" (either MSAA is off,
+  // or the very first frame hasn't run yet). msaa_samples_current_ records
+  // the sample count actually allocated, which may differ from the request
+  // after GL_MAX_SAMPLES clamping. fbo_w_/fbo_h_ track the renderbuffer
+  // storage size so resize requests trigger a re-alloc.
+  GLuint fbo_msaa_              {0};
+  GLuint rb_color_msaa_         {0};
+  GLuint rb_depth_msaa_         {0};
+  int    msaa_samples_current_  {0};
+  int    fbo_w_                 {0};
+  int    fbo_h_                 {0};
+  int    max_samples_           {0};
 };
 
 void GLRendererImpl::initialize() {
@@ -180,6 +203,14 @@ void GLRendererImpl::initialize() {
                     "Is the context current and a compatible version?");
     return;
   }
+
+  // Cap of MSAA sample counts we will accept later. Every GL 4.1 core
+  // implementation supports at least 4; modern desktop GPUs typically
+  // report 8–32. Query once so render() can clamp `mode.msaa_samples`
+  // without going around the GL every frame.
+  GLint max_samples = 0;
+  gl_.glGetIntegerv(GL_MAX_SAMPLES, &max_samples);
+  max_samples_ = std::max(0, static_cast<int>(max_samples));
 
   gl_.glEnable(GL_DEPTH_TEST);
   gl_.glDepthFunc(GL_LEQUAL);
@@ -910,9 +941,116 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
   gl_.glDepthMask(GL_TRUE);
 }
 
+int GLRendererImpl::clamp_msaa_samples(int requested) const {
+  // 0 and 1 both mean "no MSAA"; the renderer skips the FBO entirely in
+  // that case. Anything else is clamped to the GPU's reported max, so a
+  // request for 16x on a 4x-only card silently degrades instead of failing.
+  if (requested <= 1) return 0;
+  if (max_samples_ <= 1) return 0;
+  return std::min(requested, max_samples_);
+}
+
+void GLRendererImpl::release_msaa_target() {
+  if (fbo_msaa_)     gl_.glDeleteFramebuffers(1, &fbo_msaa_);
+  if (rb_color_msaa_) gl_.glDeleteRenderbuffers(1, &rb_color_msaa_);
+  if (rb_depth_msaa_) gl_.glDeleteRenderbuffers(1, &rb_depth_msaa_);
+  fbo_msaa_ = rb_color_msaa_ = rb_depth_msaa_ = 0;
+  msaa_samples_current_ = 0;
+  fbo_w_ = fbo_h_ = 0;
+}
+
+void GLRendererImpl::ensure_msaa_target(int width_px, int height_px, int samples) {
+  if (samples <= 0) { release_msaa_target(); return; }
+  if (fbo_msaa_ != 0 &&
+      msaa_samples_current_ == samples &&
+      fbo_w_ == width_px && fbo_h_ == height_px) {
+    return;
+  }
+  release_msaa_target();
+
+  gl_.glGenFramebuffers(1, &fbo_msaa_);
+  gl_.glGenRenderbuffers(1, &rb_color_msaa_);
+  gl_.glGenRenderbuffers(1, &rb_depth_msaa_);
+
+  gl_.glBindRenderbuffer(GL_RENDERBUFFER, rb_color_msaa_);
+  gl_.glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8,
+                                       width_px, height_px);
+  gl_.glBindRenderbuffer(GL_RENDERBUFFER, rb_depth_msaa_);
+  gl_.glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples,
+                                       GL_DEPTH24_STENCIL8,
+                                       width_px, height_px);
+  gl_.glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo_msaa_);
+  gl_.glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                GL_RENDERBUFFER, rb_color_msaa_);
+  gl_.glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                GL_RENDERBUFFER, rb_depth_msaa_);
+  GLenum status = gl_.glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (status != GL_FRAMEBUFFER_COMPLETE) {
+    CADLY_LOG_ERROR("MSAA FBO incomplete (status=0x{:x}); falling back to "
+                    "single-sample default framebuffer.", status);
+    gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    release_msaa_target();
+    return;
+  }
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+  msaa_samples_current_ = samples;
+  fbo_w_ = width_px;
+  fbo_h_ = height_px;
+}
+
 void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (!initialised_) initialize();
   if (!initialised_) return;
+
+  // Snapshot the host's default framebuffer before we redirect drawing into
+  // our MSAA FBO. QOpenGLWidget renders into a Qt-managed FBO (not 0), so
+  // querying GL_FRAMEBUFFER_BINDING is the only portable way to recover
+  // it for the resolve blit at end of frame.
+  GLint default_fbo = 0;
+  gl_.glGetIntegerv(GL_FRAMEBUFFER_BINDING, &default_fbo);
+
+  const int wanted_samples = clamp_msaa_samples(mode.msaa_samples);
+  const bool use_msaa = wanted_samples > 0;
+  if (use_msaa) {
+    ensure_msaa_target(viewport_w_, viewport_h_, wanted_samples);
+    if (fbo_msaa_ != 0) {
+      gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo_msaa_);
+    }
+  } else {
+    release_msaa_target();
+  }
+
+  // RAII guard: no matter which `return` path render() takes, the MSAA
+  // colour buffer gets resolved into the host's default FBO before this
+  // function leaves. Without the RAII wrapper every early-out below would
+  // need to remember to do this blit explicitly.
+  struct ResolveOnExit {
+    GLFunctions& gl;
+    GLuint       src;
+    GLuint       dst;
+    int          w;
+    int          h;
+    bool         active;
+    ~ResolveOnExit() {
+      if (!active) return;
+      gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, src);
+      gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dst);
+      // GL_NEAREST is required by spec for an MSAA→single-sample resolve
+      // (and is also fine when both ends are single-sample, which never
+      // happens here but is worth remembering). GL_COLOR_BUFFER_BIT alone
+      // is enough — no later pass reads our depth buffer back, so paying
+      // to resolve depth would be pure waste.
+      gl.glBlitFramebuffer(0, 0, w, h, 0, 0, w, h,
+                           GL_COLOR_BUFFER_BIT, GL_NEAREST);
+      // Restore "default FBO is bound" so subsequent host code (Qt's
+      // QOpenGLWidget swap, screenshots, …) doesn't see our MSAA FBO.
+      gl.glBindFramebuffer(GL_FRAMEBUFFER, dst);
+    }
+  } resolve{gl_, fbo_msaa_, static_cast<GLuint>(default_fbo),
+            viewport_w_, viewport_h_, use_msaa && fbo_msaa_ != 0};
 
   gl_.glViewport(0, 0, viewport_w_, viewport_h_);
   gl_.glClearDepthf(1.0f);
@@ -1062,6 +1200,7 @@ void GLRendererImpl::shutdown() {
     free_mesh_gpu(g);
   }
   meshes_.clear();
+  release_msaa_target();
   if (ubo_frame_)      gl_.glDeleteBuffers(1, &ubo_frame_);
   if (vao_background_) gl_.glDeleteVertexArrays(1, &vao_background_);
   if (vao_grid_)       gl_.glDeleteVertexArrays(1, &vao_grid_);

@@ -23,11 +23,14 @@ struct GLFunctions {
   PFNGLBINDBUFFERPROC              glBindBuffer              = nullptr;
   PFNGLBINDBUFFERBASEPROC          glBindBufferBase          = nullptr;
   PFNGLBINDFRAMEBUFFERPROC         glBindFramebuffer         = nullptr;
+  PFNGLBINDRENDERBUFFERPROC        glBindRenderbuffer        = nullptr;
   PFNGLBINDTEXTUREPROC             glBindTexture             = nullptr;
   PFNGLBINDVERTEXARRAYPROC         glBindVertexArray         = nullptr;
   PFNGLBLENDFUNCPROC               glBlendFunc               = nullptr;
+  PFNGLBLITFRAMEBUFFERPROC         glBlitFramebuffer         = nullptr;
   PFNGLBUFFERDATAPROC              glBufferData              = nullptr;
   PFNGLBUFFERSUBDATAPROC           glBufferSubData           = nullptr;
+  PFNGLCHECKFRAMEBUFFERSTATUSPROC  glCheckFramebufferStatus  = nullptr;
   PFNGLCLEARPROC                   glClear                   = nullptr;
   PFNGLCLEARDEPTHFPROC             glClearDepthf             = nullptr;
   PFNGLCOMPILESHADERPROC           glCompileShader           = nullptr;
@@ -37,6 +40,7 @@ struct GLFunctions {
   PFNGLDELETEBUFFERSPROC           glDeleteBuffers           = nullptr;
   PFNGLDELETEFRAMEBUFFERSPROC      glDeleteFramebuffers      = nullptr;
   PFNGLDELETEPROGRAMPROC           glDeleteProgram           = nullptr;
+  PFNGLDELETERENDERBUFFERSPROC     glDeleteRenderbuffers     = nullptr;
   PFNGLDELETESHADERPROC            glDeleteShader            = nullptr;
   PFNGLDELETETEXTURESPROC          glDeleteTextures          = nullptr;
   PFNGLDELETEVERTEXARRAYSPROC      glDeleteVertexArrays      = nullptr;
@@ -47,10 +51,12 @@ struct GLFunctions {
   PFNGLDRAWELEMENTSPROC            glDrawElements            = nullptr;
   PFNGLENABLEPROC                  glEnable                  = nullptr;
   PFNGLENABLEVERTEXATTRIBARRAYPROC glEnableVertexAttribArray = nullptr;
+  PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer = nullptr;
   PFNGLFRAMEBUFFERTEXTURE2DPROC    glFramebufferTexture2D    = nullptr;
   PFNGLFRONTFACEPROC               glFrontFace               = nullptr;
   PFNGLGENBUFFERSPROC              glGenBuffers              = nullptr;
   PFNGLGENFRAMEBUFFERSPROC         glGenFramebuffers         = nullptr;
+  PFNGLGENRENDERBUFFERSPROC        glGenRenderbuffers        = nullptr;
   PFNGLGENTEXTURESPROC             glGenTextures             = nullptr;
   PFNGLGENVERTEXARRAYSPROC         glGenVertexArrays         = nullptr;
   PFNGLGENERATEMIPMAPPROC          glGenerateMipmap          = nullptr;
@@ -67,6 +73,7 @@ struct GLFunctions {
   PFNGLPIXELSTOREIPROC             glPixelStorei             = nullptr;
   PFNGLPOLYGONMODEPROC             glPolygonMode             = nullptr;
   PFNGLPOLYGONOFFSETPROC           glPolygonOffset           = nullptr;
+  PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC glRenderbufferStorageMultisample = nullptr;
   PFNGLSHADERSOURCEPROC            glShaderSource            = nullptr;
   PFNGLTEXIMAGE2DPROC              glTexImage2D              = nullptr;
   PFNGLTEXPARAMETERIPROC           glTexParameteri           = nullptr;

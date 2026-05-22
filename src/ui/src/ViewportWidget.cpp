@@ -16,12 +16,16 @@ ViewportWidget::ViewportWidget(QWidget* parent)
   : QOpenGLWidget(parent),
     camera_(new CameraController(this)) {
 
+  // MSAA is handled inside the GL renderer via an offscreen multisample
+  // framebuffer (DisplayMode::msaa_samples controls quality). The default
+  // framebuffer stays single-sample on purpose so the resolve blit at end
+  // of frame is well-defined regardless of which sample count the user
+  // picks at runtime — see GLRenderer's ensure_msaa_target.
   QSurfaceFormat fmt;
   fmt.setVersion(4, 1);
   fmt.setProfile(QSurfaceFormat::CoreProfile);
   fmt.setDepthBufferSize(24);
   fmt.setStencilBufferSize(8);
-  fmt.setSamples(4); // light MSAA — good for CAD silhouettes
   fmt.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
   setFormat(fmt);
 

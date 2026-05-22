@@ -35,11 +35,14 @@ bool GLFunctions::load(const GLLoadProc& proc) {
   CADLY_LOAD(glBindBuffer);
   CADLY_LOAD(glBindBufferBase);
   CADLY_LOAD(glBindFramebuffer);
+  CADLY_LOAD(glBindRenderbuffer);
   CADLY_LOAD(glBindTexture);
   CADLY_LOAD(glBindVertexArray);
   CADLY_LOAD(glBlendFunc);
+  CADLY_LOAD(glBlitFramebuffer);
   CADLY_LOAD(glBufferData);
   CADLY_LOAD(glBufferSubData);
+  CADLY_LOAD(glCheckFramebufferStatus);
   CADLY_LOAD(glClear);
   CADLY_LOAD(glClearDepthf);
   CADLY_LOAD(glCompileShader);
@@ -49,6 +52,7 @@ bool GLFunctions::load(const GLLoadProc& proc) {
   CADLY_LOAD(glDeleteBuffers);
   CADLY_LOAD(glDeleteFramebuffers);
   CADLY_LOAD(glDeleteProgram);
+  CADLY_LOAD(glDeleteRenderbuffers);
   CADLY_LOAD(glDeleteShader);
   CADLY_LOAD(glDeleteTextures);
   CADLY_LOAD(glDeleteVertexArrays);
@@ -59,10 +63,12 @@ bool GLFunctions::load(const GLLoadProc& proc) {
   CADLY_LOAD(glDrawElements);
   CADLY_LOAD(glEnable);
   CADLY_LOAD(glEnableVertexAttribArray);
+  CADLY_LOAD(glFramebufferRenderbuffer);
   CADLY_LOAD(glFramebufferTexture2D);
   CADLY_LOAD(glFrontFace);
   CADLY_LOAD(glGenBuffers);
   CADLY_LOAD(glGenFramebuffers);
+  CADLY_LOAD(glGenRenderbuffers);
   CADLY_LOAD(glGenTextures);
   CADLY_LOAD(glGenVertexArrays);
   CADLY_LOAD(glGenerateMipmap);
@@ -79,6 +85,7 @@ bool GLFunctions::load(const GLLoadProc& proc) {
   CADLY_LOAD(glPixelStorei);
   CADLY_LOAD(glPolygonMode);
   CADLY_LOAD(glPolygonOffset);
+  CADLY_LOAD(glRenderbufferStorageMultisample);
   CADLY_LOAD(glShaderSource);
   CADLY_LOAD(glTexImage2D);
   CADLY_LOAD(glTexParameteri);

@@ -39,6 +39,15 @@ struct DisplayMode {
   // renderer draws a small screen-space-stable marker on top of the scene.
   bool        show_rotation_pivot{false};
   scene::vec3 rotation_pivot     {0.0f};
+
+  // Anti-aliasing. Off (0 or 1) renders directly to the host's default
+  // framebuffer; any other value asks the renderer to allocate an offscreen
+  // multisample colour+depth target with that many samples, draw the whole
+  // frame into it, and resolve to the default framebuffer at the end. The
+  // renderer clamps the request to GL_MAX_SAMPLES on the running GPU, so
+  // asking for 16 on a card that only supports 8 falls back gracefully.
+  // Typical values: 0 (off), 2, 4, 8.
+  int msaa_samples{4};
 };
 
 } // namespace cadly::renderer
