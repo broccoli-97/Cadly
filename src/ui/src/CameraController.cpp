@@ -45,30 +45,14 @@ void CameraController::frame_bounds(const scene::vec3& min,
 }
 
 float CameraController::clamp_distance(float requested) const {
-  // Hard floor: never let distance drop below a tiny epsilon — the camera
-  // math degenerates at 0.
+  // Only enforce the absolute epsilon floor; CAD inspection requires the
+  // user to be able to zoom into individual features, which means the
+  // camera must be free to enter (and pass through) the model's bounding
+  // sphere. update_clip_planes() keeps the near plane sane no matter how
+  // close the user gets, and the "F" key reframes the model if they lose
+  // their bearings.
   constexpr float kAbsoluteMin = 1e-4f;
-  float d = std::max(requested, kAbsoluteMin);
-  if (scene_radius_ <= 0.0f) return d;
-
-  // Camera position parameterised by distance:
-  //     c(d) = target - forward * d
-  // We want |c(d) - scene_center| >= R for R = scene_radius * safety, i.e.
-  //     d^2 - 2(f·v)d + (v·v - R^2) >= 0      where v = target - scene_center
-  // The quadratic opens upward, so the disallowed band sits between its
-  // two roots. The orbit camera typically starts with d > upper_root
-  // (camera outside on the "near target" side); zoom-in then has to stop
-  // at upper_root or it would punch into the bounding sphere.
-  const scene::vec3 v = camera_.target - scene_center_;
-  const scene::vec3 f = camera_.forward();
-  const float R       = scene_radius_ * 1.02f;        // 2% safety margin
-  const float v_dot_v = glm::dot(v, v);
-  const float f_dot_v = glm::dot(f, v);
-  const float disc    = f_dot_v * f_dot_v - (v_dot_v - R * R);
-  if (disc <= 0.0f) return d;                         // always outside; no clamp
-
-  const float d_min_outside = f_dot_v + std::sqrt(disc);
-  return std::max(d, std::max(d_min_outside, kAbsoluteMin));
+  return std::max(requested, kAbsoluteMin);
 }
 
 void CameraController::update_clip_planes() {

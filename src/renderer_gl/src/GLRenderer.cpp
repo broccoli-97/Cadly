@@ -102,7 +102,6 @@ private:
   void free_mesh_gpu(MeshGpu& g);
   void update_frame_uniforms();
   void draw_background(const renderer::DisplayMode& mode);
-  void draw_grid(const renderer::DisplayMode& mode);
   void draw_pivot(const renderer::DisplayMode& mode);
   void draw_edges(const renderer::DisplayMode& mode);
   void draw_triangle_mesh(const renderer::DisplayMode& mode);
@@ -137,7 +136,6 @@ private:
   // Programs.
   GLProgram prog_pbr_;
   GLProgram prog_background_;
-  GLProgram prog_grid_;
   GLProgram prog_pivot_;
   GLProgram prog_edges_;
   GLProgram prog_env_capture_;
@@ -151,10 +149,6 @@ private:
 
   // Background VAO (no buffer; uses gl_VertexID).
   GLuint   vao_background_{0};
-
-  // Grid quad.
-  GLuint   vao_grid_{0};
-  GLuint   vbo_grid_{0};
 
   // Rotation-pivot indicator (empty VAO; uses gl_VertexID).
   GLuint   vao_pivot_{0};
@@ -254,20 +248,6 @@ void GLRendererImpl::initialize() {
   // but core profile still needs a bound VAO to call glDrawArrays.
   gl_.glGenVertexArrays(1, &vao_background_);
 
-  // Grid fullscreen quad (two triangles in NDC).
-  const std::array<float, 18> grid_verts = {
-    -1.f, -1.f, 0.f,  1.f, -1.f, 0.f,  1.f,  1.f, 0.f,
-    -1.f, -1.f, 0.f,  1.f,  1.f, 0.f, -1.f,  1.f, 0.f,
-  };
-  gl_.glGenVertexArrays(1, &vao_grid_);
-  gl_.glGenBuffers(1, &vbo_grid_);
-  gl_.glBindVertexArray(vao_grid_);
-  gl_.glBindBuffer(GL_ARRAY_BUFFER, vbo_grid_);
-  gl_.glBufferData(GL_ARRAY_BUFFER, sizeof(grid_verts), grid_verts.data(), GL_STATIC_DRAW);
-  gl_.glEnableVertexAttribArray(0);
-  gl_.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
-  gl_.glBindVertexArray(0);
-
   // Pivot indicator: empty VAO, geometry emitted from gl_VertexID.
   gl_.glGenVertexArrays(1, &vao_pivot_);
 
@@ -308,7 +288,6 @@ bool GLRendererImpl::build_programs() {
 
   build(prog_pbr_,         "pbr.vert",         "pbr.frag",         "pbr");
   build(prog_background_,  "background.vert",  "background.frag",  "background");
-  build(prog_grid_,        "grid.vert",        "grid.frag",        "grid");
   build(prog_pivot_,       "pivot.vert",       "pivot.frag",       "pivot");
   build(prog_edges_,       "edges.vert",       "edges.frag",       "edges");
   build(prog_env_capture_, "env_capture.vert", "env_capture.frag", "env_capture");
@@ -412,9 +391,10 @@ void GLRendererImpl::ensure_mesh_upload(const scene::Mesh& mesh,
   // Mesh-coupled BRep edge strip. Indices point into the surface VBO we
   // just uploaded, so we share the VBO (no extra vertex storage), bind a
   // fresh VAO with the position attribute set up the same way, and attach
-  // a new IBO that contains only the GL_LINES pairs from the face
-  // triangulation's boundary. The edge shader reads attribute 0 only;
-  // normal/color attributes from the surface layout are ignored.
+  // a new IBO that holds one GL_LINE_STRIP per edge separated by the
+  // 0xFFFFFFFF restart sentinel (see OcctShapeToMesh.cpp). The edge
+  // shader reads attribute 0 only; normal/color attributes from the
+  // surface layout are ignored.
   if (!mesh.edge_strip_indices.empty()) {
     gl_.glGenVertexArrays(1, &g.strip_vao);
     gl_.glGenBuffers(1, &g.strip_ibo);
@@ -438,8 +418,9 @@ void GLRendererImpl::ensure_mesh_upload(const scene::Mesh& mesh,
   // Edge polylines, if the importer captured any. The mesh carries a LOD
   // ladder (coarse → fine); each tier becomes its own VAO/VBO/IBO so the
   // draw pass can switch tiers with a single glBindVertexArray. Vertex
-  // layout is a flat packed array of vec3 positions; indices come in
-  // GL_LINES pairs.
+  // layout is a flat packed array of vec3 positions; indices form one
+  // GL_LINE_STRIP per edge separated by the 0xFFFFFFFF primitive-restart
+  // sentinel (draw_edges binds the sentinel via glPrimitiveRestartIndex).
   g.edge_lods.reserve(mesh.edge_lods.size());
   for (const auto& lod : mesh.edge_lods) {
     if (lod.vertices.empty() || lod.indices.empty()) continue;
@@ -718,46 +699,6 @@ void GLRendererImpl::draw_background(const renderer::DisplayMode& mode) {
   gl_.glEnable(GL_DEPTH_TEST);
 }
 
-void GLRendererImpl::draw_grid(const renderer::DisplayMode& mode) {
-  if (!mode.show_grid || !prog_grid_.valid() || !scene_) return;
-  gl_.glEnable(GL_BLEND);
-  // Alpha-preserving blend: src.rgb blends in normally with SRC_ALPHA, but
-  // dst.alpha is left untouched (factor ZERO on src, ONE on dst). Without
-  // this, every blended pixel would decay dst.alpha toward zero — and the
-  // OS compositor would punch holes wherever a faded line or grid cell
-  // crosses the screen.
-  gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
-                          GL_ZERO,      GL_ONE);
-  gl_.glUseProgram(prog_grid_.id());
-
-  const scene::mat4 vp     = scene_->camera.view_proj();
-  const scene::mat4 inv_vp = glm::inverse(vp);
-  gl_.glUniformMatrix4fv(prog_grid_.uniform(gl_, "u_view_proj"),     1, GL_FALSE, glm::value_ptr(vp));
-  gl_.glUniformMatrix4fv(prog_grid_.uniform(gl_, "u_inv_view_proj"), 1, GL_FALSE, glm::value_ptr(inv_vp));
-
-  const float radius = scene_->world_bounds.valid()
-    ? std::max(scene_->world_bounds.radius(), 1.0f)
-    : 1.0f;
-  // Scale cell size so it is readable across model sizes.
-  const float cell = std::pow(10.0f, std::floor(std::log10(radius * 0.05f)));
-  gl_.glUniform1f(prog_grid_.uniform(gl_, "u_scale"), cell);
-  scene::vec3 minor{0.30f, 0.32f, 0.36f};
-  scene::vec3 major{0.55f, 0.58f, 0.65f};
-  scene::vec3 ax_x {0.72f, 0.18f, 0.18f};
-  scene::vec3 ax_z {0.18f, 0.45f, 0.72f};
-  gl_.glUniform3fv(prog_grid_.uniform(gl_, "u_color_minor"),  1, &minor.x);
-  gl_.glUniform3fv(prog_grid_.uniform(gl_, "u_color_major"),  1, &major.x);
-  gl_.glUniform3fv(prog_grid_.uniform(gl_, "u_color_axis_x"), 1, &ax_x.x);
-  gl_.glUniform3fv(prog_grid_.uniform(gl_, "u_color_axis_z"), 1, &ax_z.x);
-  gl_.glUniform1f(prog_grid_.uniform(gl_, "u_fade_start"), radius * 1.5f);
-  gl_.glUniform1f(prog_grid_.uniform(gl_, "u_fade_end"),   radius * 8.0f);
-
-  gl_.glBindVertexArray(vao_grid_);
-  gl_.glDrawArrays(GL_TRIANGLES, 0, 6);
-  gl_.glBindVertexArray(0);
-  gl_.glDisable(GL_BLEND);
-}
-
 void GLRendererImpl::draw_pivot(const renderer::DisplayMode& mode) {
   if (!mode.show_rotation_pivot || !prog_pivot_.valid() || !scene_) return;
 
@@ -818,7 +759,10 @@ void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
   gl_.glUniform4fv(loc_color, 1, &tc.x);
 
   gl_.glEnable(GL_BLEND);
-  // Alpha-preserving blend (see draw_grid for the why).
+  // Alpha-preserving blend: src.rgb blends in normally with SRC_ALPHA, but
+  // dst.alpha is left untouched (factor ZERO on src, ONE on dst). Without
+  // this, every blended pixel would decay dst.alpha toward zero and the OS
+  // compositor would punch holes wherever a faded line crosses the screen.
   gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
                           GL_ZERO,      GL_ONE);
   gl_.glDepthMask(GL_FALSE);
@@ -878,8 +822,7 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
   gl_.glUniform1f(loc_bias, 0.0f);
 
   // Depth test ON so back-of-part edges stay hidden. Depth write OFF so
-  // the edge overlay doesn't pollute the depth buffer for any subsequent
-  // pass (grid, pivot).
+  // the edge overlay doesn't pollute the depth buffer for the pivot pass.
   gl_.glDepthMask(GL_FALSE);
 
   // Dark line over warm surfaces reads as ink; intensity slider in
@@ -997,9 +940,12 @@ void GLRendererImpl::release_msaa_target() {
   if (fbo_msaa_)     gl_.glDeleteFramebuffers(1, &fbo_msaa_);
   if (rb_color_msaa_) gl_.glDeleteRenderbuffers(1, &rb_color_msaa_);
   if (rb_depth_msaa_) gl_.glDeleteRenderbuffers(1, &rb_depth_msaa_);
-  fbo_msaa_ = rb_color_msaa_ = rb_depth_msaa_ = 0;
+  fbo_msaa_             = 0;
+  rb_color_msaa_        = 0;
+  rb_depth_msaa_        = 0;
   msaa_samples_current_ = 0;
-  fbo_w_ = fbo_h_ = 0;
+  fbo_w_                = 0;
+  fbo_h_                = 0;
 }
 
 void GLRendererImpl::ensure_msaa_target(int width_px, int height_px, int samples) {
@@ -1102,7 +1048,6 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   draw_background(mode);
 
   if (!scene_ || scene_->nodes.empty()) {
-    draw_grid(mode);
     draw_pivot(mode);
     return;
   }
@@ -1114,7 +1059,6 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
 
   if (!prog_pbr_.valid()) {
     CADLY_LOG_WARN("PBR program not available; skipping mesh draw.");
-    draw_grid(mode);
     draw_pivot(mode);
     return;
   }
@@ -1131,7 +1075,6 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   // show_triangle_mesh set, but guard anyway.
   if (mode.wireframe) {
     draw_edges(mode);
-    draw_grid(mode);
     draw_pivot(mode);
     return;
   }
@@ -1233,7 +1176,6 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
 
   draw_triangle_mesh(mode);
   draw_edges(mode);
-  draw_grid(mode);
   draw_pivot(mode);
 }
 
@@ -1246,19 +1188,16 @@ void GLRendererImpl::shutdown() {
   release_msaa_target();
   if (ubo_frame_)      gl_.glDeleteBuffers(1, &ubo_frame_);
   if (vao_background_) gl_.glDeleteVertexArrays(1, &vao_background_);
-  if (vao_grid_)       gl_.glDeleteVertexArrays(1, &vao_grid_);
-  if (vbo_grid_)       gl_.glDeleteBuffers(1, &vbo_grid_);
   if (vao_pivot_)      gl_.glDeleteVertexArrays(1, &vao_pivot_);
   if (vao_quad_)       gl_.glDeleteVertexArrays(1, &vao_quad_);
   if (env_cube_)        gl_.glDeleteTextures(1, &env_cube_);
   if (irradiance_cube_) gl_.glDeleteTextures(1, &irradiance_cube_);
   if (prefilter_cube_)  gl_.glDeleteTextures(1, &prefilter_cube_);
   if (brdf_lut_)        gl_.glDeleteTextures(1, &brdf_lut_);
-  ubo_frame_ = vao_background_ = vao_grid_ = vbo_grid_ = vao_pivot_ = vao_quad_ = 0;
+  ubo_frame_ = vao_background_ = vao_pivot_ = vao_quad_ = 0;
   env_cube_ = irradiance_cube_ = prefilter_cube_ = brdf_lut_ = 0;
   prog_pbr_.destroy(gl_);
   prog_background_.destroy(gl_);
-  prog_grid_.destroy(gl_);
   prog_pivot_.destroy(gl_);
   prog_edges_.destroy(gl_);
   prog_env_capture_.destroy(gl_);

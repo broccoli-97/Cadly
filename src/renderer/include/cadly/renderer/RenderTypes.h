@@ -23,7 +23,6 @@ struct MaterialHandle : ResourceHandle {};
 struct DisplayMode {
   bool wireframe        {false};
   bool show_edges       {false};   // outline at sharp creases
-  bool show_grid        {false};
   bool show_axes        {true};
   bool draw_background  {true};
   // Debug overlay: draw every triangle edge of the face triangulation on

@@ -32,7 +32,6 @@ public slots:
 private slots:
   void on_fit_view();
   void on_toggle_wireframe(bool on);
-  void on_toggle_grid(bool on);
   void on_toggle_edges(bool on);
   void on_toggle_triangle_mesh(bool on);
   void on_toggle_perspective(bool on);
@@ -58,7 +57,6 @@ private:
   QAction* act_quit_{nullptr};
   QAction* act_fit_{nullptr};
   QAction* act_wireframe_{nullptr};
-  QAction* act_grid_{nullptr};
   QAction* act_edges_{nullptr};
   QAction* act_triangle_mesh_{nullptr};
   QAction* act_perspective_{nullptr};

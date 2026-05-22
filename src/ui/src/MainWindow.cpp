@@ -67,11 +67,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   build_toolbar();
   build_status_bar();
   build_docks();
-
-  // Default display mode: shaded, no wireframe, no grid.
-  auto mode = viewport_->display_mode();
-  mode.show_grid = false;
-  viewport_->set_display_mode(mode);
 }
 
 MainWindow::~MainWindow() = default;
@@ -101,12 +96,6 @@ void MainWindow::build_menus() {
     tr("Show only the BRep wireframe (analytical edges, auto-refined on zoom)"));
   connect(act_wireframe_, &QAction::toggled, this, &MainWindow::on_toggle_wireframe);
   view_menu->addAction(act_wireframe_);
-
-  act_grid_ = new QAction(tr("Show grid"), this);
-  act_grid_->setCheckable(true);
-  act_grid_->setChecked(false);
-  connect(act_grid_, &QAction::toggled, this, &MainWindow::on_toggle_grid);
-  view_menu->addAction(act_grid_);
 
   act_edges_ = new QAction(tr("Show edges"), this);
   act_edges_->setCheckable(true);
@@ -152,7 +141,6 @@ void MainWindow::build_toolbar() {
   tb->addSeparator();
   tb->addAction(act_fit_);
   tb->addAction(act_wireframe_);
-  tb->addAction(act_grid_);
   tb->addAction(act_edges_);
   tb->addAction(act_triangle_mesh_);
 }
@@ -299,10 +287,6 @@ void MainWindow::on_toggle_wireframe(bool on) {
     mode.show_edges         = false;
     mode.show_triangle_mesh = false;
   }
-  viewport_->set_display_mode(mode);
-}
-void MainWindow::on_toggle_grid(bool on) {
-  auto mode = viewport_->display_mode(); mode.show_grid = on;
   viewport_->set_display_mode(mode);
 }
 void MainWindow::on_toggle_triangle_mesh(bool on) {
