@@ -50,12 +50,6 @@ struct LightEnvironment {
   // normal operation the irradiance cubemap dominates this term and the
   // value is invisible.
   vec3 ambient        { 0.12f,  0.13f,  0.16f};
-
-  // Background gradient (top/bottom) painted before the depth prepass.
-  // Mirrors the renderer DisplayMode default — kept in sync so a scene
-  // constructed without a DisplayMode override still looks right.
-  vec3 background_top   { 0.42f, 0.44f, 0.48f};
-  vec3 background_bottom{ 0.22f, 0.23f, 0.26f};
 };
 
 } // namespace cadly::scene

@@ -9,7 +9,7 @@ namespace cadly::renderer_gl::detail {
 
 namespace {
 
-GLuint compile_stage(QOpenGLFunctions_4_1_Core& gl,
+GLuint compile_stage(GLFunctions& gl,
                      GLenum stage,
                      const std::string& source,
                      std::string& error_out) {
@@ -35,7 +35,7 @@ GLuint compile_stage(QOpenGLFunctions_4_1_Core& gl,
 
 } // namespace
 
-bool GLProgram::build(QOpenGLFunctions_4_1_Core& gl,
+bool GLProgram::build(GLFunctions& gl,
                       const std::string& vertex_source,
                       const std::string& fragment_source,
                       const char* debug_name) {
@@ -78,7 +78,7 @@ bool GLProgram::build(QOpenGLFunctions_4_1_Core& gl,
   return id_ != 0;
 }
 
-void GLProgram::destroy(QOpenGLFunctions_4_1_Core& gl) {
+void GLProgram::destroy(GLFunctions& gl) {
   if (id_) {
     gl.glDeleteProgram(id_);
     id_ = 0;
@@ -88,7 +88,7 @@ void GLProgram::destroy(QOpenGLFunctions_4_1_Core& gl) {
   last_error_.clear();
 }
 
-GLint GLProgram::uniform(QOpenGLFunctions_4_1_Core& gl, const char* name) {
+GLint GLProgram::uniform(GLFunctions& gl, const char* name) {
   auto it = uniform_cache_.find(name);
   if (it != uniform_cache_.end()) return it->second;
   GLint loc = gl.glGetUniformLocation(id_, name);
@@ -96,7 +96,7 @@ GLint GLProgram::uniform(QOpenGLFunctions_4_1_Core& gl, const char* name) {
   return loc;
 }
 
-GLuint GLProgram::uniform_block(QOpenGLFunctions_4_1_Core& gl, const char* name) {
+GLuint GLProgram::uniform_block(GLFunctions& gl, const char* name) {
   auto it = block_cache_.find(name);
   if (it != block_cache_.end()) return it->second;
   GLuint idx = gl.glGetUniformBlockIndex(id_, name);

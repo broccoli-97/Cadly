@@ -44,6 +44,10 @@ private:
   CameraController* camera_{nullptr};
   std::unique_ptr<renderer::IRenderer> renderer_;
   std::shared_ptr<scene::Scene> scene_;
+  // True between a `set_scene` call and the next paint that re-attaches the
+  // new scene to the renderer. Avoids the per-frame attach call that the
+  // previous version did against the IRenderer contract.
+  bool                  scene_dirty_{false};
   renderer::DisplayMode display_mode_{};
 };
 

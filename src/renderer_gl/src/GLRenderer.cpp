@@ -1,5 +1,6 @@
 #include "cadly/renderer_gl/GLRenderer.h"
 
+#include "GLFunctions.h"
 #include "GLShader.h"
 
 #include "cadly/platform/Log.h"
@@ -8,19 +9,20 @@
 #include "cadly/scene/Node.h"
 #include "cadly/scene/Scene.h"
 
-#include <QOpenGLFunctions_4_1_Core>
-
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 #include <array>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 
 namespace cadly::renderer_gl {
 
 namespace {
 
+using detail::GLFunctions;
 using detail::GLProgram;
 using detail::load_shader_source;
 
@@ -69,26 +71,35 @@ struct MeshGpu {
   // edges path because mesh-coupled indices are guaranteed consistent
   // with the face triangulation, while the analytical curve is not.
   std::vector<EdgeLodGpu> edge_lods;
-  std::shared_ptr<scene::Mesh> source; // keeps the CPU data alive
+  // Strong reference to the source CPU mesh. Two reasons:
+  //   1. Anchors the raw `Mesh*` cache key — as long as we hold the
+  //      shared_ptr, the address can't be reused by an unrelated mesh,
+  //      so the ABA hazard on map lookup is gone.
+  //   2. Mirrors the GPU buffer lifetime: when this entry is evicted
+  //      (in `attach_scene` or `shutdown`), the CPU geometry is allowed
+  //      to drop too, instead of being kept alive forever as it was
+  //      before the eviction pass existed.
+  std::shared_ptr<scene::Mesh> source;
 };
 
 // Implementation -----------------------------------------------------------
 class GLRendererImpl final : public renderer::IRenderer {
 public:
-  GLRendererImpl() = default;
+  explicit GLRendererImpl(GLLoadProc load_proc)
+      : load_proc_(std::move(load_proc)) {}
   ~GLRendererImpl() override { /* shutdown() handles cleanup explicitly */ }
 
   void initialize() override;
   void resize(int width_px, int height_px) override;
   void attach_scene(std::shared_ptr<scene::Scene> scene) override;
   void render(const renderer::DisplayMode& mode) override;
-  scene::SelectionId pick(int, int) override { return {}; }
   void shutdown() override;
 
 private:
   bool build_programs();
   void ensure_mesh_upload(const scene::Mesh& mesh,
                           const std::shared_ptr<scene::Mesh>& mesh_ptr);
+  void free_mesh_gpu(MeshGpu& g);
   void update_frame_uniforms();
   void draw_background(const renderer::DisplayMode& mode);
   void draw_grid(const renderer::DisplayMode& mode);
@@ -107,7 +118,8 @@ private:
   void   bake_brdf_lut();
   static scene::mat3 cube_face_basis(int face);
 
-  QOpenGLFunctions_4_1_Core gl_;
+  GLLoadProc load_proc_;
+  GLFunctions gl_;
   bool   initialised_{false};
   GLint  viewport_w_{1};
   GLint  viewport_h_{1};
@@ -151,14 +163,19 @@ private:
   int      brdf_lut_size_{256};
   GLuint   vao_quad_{0};
 
-  // Scene + GPU mesh cache.
+  // Scene + GPU mesh cache. Keyed by `const scene::Mesh*` purely to avoid the
+  // const_cast that the previous non-const key forced. ABA address-reuse
+  // hazards are blocked by `MeshGpu::source` (the strong ref keeps the
+  // address pinned), and `attach_scene` evicts entries that the new scene
+  // no longer references — without that pass, the source shared_ptr would
+  // turn into a slow GPU-side leak across re-imports.
   std::shared_ptr<scene::Scene> scene_;
-  std::unordered_map<scene::Mesh*, MeshGpu> meshes_;
+  std::unordered_map<const scene::Mesh*, MeshGpu> meshes_;
 };
 
 void GLRendererImpl::initialize() {
   if (initialised_) return;
-  if (!gl_.initializeOpenGLFunctions()) {
+  if (!gl_.load(load_proc_)) {
     CADLY_LOG_ERROR("Failed to load OpenGL 4.1 core functions. "
                     "Is the context current and a compatible version?");
     return;
@@ -266,15 +283,47 @@ void GLRendererImpl::resize(int width_px, int height_px) {
 }
 
 void GLRendererImpl::attach_scene(std::shared_ptr<scene::Scene> scene) {
+  // Evict GPU buffers for meshes that the new scene no longer references.
+  // Without this pass the `MeshGpu::source` strong refs would pin every CPU
+  // mesh forever, and the GPU buffers would never be freed across re-imports.
+  if (initialised_) {
+    std::unordered_set<const scene::Mesh*> still_alive;
+    if (scene) {
+      still_alive.reserve(scene->meshes.size());
+      for (const auto& m : scene->meshes) {
+        if (m) still_alive.insert(m.get());
+      }
+    }
+    for (auto it = meshes_.begin(); it != meshes_.end(); ) {
+      if (still_alive.find(it->first) == still_alive.end()) {
+        free_mesh_gpu(it->second);
+        it = meshes_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
   scene_ = std::move(scene);
-  // We do not invalidate the mesh cache: existing MeshGpu entries are keyed
-  // by raw Mesh* and the importer hands us new pointers, so stale entries are
-  // simply unused. shutdown() will reclaim them.
+}
+
+void GLRendererImpl::free_mesh_gpu(MeshGpu& g) {
+  if (g.vao) gl_.glDeleteVertexArrays(1, &g.vao);
+  if (g.vbo) gl_.glDeleteBuffers(1, &g.vbo);
+  if (g.ibo) gl_.glDeleteBuffers(1, &g.ibo);
+  // strip_vao reuses g.vbo, so only its own VAO + IBO are owned here.
+  if (g.strip_vao) gl_.glDeleteVertexArrays(1, &g.strip_vao);
+  if (g.strip_ibo) gl_.glDeleteBuffers(1, &g.strip_ibo);
+  for (auto& lod : g.edge_lods) {
+    if (lod.vao) gl_.glDeleteVertexArrays(1, &lod.vao);
+    if (lod.vbo) gl_.glDeleteBuffers(1, &lod.vbo);
+    if (lod.ibo) gl_.glDeleteBuffers(1, &lod.ibo);
+  }
+  g = MeshGpu{};
 }
 
 void GLRendererImpl::ensure_mesh_upload(const scene::Mesh& mesh,
                                         const std::shared_ptr<scene::Mesh>& mesh_ptr) {
-  auto it = meshes_.find(const_cast<scene::Mesh*>(&mesh));
+  auto it = meshes_.find(&mesh);
   if (it != meshes_.end()) return;
 
   if (mesh.vertices.empty() || mesh.indices.empty()) return;
@@ -379,7 +428,7 @@ void GLRendererImpl::ensure_mesh_upload(const scene::Mesh& mesh,
   }
   gl_.glBindVertexArray(0);
 
-  meshes_.emplace(const_cast<scene::Mesh*>(&mesh), g);
+  meshes_.emplace(&mesh, std::move(g));
 }
 
 // IBL bake ------------------------------------------------------------------
@@ -877,9 +926,9 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     return;
   }
 
-  // Update camera aspect from viewport (it may have changed via resize()).
-  scene_->camera.aspect = static_cast<float>(viewport_w_) /
-                          static_cast<float>(viewport_h_);
+  // Camera::aspect is owned by the camera. The host is expected to keep it
+  // in sync with the viewport (the Qt host does this in CameraController::
+  // set_viewport); the renderer only reads it here.
   update_frame_uniforms();
 
   if (!prog_pbr_.valid()) {
@@ -1010,17 +1059,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
 void GLRendererImpl::shutdown() {
   if (!initialised_) return;
   for (auto& [_, g] : meshes_) {
-    if (g.vao) gl_.glDeleteVertexArrays(1, &g.vao);
-    if (g.vbo) gl_.glDeleteBuffers(1, &g.vbo);
-    if (g.ibo) gl_.glDeleteBuffers(1, &g.ibo);
-    // strip_vao reuses g.vbo, so only the VAO + IBO are owned here.
-    if (g.strip_vao) gl_.glDeleteVertexArrays(1, &g.strip_vao);
-    if (g.strip_ibo) gl_.glDeleteBuffers(1, &g.strip_ibo);
-    for (auto& lod : g.edge_lods) {
-      if (lod.vao) gl_.glDeleteVertexArrays(1, &lod.vao);
-      if (lod.vbo) gl_.glDeleteBuffers(1, &lod.vbo);
-      if (lod.ibo) gl_.glDeleteBuffers(1, &lod.ibo);
-    }
+    free_mesh_gpu(g);
   }
   meshes_.clear();
   if (ubo_frame_)      gl_.glDeleteBuffers(1, &ubo_frame_);
@@ -1049,8 +1088,8 @@ void GLRendererImpl::shutdown() {
 
 } // namespace
 
-std::unique_ptr<renderer::IRenderer> make_gl_renderer() {
-  return std::make_unique<GLRendererImpl>();
+std::unique_ptr<renderer::IRenderer> make_gl_renderer(GLLoadProc load_proc) {
+  return std::make_unique<GLRendererImpl>(std::move(load_proc));
 }
 
 } // namespace cadly::renderer_gl

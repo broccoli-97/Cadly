@@ -1,6 +1,6 @@
 #pragma once
 
-#include <QOpenGLFunctions_4_1_Core>
+#include "GLFunctions.h"
 
 #include <optional>
 #include <string>
@@ -19,19 +19,19 @@ public:
 
   // Compile + link from raw source. Returns false on failure; the error log
   // is forwarded to the platform logger and exposed via last_error().
-  bool build(QOpenGLFunctions_4_1_Core& gl,
+  bool build(GLFunctions& gl,
              const std::string& vertex_source,
              const std::string& fragment_source,
              const char* debug_name);
 
-  void destroy(QOpenGLFunctions_4_1_Core& gl);
+  void destroy(GLFunctions& gl);
 
   GLuint id() const { return id_; }
   bool   valid() const { return id_ != 0; }
   const std::string& last_error() const { return last_error_; }
 
-  GLint  uniform(QOpenGLFunctions_4_1_Core& gl, const char* name);
-  GLuint uniform_block(QOpenGLFunctions_4_1_Core& gl, const char* name);
+  GLint  uniform(GLFunctions& gl, const char* name);
+  GLuint uniform_block(GLFunctions& gl, const char* name);
 
 private:
   GLuint id_{0};

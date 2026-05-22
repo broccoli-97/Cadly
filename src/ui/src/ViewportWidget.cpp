@@ -4,6 +4,7 @@
 #include "cadly/renderer_gl/GLRenderer.h"
 
 #include <QMouseEvent>
+#include <QOpenGLContext>
 #include <QSurfaceFormat>
 #include <QWheelEvent>
 
@@ -54,8 +55,26 @@ ViewportWidget::~ViewportWidget() {
 }
 
 void ViewportWidget::initializeGL() {
-  renderer_ = renderer_gl::make_gl_renderer();
+  // Bridge Qt's GL entry-point resolver to the renderer's transport-neutral
+  // loader signature. QOpenGLContext::getProcAddress returns a
+  // QFunctionPointer (void(*)()); reinterpret_cast to void* is the same
+  // implementation-defined cast every native loader on every platform does,
+  // so it works wherever Qt's OpenGL works.
+  auto* ctx = QOpenGLContext::currentContext();
+  renderer_gl::GLLoadProc loader =
+    [ctx](const char* name) -> void* {
+      if (!ctx) return nullptr;
+      return reinterpret_cast<void*>(ctx->getProcAddress(name));
+    };
+  renderer_ = renderer_gl::make_gl_renderer(std::move(loader));
   renderer_->initialize();
+
+  // A `set_scene` may have run before the GL context existed; flush it now
+  // so the first paint draws against the right mesh cache.
+  if (scene_dirty_) {
+    renderer_->attach_scene(scene_);
+    scene_dirty_ = false;
+  }
 }
 
 void ViewportWidget::resizeGL(int w, int h) {
@@ -70,15 +89,19 @@ void ViewportWidget::resizeGL(int w, int h) {
 
 void ViewportWidget::paintGL() {
   if (!renderer_) return;
+  if (scene_dirty_) {
+    renderer_->attach_scene(scene_);
+    scene_dirty_ = false;
+  }
   if (scene_) {
     scene_->camera = camera_->camera();
-    renderer_->attach_scene(scene_);
   }
   renderer_->render(display_mode_);
 }
 
 void ViewportWidget::set_scene(std::shared_ptr<scene::Scene> scene) {
   scene_ = std::move(scene);
+  scene_dirty_ = true;
   if (scene_ && scene_->world_bounds.valid()) {
     camera_->frame_bounds(scene_->world_bounds.min, scene_->world_bounds.max);
   }

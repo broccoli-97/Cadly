@@ -19,7 +19,6 @@ struct Material {
   vec3  emissive_color{0.0f};
 
   bool double_sided{false};
-  bool wireframe{false};
 
   static Material steel() {
     Material m; m.name = "steel";
