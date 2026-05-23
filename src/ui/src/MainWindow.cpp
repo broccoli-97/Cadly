@@ -126,6 +126,30 @@ void MainWindow::build_menus() {
           this, &MainWindow::on_toggle_perspective);
   view_menu->addAction(act_perspective_);
 
+  // Standard view presets. The camera is reoriented but target+distance are
+  // left untouched on purpose: the user can already reset framing with F. The
+  // numbering follows Blender's numpad layout (1/3/7 for the three primary
+  // axes) which the CAD audience tends to have in their fingers.
+  auto* views_menu = view_menu->addMenu(tr("Standard &Views"));
+  auto add_view_action = [this, views_menu](const QString& name,
+                                            QKeySequence shortcut,
+                                            float yaw_deg, float pitch_deg) {
+    auto* a = new QAction(name, this);
+    a->setShortcut(shortcut);
+    connect(a, &QAction::triggered, this, [this, yaw_deg, pitch_deg]() {
+      if (auto* ctrl = viewport_->camera_controller())
+        ctrl->set_view(yaw_deg, pitch_deg);
+    });
+    views_menu->addAction(a);
+  };
+  add_view_action(tr("&Front"),       Qt::Key_1,    0.0f,   0.0f);
+  add_view_action(tr("&Back"),        Qt::Key_2,  180.0f,   0.0f);
+  add_view_action(tr("&Right"),       Qt::Key_3,   90.0f,   0.0f);
+  add_view_action(tr("&Left"),        Qt::Key_4,  -90.0f,   0.0f);
+  add_view_action(tr("&Top"),         Qt::Key_5,    0.0f, -90.0f);
+  add_view_action(tr("Bo&ttom"),      Qt::Key_6,    0.0f,  90.0f);
+  add_view_action(tr("&Isometric"),   Qt::Key_7,   30.0f, -22.0f);
+
   auto* help_menu = menuBar()->addMenu(tr("&Help"));
   act_about_ = new QAction(tr("About Cadly"), this);
   connect(act_about_, &QAction::triggered, this, &MainWindow::on_about);

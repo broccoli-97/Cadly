@@ -142,4 +142,16 @@ void CameraController::wheel(int angle_delta) {
   emit changed();
 }
 
+void CameraController::set_view(float yaw_deg, float pitch_deg) {
+  // Standard-view presets reorient only; preserving target+distance keeps the
+  // user's current focal point and zoom, which matches what CAD tools do when
+  // you tap a view-cube face. Clip planes still need a refresh because the
+  // camera position is derived from orientation, so it shifts relative to the
+  // scene center even though `distance` is unchanged.
+  camera_.set_orientation_yaw_pitch(glm::radians(yaw_deg),
+                                    glm::radians(pitch_deg));
+  update_clip_planes();
+  emit changed();
+}
+
 } // namespace cadly::ui

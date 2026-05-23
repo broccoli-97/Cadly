@@ -67,6 +67,13 @@ public:
   void end_drag();
   void wheel(int angle_delta);
 
+  // Re-orient the camera to a fixed yaw/pitch (in degrees) without moving the
+  // target or changing distance. Drives the View > Standard Views actions
+  // (Front, Top, Right, Iso, …). Yaw/pitch follow the same convention as
+  // scene::Camera::set_orientation_yaw_pitch: yaw=0,pitch=0 places the camera
+  // on -Z looking toward +Z (the "front" face), pitch=-90 looks straight down.
+  void set_view(float yaw_deg, float pitch_deg);
+
   // Replace the rotation-pivot strategy. Passing `nullptr` restores the
   // default `TargetPivotResolver`. Safe to call mid-session; the next
   // `begin_drag(Orbit, ...)` will use the new resolver.
