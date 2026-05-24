@@ -65,7 +65,13 @@ public:
   void begin_drag(DragMode mode, QPoint at);
   void update_drag(QPoint to);
   void end_drag();
-  void wheel(int angle_delta);
+
+  // `cursor_pos` is widget-local pixels (Qt convention: origin top-left).
+  // Zoom anchors on the world point currently under the cursor on the focal
+  // plane through `target`, so that point stays under the cursor after the
+  // distance change. Falls back to target-centred zoom near screen centre
+  // (where `cursor_world ≈ target` makes the two formulations identical).
+  void wheel(QPoint cursor_pos, int angle_delta);
 
   // Re-orient the camera to a fixed yaw/pitch (in degrees) without moving the
   // target or changing distance. Drives the View > Standard Views actions

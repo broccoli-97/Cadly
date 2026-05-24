@@ -135,9 +135,38 @@ void CameraController::end_drag() {
   }
 }
 
-void CameraController::wheel(int angle_delta) {
-  const float factor = std::exp(-static_cast<float>(angle_delta) * kWheelSpeed);
-  camera_.distance = clamp_distance(camera_.distance * factor);
+void CameraController::wheel(QPoint cursor_pos, int angle_delta) {
+  const float factor       = std::exp(-static_cast<float>(angle_delta) * kWheelSpeed);
+  const float old_distance = camera_.distance;
+  const float new_distance = clamp_distance(old_distance * factor);
+  const float ratio        = (old_distance > 0.0f) ? (new_distance / old_distance) : 1.0f;
+
+  // Cursor in NDC (Qt y-down → GL y-up).
+  const float ndc_x = (2.0f * static_cast<float>(cursor_pos.x()) /
+                       static_cast<float>(viewport_w_)) - 1.0f;
+  const float ndc_y = 1.0f - (2.0f * static_cast<float>(cursor_pos.y()) /
+                              static_cast<float>(viewport_h_));
+
+  // Focal-plane extents — same formula Camera::projection() uses for the ortho
+  // path, which keeps the anchor consistent across both projection modes. The
+  // anchor sits on the plane through `target` perpendicular to `forward`; for
+  // perspective this plane is exactly where view-space depth equals `distance`,
+  // so when we scale (target − cursor_world) by `ratio` the cursor's
+  // homogeneous divide cancels (depth and offset both scale by ratio) and the
+  // world point stays under the cursor. For ortho the proof is even simpler:
+  // half_w/half_h scale linearly with `distance`, so the cursor's NDC is
+  // preserved by construction.
+  const float half_h = old_distance * std::tan(0.5f * camera_.fov_y);
+  const float half_w = half_h * camera_.aspect;
+  const scene::vec3 cursor_world =
+      camera_.target + camera_.right() * (ndc_x * half_w)
+                     + camera_.up()    * (ndc_y * half_h);
+
+  // Shrink/expand the (target − cursor_world) offset by `ratio` so the world
+  // point under the cursor projects to the same pixel after the distance
+  // change. When ratio == 1 (distance clamped) target is unchanged.
+  camera_.target   = cursor_world + (camera_.target - cursor_world) * ratio;
+  camera_.distance = new_distance;
   update_clip_planes();
   emit changed();
 }

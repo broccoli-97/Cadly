@@ -156,7 +156,10 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* e) {
-  camera_->wheel(e->angleDelta().y());
+  // Forward widget-local cursor position so the controller can anchor zoom
+  // to the point under the pointer (the same coordinate space the controller
+  // sees via set_viewport()).
+  camera_->wheel(e->position().toPoint(), e->angleDelta().y());
   e->accept();
 }
 
