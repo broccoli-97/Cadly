@@ -92,10 +92,38 @@ vec3 fresnel_schlick_roughness(float HoV, vec3 F0, float roughness) {
 }
 
 void main() {
-  // Two-sided fallback so missing/back-faces still shade — common in CAD.
-  vec3 N = normalize(v_world_normal);
-  vec3 V = normalize(u_camera_pos.xyz - v_world_pos);
-  if (dot(N, V) < 0.0) N = -N;
+  // Build a "shading normal" that never points below the visible horizon.
+  //
+  // On a curved surface, smooth interpolated per-vertex normals can dip
+  // below dot(N,V)=0 along the silhouette of a front-facing triangle.
+  // Flipping N there (the old fallback) inverts the reflection vector and
+  // samples IBL from the opposite hemisphere -> back-side metallic smear.
+  // Zeroing IBL there leaves the silhouette black -> kills the grazing-
+  // angle Fresnel response that real materials show (chrome ball rim,
+  // glass-marble edge brightening).
+  //
+  // The physically correct fix is to clamp N into the visible hemisphere:
+  // push N just above the V-perpendicular plane while keeping it as close
+  // as possible to its original direction. The resulting reflection vector
+  // is near-tangent at the silhouette, which is what a grazing-angle pixel
+  // actually reflects (the side environment), and Fresnel naturally drives
+  // the rim toward pure reflection.
+  //
+  // Back-facing fragments only reach the shader on double-sided / non-
+  // manifold geometry. There no clamp is meaningful (we're looking into
+  // the surface), so fall back to the historical normal-flip so the
+  // interior receives diffuse light at all.
+  vec3 N_raw = normalize(v_world_normal);
+  vec3 V     = normalize(u_camera_pos.xyz - v_world_pos);
+  vec3 N;
+  if (gl_FrontFacing) {
+    float NoV_raw = dot(N_raw, V);
+    N = (NoV_raw < 0.0)
+      ? normalize(N_raw + V * (-NoV_raw + 1e-3))
+      : N_raw;
+  } else {
+    N = -N_raw;
+  }
 
   vec3 base = u_base_color.rgb * v_vertex_color.rgb;
   float metallic  = clamp(u_metallic,  0.0, 1.0);
@@ -113,12 +141,14 @@ void main() {
   // irradiance cubemap; the specular term reads the GGX-prefiltered cubemap
   // at the mip level matching this surface's roughness, weighted by the
   // BRDF LUT that encodes the (NoV, roughness) -> (scale, bias) integral.
-  float NoV = max(dot(N, V), 0.0);
-  vec3  F_ibl = fresnel_schlick_roughness(NoV, F0, roughness);
+  // N is already hemisphere-clamped above, so NoV is guaranteed > 0 and
+  // R stays on the visible side — no extra fade or fallback needed.
+  float NoV = max(dot(N, V), 1e-4);
+  vec3  F_ibl  = fresnel_schlick_roughness(NoV, F0, roughness);
   vec3  kS_ibl = F_ibl;
   vec3  kD_ibl = (vec3(1.0) - kS_ibl) * (1.0 - metallic);
 
-  vec3 irradiance = texture(u_irradiance_cube, N).rgb;
+  vec3 irradiance  = texture(u_irradiance_cube, N).rgb;
   vec3 diffuse_ibl = irradiance * base;
 
   vec3  R = reflect(-V, N);

@@ -99,7 +99,7 @@ void MainWindow::build_menus() {
 
   act_edges_ = new QAction(tr("Show edges"), this);
   act_edges_->setCheckable(true);
-  act_edges_->setChecked(false);
+  act_edges_->setChecked(true);
   act_edges_->setShortcut(Qt::Key_E);
   act_edges_->setToolTip(tr("Overlay the BRep edges of the model"));
   connect(act_edges_, &QAction::toggled, this, &MainWindow::on_toggle_edges);

@@ -22,7 +22,7 @@ struct MaterialHandle : ResourceHandle {};
 // scene itself doesn't need to know what's on.
 struct DisplayMode {
   bool wireframe        {false};
-  bool show_edges       {false};   // outline at sharp creases
+  bool show_edges       {true};    // outline at sharp creases
   bool show_axes        {true};
   bool draw_background  {true};
   // Debug overlay: draw every triangle edge of the face triangulation on
