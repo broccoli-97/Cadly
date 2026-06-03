@@ -63,10 +63,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   viewport_ = new ViewportWidget(this);
   setCentralWidget(viewport_);
 
+  // Docks before menus: the View menu surfaces each dock's toggleViewAction(),
+  // so the docks have to exist by the time build_menus() runs.
+  build_docks();
   build_menus();
   build_toolbar();
   build_status_bar();
-  build_docks();
 }
 
 MainWindow::~MainWindow() = default;
@@ -149,6 +151,16 @@ void MainWindow::build_menus() {
   add_view_action(tr("&Top"),         Qt::Key_5,    0.0f, -90.0f);
   add_view_action(tr("Bo&ttom"),      Qt::Key_6,    0.0f,  90.0f);
   add_view_action(tr("&Isometric"),   Qt::Key_7,   30.0f, -22.0f);
+
+  // Panel visibility. A QDockWidget's close button hides it with no built-in
+  // way back, which strands the panel for good. Each dock's toggleViewAction()
+  // is a checkable action that tracks visibility and re-shows the dock when
+  // ticked, so closing a panel now just unchecks its entry here.
+  view_menu->addSeparator();
+  auto* panels_menu = view_menu->addMenu(tr("&Panels"));
+  panels_menu->addAction(tree_dock_->toggleViewAction());
+  panels_menu->addAction(props_dock_->toggleViewAction());
+  panels_menu->addAction(diag_dock_->toggleViewAction());
 
   auto* help_menu = menuBar()->addMenu(tr("&Help"));
   act_about_ = new QAction(tr("About Cadly"), this);
