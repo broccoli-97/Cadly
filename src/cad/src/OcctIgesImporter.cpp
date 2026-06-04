@@ -82,19 +82,25 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
   result.summary.parse_time = std::chrono::duration_cast<std::chrono::milliseconds>(
     t_parse - t0);
 
-  TopoDS_Shape fallback;
-  {
+  progress.update(0.40f, "Tessellating geometry...");
+  occt::ConversionStats stats;
+  auto scn = occt::document_to_scene(doc, TopoDS_Shape{}, req.options,
+                                     /*unit_to_m=*/0.001f, stats, progress);
+
+  // Lazy geometry-only fallback (see OcctStepImporter for the full rationale):
+  // the second IGESControl_Reader parse only runs when the XDE walk produced
+  // no nodes, instead of unconditionally re-parsing the whole file every time.
+  if (!scn || scn->nodes.empty()) {
     IGESControl_Reader bare;
     if (bare.ReadFile(path_str.c_str()) == IFSelect_RetDone) {
       bare.TransferRoots();
-      if (bare.NbShapes() > 0) fallback = bare.OneShape();
+      if (bare.NbShapes() > 0) {
+        scn = occt::document_to_scene(Handle(TDocStd_Document){}, bare.OneShape(),
+                                      req.options, /*unit_to_m=*/0.001f, stats,
+                                      progress);
+      }
     }
   }
-
-  progress.update(0.40f, "Tessellating geometry...");
-  occt::ConversionStats stats;
-  auto scn = occt::document_to_scene(doc, fallback, req.options,
-                                     /*unit_to_m=*/0.001f, stats, progress);
   result.scene = std::move(scn);
   if (result.scene) {
     result.scene->source_file = req.path;

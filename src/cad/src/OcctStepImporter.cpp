@@ -109,21 +109,25 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
 
   progress.update(0.40f, "Tessellating geometry...");
   occt::ConversionStats stats;
-  // We also keep a fallback (full one-shot) shape in case the doc walk
-  // produces nothing — STEPControl_Reader is used here for a stitched shape.
-  TopoDS_Shape fallback;
-  {
+  auto scn = occt::document_to_scene(doc, TopoDS_Shape{}, req.options, unit_to_m,
+                                     stats, progress);
+
+  // Geometry-only fallback, evaluated lazily. document_to_scene consults the
+  // fallback shape ONLY when there is no XDE document; with a valid `doc` (the
+  // normal path) it is never read. This second STEPControl_Reader parse used
+  // to run unconditionally on every import — a full redundant read + transfer
+  // of the whole file, often as costly as the primary parse — even though its
+  // result was thrown away. Now it runs only if the XDE walk produced nothing.
+  if (!scn || scn->nodes.empty()) {
     STEPControl_Reader bare;
     if (bare.ReadFile(path_str.c_str()) == IFSelect_RetDone) {
       bare.TransferRoots();
       if (bare.NbShapes() > 0) {
-        fallback = bare.OneShape();
+        scn = occt::document_to_scene(Handle(TDocStd_Document){}, bare.OneShape(),
+                                      req.options, unit_to_m, stats, progress);
       }
     }
   }
-
-  auto scn = occt::document_to_scene(doc, fallback, req.options, unit_to_m,
-                                     stats, progress);
   // Carry diagnostics + summary up.
   result.scene = std::move(scn);
   if (result.scene) {
