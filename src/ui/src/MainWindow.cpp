@@ -12,12 +12,14 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QIcon>
 #include <QLabel>
 #include <QMenuBar>
+#include <QShowEvent>
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QStandardPaths>
@@ -193,12 +195,46 @@ void MainWindow::build_docks() {
   props_dock_ = new PropertiesDock(this);
   diag_dock_  = new ImportDiagnosticsDock(this);
 
+  // Panels may be moved between dock edges or closed (and reopened from
+  // View ▸ Panels), but deliberately can NOT be torn off into free-floating
+  // top-level windows. Floating is trivially triggered by accident (a
+  // double-click on the title bar, or a stray drag) and, once a panel is
+  // detached, putting it back is fiddly and undiscoverable — so we drop
+  // DockWidgetFloatable and keep only move + close. Any leftover floating
+  // state from an older saved layout is undone in showEvent().
+  const auto dock_features =
+      QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable;
+  for (auto* dock : {static_cast<QDockWidget*>(tree_dock_),
+                     static_cast<QDockWidget*>(props_dock_),
+                     static_cast<QDockWidget*>(diag_dock_)}) {
+    dock->setFeatures(dock_features);
+  }
+
   addDockWidget(Qt::LeftDockWidgetArea,  tree_dock_);
   addDockWidget(Qt::RightDockWidgetArea, props_dock_);
   addDockWidget(Qt::BottomDockWidgetArea, diag_dock_);
 
   connect(tree_dock_, &ModelTreeDock::node_activated,
           props_dock_, &PropertiesDock::show_node);
+}
+
+void MainWindow::showEvent(QShowEvent* e) {
+  QMainWindow::showEvent(e);
+  // QMainWindow::restoreState() runs after construction but before the first
+  // show, and it reinstates a saved floating dock via setFloating() — which
+  // ignores the DockWidgetFloatable feature flag (that flag only gates user
+  // interaction, not programmatic state). So a layout saved by an older build,
+  // before floating was disabled, can still surface a detached panel here.
+  // With floating now off the user can't re-dock it, so snap any leftover
+  // floating panel back into the window exactly once, on first show.
+  if (!docks_unfloated_) {
+    docks_unfloated_ = true;
+    for (auto* dock : {static_cast<QDockWidget*>(tree_dock_),
+                       static_cast<QDockWidget*>(props_dock_),
+                       static_cast<QDockWidget*>(diag_dock_)}) {
+      if (dock && dock->isFloating()) dock->setFloating(false);
+    }
+  }
 }
 
 void MainWindow::open_file() {

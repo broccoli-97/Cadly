@@ -11,6 +11,7 @@
 class QAction;
 class QLabel;
 class QProgressDialog;
+class QShowEvent;
 
 namespace cadly::ui {
 
@@ -24,6 +25,13 @@ class MainWindow : public QMainWindow {
 public:
   explicit MainWindow(QWidget* parent = nullptr);
   ~MainWindow() override;
+
+protected:
+  // Floating docks are disabled (see build_docks), but a window layout saved
+  // by an older build can still carry a floating panel that restoreState()
+  // reinstates before the first show. Un-float any such leftover once here so
+  // the user is never stranded with a detached window.
+  void showEvent(QShowEvent* e) override;
 
 public slots:
   void open_file();
@@ -69,6 +77,9 @@ private:
 
   // Active import job state — only one at a time.
   QPointer<QProgressDialog> progress_dialog_;
+
+  // Guards the one-shot un-float pass in showEvent().
+  bool docks_unfloated_{false};
 };
 
 } // namespace cadly::ui
