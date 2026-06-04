@@ -1155,7 +1155,11 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
       gl_.glUniform3fv(loc_emi_col, 1, &m.emissive_color.x);
       gl_.glUniform1f (loc_emi,     m.emissive);
 
-      if (m.double_sided) {
+      // Draw both faces when either the geometry isn't a closed solid
+      // (mesh.double_sided — set by the importer for IGES surface quilts /
+      // open shells, whose patch winding is arbitrary) or the material is
+      // intrinsically two-sided. Otherwise keep the cheaper single-sided cull.
+      if (mesh_ptr->double_sided || m.double_sided) {
         gl_.glDisable(GL_CULL_FACE);
       } else {
         gl_.glEnable(GL_CULL_FACE);

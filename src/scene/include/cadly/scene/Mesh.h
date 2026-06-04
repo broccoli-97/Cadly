@@ -42,6 +42,18 @@ struct Mesh {
   std::vector<Submesh>       submeshes;
   Aabb bounds = Aabb::empty();
 
+  // True when these triangles are NOT guaranteed a consistent outward winding,
+  // i.e. the source shape does not bound a volume: an IGES surface model (a
+  // quilt of independent trimmed faces) or any open shell, as opposed to a
+  // closed solid. The renderer must draw such a mesh double-sided — with
+  // backface culling on, every patch whose arbitrary parametric orientation
+  // happens to face away from the camera is culled and the "back" of the model
+  // vanishes. Closed solids leave this false and keep the cheaper single-sided
+  // cull. Set by the importer (see OcctShapeToMesh); orthogonal to a material
+  // being intrinsically two-sided (Material::double_sided) — the renderer
+  // culls only when neither flag asks for both faces.
+  bool double_sided{false};
+
   // One level-of-detail in the BRep edge LOD ladder. Each LOD is a complete
   // GL_LINE_STRIP polyline set covering every edge of the source shape:
   // indices form a flat run where each per-edge strip is terminated by the

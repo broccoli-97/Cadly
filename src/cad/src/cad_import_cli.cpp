@@ -86,6 +86,16 @@ int main(int argc, char** argv) {
     std::cout << fmt::format("  bounds size  : ({:.3f}, {:.3f}, {:.3f})\n",
                              e.x, e.y, e.z);
   }
+  if (result.scene) {
+    std::size_t mesh_count = 0, double_sided = 0;
+    for (const auto& m : result.scene->meshes) {
+      if (!m) continue;
+      ++mesh_count;
+      if (m->double_sided) ++double_sided;
+    }
+    std::cout << fmt::format("  meshes       : {} ({} double-sided / non-solid)\n",
+                             mesh_count, double_sided);
+  }
   std::cout << "------------------------------------------------------------\n";
   if (!result.summary.diagnostics.empty()) {
     std::cout << "  diagnostics:\n";

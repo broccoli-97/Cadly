@@ -389,6 +389,22 @@ void extract_brep_edges(scene::Mesh& mesh,
   }
 }
 
+// A shape is safe to backface-cull only when its triangles carry a consistent
+// outward winding — that is, when it bounds a volume. STEP imports are
+// typically TopoDS_Solids and qualify. IGES imports are usually a quilt of
+// independent trimmed faces with no shell/solid topology, so each patch's
+// orientation comes straight from its (arbitrary) surface parametrization;
+// culling would silently drop every patch that happens to face away from the
+// camera. Treat a shape as cull-safe if it contains a solid or a closed shell;
+// the importer flags everything else double-sided.
+bool is_cull_safe(const TopoDS_Shape& shape) {
+  if (TopExp_Explorer(shape, TopAbs_SOLID).More()) return true;
+  for (TopExp_Explorer ex(shape, TopAbs_SHELL); ex.More(); ex.Next()) {
+    if (BRep_Tool::IsClosed(ex.Current())) return true;
+  }
+  return false;
+}
+
 } // namespace
 
 std::shared_ptr<scene::Mesh>
@@ -408,6 +424,10 @@ shape_to_mesh(const TopoDS_Shape& shape,
                 seen_strip_edges);
   }
   if (mesh->indices.empty()) return nullptr;
+  // Non-solid shapes (typically IGES surface quilts / open shells) have no
+  // consistent outward winding; the renderer must draw them double-sided or
+  // half of every part gets backface-culled away.
+  mesh->double_sided = !is_cull_safe(shape);
   extract_brep_edges(*mesh, shape, opts);
   return mesh;
 }
