@@ -6,6 +6,7 @@
 #include "cadly/scene/Node.h"
 #include "cadly/scene/Scene.h"
 
+#include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepGProp.hxx>
@@ -474,6 +475,31 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
                                  "XDE document had no free shapes."});
     return scn;
   }
+
+  // Triangulate the whole document in a single pass. BRepMesh_IncrementalMesh
+  // parallelizes across faces, so meshing every free shape at once keeps all
+  // cores busy. Meshing per-part during the walk instead (as shape_to_mesh
+  // still does below) serializes many small jobs, each with too few faces to
+  // fill the thread pool — the slow path on large assemblies. Located instances
+  // of a part share the same face TShapes, and a triangulation is stored in the
+  // face's local frame, so one mesher covers every occurrence; afterwards the
+  // per-part tessellate() calls find an adequate triangulation already attached
+  // to each face and skip the heavy work (it stays as a correctness safety net
+  // for any face this batch somehow missed).
+  {
+    TopoDS_Compound all;
+    BRep_Builder builder;
+    builder.MakeCompound(all);
+    for (Standard_Integer i = 1; i <= labels.Length(); ++i) {
+      TopoDS_Shape s;
+      if (shape_tool->GetShape(labels.Value(i), s) && !s.IsNull()) {
+        builder.Add(all, s);
+      }
+    }
+    progress.update(0.45f, "Tessellating geometry...");
+    tessellate(all, opts);
+  }
+  if (progress.cancelled()) return scn;
 
   // Each "free shape" is treated as a separate root. We then expand the
   // assembly under it. Mesh sharing is keyed on the OCCT shape's TShape*
