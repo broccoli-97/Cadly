@@ -13,10 +13,17 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <iomanip>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace cadly::renderer_gl {
 
@@ -82,6 +89,216 @@ struct MeshGpu {
   std::shared_ptr<scene::Mesh> source;
 };
 
+struct OverlayVertex {
+  float x;
+  float y;
+  float r;
+  float g;
+  float b;
+  float a;
+};
+
+std::string trim_number(std::ostringstream& ss) {
+  std::string out = ss.str();
+  if (out.find('.') == std::string::npos) return out;
+  while (!out.empty() && out.back() == '0') out.pop_back();
+  if (!out.empty() && out.back() == '.') out.pop_back();
+  return out.empty() ? "0" : out;
+}
+
+std::string format_length(double meters) {
+  struct Unit {
+    double scale;
+    const char* label;
+  };
+  const double abs_m = std::abs(meters);
+  Unit unit{1.0, "m"};
+  if (abs_m < 1e-6) {
+    unit = {1e9, "nm"};
+  } else if (abs_m < 1e-3) {
+    unit = {1e6, "um"};
+  } else if (abs_m < 0.1) {
+    unit = {1e3, "mm"};
+  } else if (abs_m < 1.0) {
+    unit = {1e2, "cm"};
+  } else if (abs_m >= 1000.0) {
+    unit = {1e-3, "km"};
+  }
+
+  const double value = meters * unit.scale;
+  std::ostringstream ss;
+  if (std::abs(value) >= 100.0) {
+    ss << std::fixed << std::setprecision(0) << value;
+  } else if (std::abs(value) >= 10.0) {
+    ss << std::fixed << std::setprecision(1) << value;
+  } else {
+    ss << std::fixed << std::setprecision(2) << value;
+  }
+  return trim_number(ss) + " " + unit.label;
+}
+
+double nice_length(double target_meters) {
+  if (!std::isfinite(target_meters) || target_meters <= 0.0) return 0.0;
+  const double exponent = std::floor(std::log10(target_meters));
+  const double base = std::pow(10.0, exponent);
+  const double normalized = target_meters / base;
+  double step = 10.0;
+  if (normalized <= 1.0) {
+    step = 1.0;
+  } else if (normalized <= 2.0) {
+    step = 2.0;
+  } else if (normalized <= 5.0) {
+    step = 5.0;
+  }
+  return step * base;
+}
+
+void emit_rect(std::vector<OverlayVertex>& out,
+               float x,
+               float y,
+               float w,
+               float h,
+               const scene::vec4& color) {
+  const OverlayVertex a{x,     y,     color.r, color.g, color.b, color.a};
+  const OverlayVertex b{x + w, y,     color.r, color.g, color.b, color.a};
+  const OverlayVertex c{x + w, y + h, color.r, color.g, color.b, color.a};
+  const OverlayVertex d{x,     y + h, color.r, color.g, color.b, color.a};
+  out.insert(out.end(), {a, b, c, a, c, d});
+}
+
+float glyph_advance(char c, float scale) {
+  if (c == ' ') return 2.8f * scale;
+  if (c == '.') return 2.2f * scale;
+  if (c == 'm' || c == 'w') return 6.4f * scale;
+  return 5.2f * scale;
+}
+
+float text_width_px(const std::string& text, float scale) {
+  float width = 0.0f;
+  for (char c : text) width += glyph_advance(c, scale);
+  return std::max(0.0f, width - scale * 0.8f);
+}
+
+void emit_h_stroke(std::vector<OverlayVertex>& out,
+                   float x,
+                   float y,
+                   float w,
+                   float t,
+                   const scene::vec4& color) {
+  emit_rect(out, x, y - t * 0.5f, w, t, color);
+}
+
+void emit_v_stroke(std::vector<OverlayVertex>& out,
+                   float x,
+                   float y,
+                   float h,
+                   float t,
+                   const scene::vec4& color) {
+  emit_rect(out, x - t * 0.5f, y, t, h, color);
+}
+
+void emit_dot(std::vector<OverlayVertex>& out,
+              float x,
+              float y,
+              float scale,
+              const scene::vec4& color) {
+  const float s = std::max(1.4f, scale * 0.58f);
+  emit_rect(out, x, y, s, s, color);
+}
+
+void emit_digit(std::vector<OverlayVertex>& out,
+                int digit,
+                float x,
+                float y,
+                float scale,
+                const scene::vec4& color) {
+  static constexpr std::array<std::uint8_t, 10> masks{
+    0b1111110, // 0: top, upper-right, lower-right, bottom, lower-left, upper-left
+    0b0110000,
+    0b1101101,
+    0b1111001,
+    0b0110011,
+    0b1011011,
+    0b1011111,
+    0b1110000,
+    0b1111111,
+    0b1111011,
+  };
+  const float w = 4.4f * scale;
+  const float h = 6.6f * scale;
+  const float t = std::max(1.2f, scale * 0.34f);
+  const std::uint8_t m = masks[static_cast<std::size_t>(digit)];
+  if (m & 0b1000000) emit_h_stroke(out, x + t, y + h, w - 2.0f * t, t, color);
+  if (m & 0b0100000) emit_v_stroke(out, x + w, y + h * 0.52f, h * 0.45f, t, color);
+  if (m & 0b0010000) emit_v_stroke(out, x + w, y + t, h * 0.43f, t, color);
+  if (m & 0b0001000) emit_h_stroke(out, x + t, y, w - 2.0f * t, t, color);
+  if (m & 0b0000100) emit_v_stroke(out, x, y + t, h * 0.43f, t, color);
+  if (m & 0b0000010) emit_v_stroke(out, x, y + h * 0.52f, h * 0.45f, t, color);
+  if (m & 0b0000001) emit_h_stroke(out, x + t, y + h * 0.5f, w - 2.0f * t, t, color);
+}
+
+void emit_unit_char(std::vector<OverlayVertex>& out,
+                    char c,
+                    float x,
+                    float y,
+                    float scale,
+                    const scene::vec4& color) {
+  const float w = (c == 'm') ? 5.8f * scale : 4.2f * scale;
+  const float h = 4.4f * scale;
+  const float t = std::max(1.0f, scale * 0.30f);
+  const float mid = y + h * 0.5f;
+  switch (c) {
+    case 'c':
+      emit_h_stroke(out, x + t, y + h, w - t, t, color);
+      emit_h_stroke(out, x + t, y, w - t, t, color);
+      emit_v_stroke(out, x, y + t, h - 2.0f * t, t, color);
+      break;
+    case 'k':
+      emit_v_stroke(out, x, y, h, t, color);
+      emit_rect(out, x + w * 0.44f, mid - t * 0.5f, w * 0.42f, t, color);
+      emit_rect(out, x + w * 0.55f, mid, t, h * 0.5f, color);
+      emit_rect(out, x + w * 0.55f, y, t, h * 0.5f, color);
+      break;
+    case 'm':
+      emit_v_stroke(out, x, y, h, t, color);
+      emit_v_stroke(out, x + w * 0.45f, y, h * 0.78f, t, color);
+      emit_v_stroke(out, x + w, y, h * 0.78f, t, color);
+      emit_h_stroke(out, x + t, y + h, w - t, t, color);
+      break;
+    case 'n':
+      emit_v_stroke(out, x, y, h, t, color);
+      emit_v_stroke(out, x + w, y, h * 0.78f, t, color);
+      emit_h_stroke(out, x + t, y + h, w - t, t, color);
+      break;
+    case 'u':
+      emit_v_stroke(out, x, y + t, h - t, t, color);
+      emit_v_stroke(out, x + w, y + t, h - t, t, color);
+      emit_h_stroke(out, x + t, y, w - t, t, color);
+      break;
+    default:
+      break;
+  }
+}
+
+void emit_text(std::vector<OverlayVertex>& out,
+               const std::string& text,
+               float x,
+               float y,
+               float scale,
+               const scene::vec4& color) {
+  float cursor = x;
+  for (char c : text) {
+    if (c >= '0' && c <= '9') {
+      emit_digit(out, c - '0', cursor, y, scale, color);
+    } else if (c == '.') {
+      emit_dot(out, cursor, y, scale, color);
+    } else if (c != ' ') {
+      emit_unit_char(out, c, cursor, y, scale, color);
+    }
+    cursor += glyph_advance(c, scale);
+  }
+}
+
 // Implementation -----------------------------------------------------------
 class GLRendererImpl final : public renderer::IRenderer {
 public:
@@ -103,6 +320,7 @@ private:
   void update_frame_uniforms();
   void draw_background(const renderer::DisplayMode& mode);
   void draw_pivot(const renderer::DisplayMode& mode);
+  void draw_scale_bar();
   void draw_edges(const renderer::DisplayMode& mode);
   void draw_triangle_mesh(const renderer::DisplayMode& mode);
 
@@ -137,6 +355,7 @@ private:
   GLProgram prog_pbr_;
   GLProgram prog_background_;
   GLProgram prog_pivot_;
+  GLProgram prog_overlay_;
   GLProgram prog_edges_;
   GLProgram prog_env_capture_;
   GLProgram prog_irradiance_;
@@ -152,6 +371,12 @@ private:
 
   // Rotation-pivot indicator (empty VAO; uses gl_VertexID).
   GLuint   vao_pivot_{0};
+
+  // Renderer-owned 2D overlay geometry. Used for the scale bar and stroked
+  // text so Qt remains only the GUI/input/context host.
+  GLuint   vao_overlay_{0};
+  GLuint   vbo_overlay_{0};
+  std::vector<OverlayVertex> overlay_vertices_;
 
   // IBL bake state. Cubemaps stay resident for the life of the renderer;
   // the FBO + depth RBO are reused across the bake passes and freed at the
@@ -251,6 +476,21 @@ void GLRendererImpl::initialize() {
   // Pivot indicator: empty VAO, geometry emitted from gl_VertexID.
   gl_.glGenVertexArrays(1, &vao_pivot_);
 
+  gl_.glGenVertexArrays(1, &vao_overlay_);
+  gl_.glGenBuffers(1, &vbo_overlay_);
+  gl_.glBindVertexArray(vao_overlay_);
+  gl_.glBindBuffer(GL_ARRAY_BUFFER, vbo_overlay_);
+  gl_.glEnableVertexAttribArray(0);
+  gl_.glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
+                            sizeof(OverlayVertex),
+                            reinterpret_cast<void*>(offsetof(OverlayVertex, x)));
+  gl_.glEnableVertexAttribArray(1);
+  gl_.glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE,
+                            sizeof(OverlayVertex),
+                            reinterpret_cast<void*>(offsetof(OverlayVertex, r)));
+  gl_.glBindVertexArray(0);
+  gl_.glBindBuffer(GL_ARRAY_BUFFER, 0);
+
   // Dummy VAO for the IBL bake passes — they draw a single fullscreen
   // triangle with no vertex attributes and pull positions from gl_VertexID.
   gl_.glGenVertexArrays(1, &vao_quad_);
@@ -294,6 +534,31 @@ bool GLRendererImpl::build_programs() {
   build(prog_irradiance_,  "irradiance.vert",  "irradiance.frag",  "irradiance");
   build(prog_prefilter_,   "prefilter.vert",   "prefilter.frag",   "prefilter");
   build(prog_brdf_lut_,    "brdf_lut.vert",    "brdf_lut.frag",    "brdf_lut");
+
+  const char* overlay_vs = R"glsl(
+#version 410 core
+layout(location = 0) in vec2 a_pos_px;
+layout(location = 1) in vec4 a_color;
+uniform vec2 u_viewport_px;
+out vec4 v_color;
+void main() {
+  vec2 ndc = vec2((a_pos_px.x / u_viewport_px.x) * 2.0 - 1.0,
+                  (a_pos_px.y / u_viewport_px.y) * 2.0 - 1.0);
+  gl_Position = vec4(ndc, 0.0, 1.0);
+  v_color = a_color;
+}
+)glsl";
+  const char* overlay_fs = R"glsl(
+#version 410 core
+in vec4 v_color;
+out vec4 frag_color;
+void main() {
+  frag_color = v_color;
+}
+)glsl";
+  if (!prog_overlay_.build(gl_, overlay_vs, overlay_fs, "overlay")) {
+    all_ok = false;
+  }
   return all_ok;
 }
 
@@ -737,6 +1002,98 @@ void GLRendererImpl::draw_pivot(const renderer::DisplayMode& mode) {
   gl_.glDisable(GL_BLEND);
 }
 
+void GLRendererImpl::draw_scale_bar() {
+  if (!scene_ || !prog_overlay_.valid() || vao_overlay_ == 0 || vbo_overlay_ == 0) return;
+  if (viewport_w_ < 220 || viewport_h_ < 120) return;
+
+  const auto& cam = scene_->camera;
+  const float screen_height_world =
+    2.0f * std::max(cam.distance, 1e-6f) * std::tan(0.5f * cam.fov_y);
+  const double world_per_pixel =
+    static_cast<double>(screen_height_world) /
+    std::max(static_cast<double>(viewport_h_), 1.0);
+  const double meters_per_pixel =
+    world_per_pixel * std::max(static_cast<double>(scene_->unit_to_meters), 1e-12);
+  if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0) return;
+
+  const float target_px =
+    std::clamp(static_cast<float>(viewport_w_) * 0.18f, 90.0f, 150.0f);
+  const double bar_meters = nice_length(static_cast<double>(target_px) * meters_per_pixel);
+  if (bar_meters <= 0.0) return;
+  const float bar_px = static_cast<float>(bar_meters / meters_per_pixel);
+  if (!std::isfinite(bar_px) || bar_px < 40.0f) return;
+
+  const std::string label = format_length(bar_meters);
+  const float text_scale = viewport_w_ >= 520 ? 2.55f : 2.1f;
+  const float text_w = text_width_px(label, text_scale);
+
+  const float inset = 22.0f;
+  const float bar_x = inset;
+  const float bar_y = 24.0f;
+  const float bar_h = 2.0f;
+  const float tick_h = 10.0f;
+  const float text_h = 6.6f * text_scale;
+  const float text_x = bar_x + (bar_px - text_w) * 0.5f;
+  const float text_y = bar_y + tick_h + 6.0f;
+  const float plate_pad_x = 9.0f;
+  const float plate_pad_y = 7.0f;
+  const float plate_x = std::min(bar_x, text_x) - plate_pad_x;
+  const float plate_y = bar_y - plate_pad_y;
+  const float plate_w = std::max(bar_px, text_w) + plate_pad_x * 2.0f;
+  const float plate_h = (text_y + text_h - bar_y) + plate_pad_y * 2.0f;
+
+  overlay_vertices_.clear();
+  overlay_vertices_.reserve(1024);
+
+  const scene::vec4 plate{0.03f, 0.035f, 0.04f, 0.30f};
+  const scene::vec4 shadow{0.0f, 0.0f, 0.0f, 0.55f};
+  const scene::vec4 ink{0.88f, 0.91f, 0.94f, 0.88f};
+  const scene::vec4 soft_ink{0.88f, 0.91f, 0.94f, 0.42f};
+
+  emit_rect(overlay_vertices_, plate_x, plate_y, plate_w, plate_h, plate);
+
+  emit_rect(overlay_vertices_, bar_x + 1.0f, bar_y - 1.0f, bar_px, bar_h, shadow);
+  emit_rect(overlay_vertices_, bar_x, bar_y, bar_px, bar_h, ink);
+  emit_rect(overlay_vertices_, bar_x, bar_y - tick_h * 0.5f, 2.0f, tick_h, ink);
+  emit_rect(overlay_vertices_, bar_x + bar_px - 2.0f, bar_y - tick_h * 0.5f, 2.0f, tick_h, ink);
+  emit_rect(overlay_vertices_, bar_x + bar_px * 0.5f - 0.5f, bar_y - tick_h * 0.32f,
+            1.0f, tick_h * 0.64f, soft_ink);
+
+  emit_text(overlay_vertices_, label, text_x + 1.0f, text_y - 1.0f, text_scale, shadow);
+  emit_text(overlay_vertices_, label, text_x, text_y, text_scale, ink);
+
+  gl_.glEnable(GL_BLEND);
+  gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                          GL_ZERO,      GL_ONE);
+  gl_.glDisable(GL_DEPTH_TEST);
+  gl_.glDepthMask(GL_FALSE);
+  gl_.glDisable(GL_CULL_FACE);
+  gl_.glDisable(GL_PRIMITIVE_RESTART);
+  gl_.glDisable(GL_POLYGON_OFFSET_FILL);
+  gl_.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+  gl_.glUseProgram(prog_overlay_.id());
+  const scene::vec2 vp_px{static_cast<float>(viewport_w_),
+                          static_cast<float>(viewport_h_)};
+  gl_.glUniform2fv(prog_overlay_.uniform(gl_, "u_viewport_px"), 1, &vp_px.x);
+  gl_.glBindVertexArray(vao_overlay_);
+  gl_.glBindBuffer(GL_ARRAY_BUFFER, vbo_overlay_);
+  gl_.glBufferData(GL_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(overlay_vertices_.size() *
+                                           sizeof(OverlayVertex)),
+                   overlay_vertices_.data(),
+                   GL_DYNAMIC_DRAW);
+  gl_.glDrawArrays(GL_TRIANGLES, 0,
+                   static_cast<GLsizei>(overlay_vertices_.size()));
+  gl_.glBindBuffer(GL_ARRAY_BUFFER, 0);
+  gl_.glBindVertexArray(0);
+
+  gl_.glDepthMask(GL_TRUE);
+  gl_.glEnable(GL_DEPTH_TEST);
+  gl_.glEnable(GL_CULL_FACE);
+  gl_.glDisable(GL_BLEND);
+}
+
 void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
   // Debug overlay: re-draw the surface triangles in GL_LINE polygon mode
   // using the edges shader. Reuses the surface VAO + IBO, so the triangle
@@ -1049,6 +1406,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
 
   if (!scene_ || scene_->nodes.empty()) {
     draw_pivot(mode);
+    draw_scale_bar();
     return;
   }
 
@@ -1060,6 +1418,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (!prog_pbr_.valid()) {
     CADLY_LOG_WARN("PBR program not available; skipping mesh draw.");
     draw_pivot(mode);
+    draw_scale_bar();
     return;
   }
 
@@ -1076,6 +1435,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (mode.wireframe) {
     draw_edges(mode);
     draw_pivot(mode);
+    draw_scale_bar();
     return;
   }
 
@@ -1181,6 +1541,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   draw_triangle_mesh(mode);
   draw_edges(mode);
   draw_pivot(mode);
+  draw_scale_bar();
 }
 
 void GLRendererImpl::shutdown() {
@@ -1191,18 +1552,22 @@ void GLRendererImpl::shutdown() {
   meshes_.clear();
   release_msaa_target();
   if (ubo_frame_)      gl_.glDeleteBuffers(1, &ubo_frame_);
+  if (vbo_overlay_)    gl_.glDeleteBuffers(1, &vbo_overlay_);
   if (vao_background_) gl_.glDeleteVertexArrays(1, &vao_background_);
   if (vao_pivot_)      gl_.glDeleteVertexArrays(1, &vao_pivot_);
+  if (vao_overlay_)    gl_.glDeleteVertexArrays(1, &vao_overlay_);
   if (vao_quad_)       gl_.glDeleteVertexArrays(1, &vao_quad_);
   if (env_cube_)        gl_.glDeleteTextures(1, &env_cube_);
   if (irradiance_cube_) gl_.glDeleteTextures(1, &irradiance_cube_);
   if (prefilter_cube_)  gl_.glDeleteTextures(1, &prefilter_cube_);
   if (brdf_lut_)        gl_.glDeleteTextures(1, &brdf_lut_);
-  ubo_frame_ = vao_background_ = vao_pivot_ = vao_quad_ = 0;
+  ubo_frame_ = vbo_overlay_ = 0;
+  vao_background_ = vao_pivot_ = vao_overlay_ = vao_quad_ = 0;
   env_cube_ = irradiance_cube_ = prefilter_cube_ = brdf_lut_ = 0;
   prog_pbr_.destroy(gl_);
   prog_background_.destroy(gl_);
   prog_pivot_.destroy(gl_);
+  prog_overlay_.destroy(gl_);
   prog_edges_.destroy(gl_);
   prog_env_capture_.destroy(gl_);
   prog_irradiance_.destroy(gl_);

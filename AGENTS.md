@@ -8,7 +8,10 @@ implementation files in `src/<module>/src/`. Key modules are `platform`,
 `scene`, `renderer`, `renderer_gl`, `cad`, `ui`, and `app`. GLSL runtime assets
 are in `shaders/glsl/`. Smoke tests are in `tests/`, and design notes are in
 `docs/`. Keep `scene` independent of Qt, OCCT, and OpenGL; keep OCCT usage in
-`cad`; keep Qt wiring out of `renderer_gl`.
+`cad`; keep Qt wiring out of `renderer_gl`. Qt is only the GUI/input/context
+host: do not draw viewport content, labels, HUDs, scale bars, or render
+overlays with Qt/QPainter. Viewport visuals belong in `renderer`/`renderer_gl`
+or renderer-owned assets.
 
 ## Build, Test, and Development Commands
 
