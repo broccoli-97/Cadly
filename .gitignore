@@ -15,3 +15,4 @@ vcpkg_installed/
 *~
 .DS_Store
 test_files/
+test_figures/
