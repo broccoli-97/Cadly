@@ -3,6 +3,7 @@
 // STEP files; those land in the test corpus once we collect a public set.
 
 #include "cadly/cad/ImporterRegistry.h"
+#include "cadly/cad/TessellationPolicy.h"
 #include "cadly/scene/Aabb.h"
 #include "cadly/scene/Camera.h"
 #include "cadly/scene/Scene.h"
@@ -11,6 +12,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 
 namespace s = cadly::scene;
 namespace c = cadly::cad;
@@ -84,12 +86,68 @@ static void test_importer_registry() {
   CHECK(reg.select("foo.bin")  == nullptr);
 }
 
+static void test_tessellation_policy() {
+  c::ImportOptions opts;
+  opts.tessellation_mode = c::TessellationMode::VisualRelative;
+  opts.target_screen_error_px = 0.5;
+  opts.reference_screen_pixels = 2000.0;
+  opts.min_linear_deflection = 0.01;
+  opts.max_relative_deflection = 1.0 / 2000.0;
+
+  s::Aabb large = s::Aabb::empty();
+  large.expand({0.0f, 0.0f, 0.0f});
+  large.expand({38431.0f, 10.0f, 10.0f});
+  auto resolved = c::resolve_tessellation_policy(opts, large);
+  CHECK(resolved.options.tessellation_mode == c::TessellationMode::VisualRelative);
+  CHECK(!resolved.options.relative_deflection);
+  CHECK(std::fabs(resolved.options.linear_deflection - 9.60775) < 1e-4);
+
+  s::Aabb small = s::Aabb::empty();
+  small.expand({0.0f, 0.0f, 0.0f});
+  small.expand({0.1f, 0.1f, 0.1f});
+  resolved = c::resolve_tessellation_policy(opts, small);
+  CHECK(std::fabs(resolved.options.linear_deflection - 0.01) < 1e-9);
+
+  opts.target_screen_error_px = 10.0;
+  opts.reference_screen_pixels = 1000.0;
+  resolved = c::resolve_tessellation_policy(opts, large);
+  CHECK(std::fabs(resolved.options.linear_deflection - 19.2155) < 1e-4);
+
+  opts.tessellation_mode = c::TessellationMode::Absolute;
+  opts.linear_deflection = 0.123;
+  opts.relative_deflection = true;
+  resolved = c::resolve_tessellation_policy(opts, large);
+  CHECK(resolved.options.tessellation_mode == c::TessellationMode::Absolute);
+  CHECK(resolved.options.relative_deflection);
+  CHECK(std::fabs(resolved.options.linear_deflection - 0.123) < 1e-9);
+}
+
+static void test_hammer_iges_visual_relative_import() {
+#ifdef CADLY_TEST_SOURCE_ROOT
+  const std::filesystem::path path =
+    std::filesystem::path(CADLY_TEST_SOURCE_ROOT) / "test_files" / "hammer.iges";
+  if (!std::filesystem::exists(path)) return;
+
+  c::ImportOptions opts;
+  auto result = c::ImporterRegistry::instance().import(path, opts);
+  CHECK(result.success);
+  CHECK(result.scene != nullptr);
+  CHECK(result.summary.tessellation_mode == c::TessellationMode::VisualRelative);
+  CHECK(result.summary.model_extent > 10000.0);
+  CHECK(result.summary.resolved_linear_deflection > 1.0);
+  CHECK(result.summary.triangle_count > 0);
+  CHECK(result.summary.triangle_count < 100000);
+#endif
+}
+
 int main() {
   test_aabb();
   test_transform_roundtrip();
   test_scene_hierarchy();
   test_camera_fit();
   test_importer_registry();
+  test_tessellation_policy();
+  test_hammer_iges_visual_relative_import();
   if (g_failures == 0) {
     std::printf("OK: scene + cad smoke tests passed.\n");
     return 0;

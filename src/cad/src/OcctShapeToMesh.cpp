@@ -1,11 +1,14 @@
 #include "OcctShapeToMesh.h"
 
+#include "cadly/cad/TessellationPolicy.h"
 #include "cadly/platform/Log.h"
 #include "cadly/scene/Aabb.h"
 #include "cadly/scene/Math.h"
 #include "cadly/scene/Node.h"
 #include "cadly/scene/Scene.h"
 
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -79,6 +82,32 @@ void add_timing(ConversionStats& stats,
     }
   }
   stats.timings.push_back({stage, elapsed});
+}
+
+scene::Aabb shape_bounds(const TopoDS_Shape& shape) {
+  if (shape.IsNull()) return scene::Aabb::empty();
+  Bnd_Box box;
+  BRepBndLib::Add(shape, box);
+  if (box.IsVoid()) return scene::Aabb::empty();
+  Standard_Real xmin = 0.0, ymin = 0.0, zmin = 0.0;
+  Standard_Real xmax = 0.0, ymax = 0.0, zmax = 0.0;
+  box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+  scene::Aabb out = scene::Aabb::empty();
+  out.expand({static_cast<float>(xmin),
+              static_cast<float>(ymin),
+              static_cast<float>(zmin)});
+  out.expand({static_cast<float>(xmax),
+              static_cast<float>(ymax),
+              static_cast<float>(zmax)});
+  return out;
+}
+
+void apply_resolved_tessellation(ConversionStats& stats,
+                                 const ResolvedTessellation& resolved) {
+  stats.model_extent = resolved.model_extent;
+  stats.resolved_linear_deflection =
+    resolved.resolved_linear_deflection;
+  stats.tessellation_mode = resolved.options.tessellation_mode;
 }
 
 // Push one face's triangulation into the running Mesh buffers. Returns the
@@ -511,8 +540,12 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
   // No-XDE fallback path — treat the whole shape as a single node.
   if (doc.IsNull()) {
     if (fallback_shape.IsNull()) return scn;
+    const auto resolved =
+      resolve_tessellation_policy(opts, shape_bounds(fallback_shape));
+    apply_resolved_tessellation(stats, resolved);
     auto phase_start = std::chrono::steady_clock::now();
-    auto mesh = shape_to_mesh(fallback_shape, opts, std::nullopt, stats);
+    auto mesh = shape_to_mesh(fallback_shape, resolved.options, std::nullopt,
+                              stats);
     if (opts.profile_timings) {
       add_timing(stats, "fallback shape conversion",
                  std::chrono::steady_clock::now() - phase_start);
@@ -561,6 +594,7 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
   // per-part tessellate() calls find an adequate triangulation already attached
   // to each face and skip the heavy work (it stays as a correctness safety net
   // for any face this batch somehow missed).
+  ImportOptions resolved_opts = opts;
   {
     const auto phase_start = std::chrono::steady_clock::now();
     TopoDS_Compound all;
@@ -572,8 +606,11 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
         builder.Add(all, s);
       }
     }
+    const auto resolved = resolve_tessellation_policy(opts, shape_bounds(all));
+    apply_resolved_tessellation(stats, resolved);
+    resolved_opts = resolved.options;
     progress.update(0.45f, "Tessellating geometry...");
-    tessellate(all, opts);
+    tessellate(all, resolved_opts);
     if (opts.profile_timings) {
       add_timing(stats, "batch document tessellation",
                  std::chrono::steady_clock::now() - phase_start);
@@ -634,7 +671,7 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
       default_color = resolve_shape_color(color_tool, proto_label, shape);
     }
     const auto phase_start = std::chrono::steady_clock::now();
-    auto mesh = shape_to_mesh(shape, opts, default_color, stats);
+    auto mesh = shape_to_mesh(shape, resolved_opts, default_color, stats);
     if (opts.profile_timings) {
       add_timing(stats, "shape conversion total",
                  std::chrono::steady_clock::now() - phase_start);

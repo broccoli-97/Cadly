@@ -139,6 +139,9 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
   result.summary.triangle_count = stats.triangle_count;
   result.summary.vertex_count   = stats.vertex_count;
   result.summary.shape_count    = result.scene ? result.scene->nodes.size() : 0;
+  result.summary.model_extent   = stats.model_extent;
+  result.summary.resolved_linear_deflection = stats.resolved_linear_deflection;
+  result.summary.tessellation_mode = stats.tessellation_mode;
   for (auto& t : stats.timings)
     result.summary.timings.push_back(std::move(t));
   for (auto& d : stats.diagnostics)

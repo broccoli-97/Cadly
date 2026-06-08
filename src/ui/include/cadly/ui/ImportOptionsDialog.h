@@ -5,6 +5,7 @@
 #include <QDialog>
 
 class QCheckBox;
+class QComboBox;
 class QDoubleSpinBox;
 
 namespace cadly::ui {
@@ -21,8 +22,13 @@ public:
   void               set_options(const cad::ImportOptions& opts);
 
 private:
+  QComboBox*      mode_{nullptr};
   QDoubleSpinBox* linear_{nullptr};
   QDoubleSpinBox* angular_{nullptr};
+  QDoubleSpinBox* target_px_{nullptr};
+  QDoubleSpinBox* reference_px_{nullptr};
+  QDoubleSpinBox* min_deflection_{nullptr};
+  QDoubleSpinBox* max_relative_{nullptr};
   QCheckBox*      relative_{nullptr};
   QCheckBox*      parallel_{nullptr};
   QCheckBox*      load_colors_{nullptr};

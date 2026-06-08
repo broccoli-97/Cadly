@@ -2,6 +2,7 @@
 // needing the GUI. Prints geometry stats and any diagnostics produced.
 
 #include "cadly/cad/ImporterRegistry.h"
+#include "cadly/cad/TessellationPolicy.h"
 #include "cadly/platform/Log.h"
 
 #include <fmt/format.h>
@@ -23,6 +24,11 @@ void print_usage(const char* argv0) {
     "options:\n"
     "  --linear-deflection <d>   (default 0.1)\n"
     "  --angular-deflection <a>  (default 0.35 rad)\n"
+    "  --tessellation-mode <m>   visual-relative|absolute (default visual-relative)\n"
+    "  --target-px <px>          visual-relative screen error (default 0.75)\n"
+    "  --reference-pixels <px>   fitted viewport span (default 2000)\n"
+    "  --min-deflection <d>      visual-relative lower clamp (default 0.01)\n"
+    "  --max-relative <r>        visual-relative upper clamp (default 0.0005)\n"
     "  --no-colors\n"
     "  --no-names\n"
     "  --profile                 print detailed import stage timings\n"
@@ -68,6 +74,17 @@ void print_result(const std::filesystem::path& path,
   std::cout << fmt::format("  faces        : {}\n", result.summary.face_count);
   std::cout << fmt::format("  triangles    : {}\n", result.summary.triangle_count);
   std::cout << fmt::format("  vertices     : {}\n", result.summary.vertex_count);
+  std::cout << fmt::format("  tessellation : {}\n",
+                           cadly::cad::tessellation_mode_name(
+                             result.summary.tessellation_mode));
+  if (result.summary.model_extent > 0.0) {
+    std::cout << fmt::format("  model extent : {:.6g}\n",
+                             result.summary.model_extent);
+  }
+  if (result.summary.resolved_linear_deflection > 0.0) {
+    std::cout << fmt::format("  deflection   : {:.6g}\n",
+                             result.summary.resolved_linear_deflection);
+  }
   if (result.scene && result.scene->world_bounds.valid()) {
     const auto& b = result.scene->world_bounds;
     std::cout << fmt::format("  bounds min   : ({:.3f}, {:.3f}, {:.3f})\n",
@@ -128,6 +145,7 @@ int main(int argc, char** argv) {
 
   cad::ImportOptions opts;
   bool profile = false;
+  bool tessellation_mode_explicit = false;
   std::vector<std::filesystem::path> inputs;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -136,8 +154,37 @@ int main(int argc, char** argv) {
     if (a == "--profile") { opts.profile_timings = true; profile = true; continue; }
     if (a == "--no-colors") { opts.load_colors = false; continue; }
     if (a == "--no-names")  { opts.load_names  = false; continue; }
+    if (a == "--tessellation-mode" && i + 1 < argc) {
+      std::string mode = argv[++i];
+      if (mode == "absolute") {
+        opts.tessellation_mode = cad::TessellationMode::Absolute;
+      } else if (mode == "visual-relative") {
+        opts.tessellation_mode = cad::TessellationMode::VisualRelative;
+      } else {
+        std::cerr << "Unknown tessellation mode: " << mode << "\n";
+        return 2;
+      }
+      tessellation_mode_explicit = true;
+      continue;
+    }
+    if (a == "--target-px" && i + 1 < argc) {
+      opts.target_screen_error_px = std::stod(argv[++i]); continue;
+    }
+    if (a == "--reference-pixels" && i + 1 < argc) {
+      opts.reference_screen_pixels = std::stod(argv[++i]); continue;
+    }
+    if (a == "--min-deflection" && i + 1 < argc) {
+      opts.min_linear_deflection = std::stod(argv[++i]); continue;
+    }
+    if (a == "--max-relative" && i + 1 < argc) {
+      opts.max_relative_deflection = std::stod(argv[++i]); continue;
+    }
     if (a == "--linear-deflection" && i + 1 < argc) {
-      opts.linear_deflection = std::stod(argv[++i]); continue;
+      opts.linear_deflection = std::stod(argv[++i]);
+      if (!tessellation_mode_explicit) {
+        opts.tessellation_mode = cad::TessellationMode::Absolute;
+      }
+      continue;
     }
     if (a == "--angular-deflection" && i + 1 < argc) {
       opts.angular_deflection = std::stod(argv[++i]); continue;

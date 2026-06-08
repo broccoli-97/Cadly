@@ -21,6 +21,9 @@ struct ConversionStats {
   std::size_t face_count    {0};
   std::size_t triangle_count{0};
   std::size_t vertex_count  {0};
+  double model_extent{0.0};
+  double resolved_linear_deflection{0.0};
+  TessellationMode tessellation_mode{TessellationMode::VisualRelative};
   std::vector<ImportTiming> timings;
   std::vector<Diagnostic> diagnostics;
 };

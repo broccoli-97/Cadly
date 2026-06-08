@@ -11,6 +11,11 @@
 
 namespace cadly::cad {
 
+enum class TessellationMode {
+  Absolute,
+  VisualRelative,
+};
+
 // Knobs the user can tweak in the Import Options dialog. Defaults are tuned
 // for industrial assemblies in millimetres; the CLI uses the same defaults.
 struct ImportOptions {
@@ -24,6 +29,15 @@ struct ImportOptions {
   double angular_deflection {0.35};  // radians (~20°)
   bool   relative_deflection{false};
   bool   parallel_meshing   {true};
+
+  // Display-oriented tessellation policy. VisualRelative computes one global
+  // absolute chord tolerance from whole-model bounds, approximating a fitted
+  // viewport rather than using OCCT's per-subshape relative deflection.
+  TessellationMode tessellation_mode{TessellationMode::VisualRelative};
+  double target_screen_error_px{0.75};
+  double reference_screen_pixels{2000.0};
+  double min_linear_deflection{0.01};
+  double max_relative_deflection{1.0 / 2000.0};
 
   // Vertex output options.
   bool   compute_missing_normals{true};
@@ -70,6 +84,9 @@ struct ImportSummary {
   std::chrono::milliseconds total_time{0};
   std::chrono::milliseconds parse_time{0};
   std::chrono::milliseconds mesh_time {0};
+  double model_extent{0.0};
+  double resolved_linear_deflection{0.0};
+  TessellationMode tessellation_mode{TessellationMode::VisualRelative};
   std::vector<ImportTiming> timings;
   std::vector<Diagnostic> diagnostics;
 };
