@@ -39,6 +39,10 @@ struct ImportOptions {
   bool   load_colors    {true};
   bool   load_names     {true};
   bool   load_hierarchy {true};
+
+  // Developer profiling hook. Normal imports leave this off to avoid adding
+  // timer overhead inside the topology walk.
+  bool   profile_timings{false};
 };
 
 struct ImportRequest {
@@ -53,6 +57,11 @@ struct Diagnostic {
   std::string        message;
 };
 
+struct ImportTiming {
+  std::string stage;
+  std::chrono::microseconds duration{0};
+};
+
 struct ImportSummary {
   std::size_t shape_count    {0};
   std::size_t face_count     {0};
@@ -61,6 +70,7 @@ struct ImportSummary {
   std::chrono::milliseconds total_time{0};
   std::chrono::milliseconds parse_time{0};
   std::chrono::milliseconds mesh_time {0};
+  std::vector<ImportTiming> timings;
   std::vector<Diagnostic> diagnostics;
 };
 

@@ -35,6 +35,7 @@
 #include <gp_Trsf.hxx>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <unordered_map>
@@ -65,6 +66,21 @@ void tessellate(const TopoDS_Shape& shape, const ImportOptions& opts) {
   mesher.Perform();
 }
 
+void add_timing(ConversionStats& stats,
+                const char* stage,
+                std::chrono::steady_clock::duration duration) {
+  if (!duration.count()) return;
+  const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+    duration);
+  for (auto& timing : stats.timings) {
+    if (timing.stage == stage) {
+      timing.duration += elapsed;
+      return;
+    }
+  }
+  stats.timings.push_back({stage, elapsed});
+}
+
 // Push one face's triangulation into the running Mesh buffers. Returns the
 // number of triangles emitted. `seen_edges` is shared across all faces of a
 // shape and tracks which TopoDS_Edges have already had their mesh-coupled
@@ -77,13 +93,18 @@ std::size_t append_face(scene::Mesh& mesh,
                         ConversionStats& stats,
                         std::uint32_t source_face_id,
                         std::unordered_set<const void*>& seen_edges) {
+  using clock = std::chrono::steady_clock;
   TopLoc_Location loc;
   Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
   if (tri.IsNull()) return 0;
 
   if (opts.min_face_area > 0.0) {
+    const auto phase_start = clock::now();
     GProp_GProps props;
     BRepGProp::SurfaceProperties(face, props);
+    if (opts.profile_timings) {
+      add_timing(stats, "face area checks", clock::now() - phase_start);
+    }
     if (props.Mass() < opts.min_face_area) return 0;
   }
 
@@ -104,6 +125,7 @@ std::size_t append_face(scene::Mesh& mesh,
 
 #if OCC_VERSION_HEX >= 0x070600
   const Standard_Integer node_count = tri->NbNodes();
+  auto phase_start = clock::now();
   for (Standard_Integer i = 1; i <= node_count; ++i) {
     gp_Pnt p = tri->Node(i);
     if (!loc.IsIdentity()) p.Transform(trsf);
@@ -123,9 +145,13 @@ std::size_t append_face(scene::Mesh& mesh,
     sub.bounds.expand(v.position);
     mesh.vertices.push_back(v);
   }
+  if (opts.profile_timings) {
+    add_timing(stats, "face vertex extraction", clock::now() - phase_start);
+  }
 #else
   const auto& nodes = tri->Nodes();
   const Standard_Integer node_count = nodes.Length();
+  auto phase_start = clock::now();
   for (Standard_Integer i = 1; i <= node_count; ++i) {
     gp_Pnt p = nodes(i);
     if (!loc.IsIdentity()) p.Transform(trsf);
@@ -137,10 +163,14 @@ std::size_t append_face(scene::Mesh& mesh,
     sub.bounds.expand(v.position);
     mesh.vertices.push_back(v);
   }
+  if (opts.profile_timings) {
+    add_timing(stats, "face vertex extraction", clock::now() - phase_start);
+  }
 #endif
 
   const Standard_Integer tri_count = tri->NbTriangles();
   std::size_t emitted = 0;
+  phase_start = clock::now();
   for (Standard_Integer i = 1; i <= tri_count; ++i) {
     Standard_Integer a = 0, b = 0, c = 0;
 #if OCC_VERSION_HEX >= 0x070600
@@ -164,9 +194,13 @@ std::size_t append_face(scene::Mesh& mesh,
     }
     ++emitted;
   }
+  if (opts.profile_timings) {
+    add_timing(stats, "triangle index extraction", clock::now() - phase_start);
+  }
 
   // If OCCT didn't give us normals, derive flat normals per triangle.
   if (!tri->HasNormals() && opts.compute_missing_normals) {
+    phase_start = clock::now();
     for (std::uint32_t i = base_vertex; i < mesh.vertices.size(); ++i) {
       mesh.vertices[i].normal = scene::vec3(0.0f);
     }
@@ -191,6 +225,9 @@ std::size_t append_face(scene::Mesh& mesh,
       } else {
         mesh.vertices[i].normal = scene::vec3(0.0f, 1.0f, 0.0f);
       }
+    }
+    if (opts.profile_timings) {
+      add_timing(stats, "normal generation", clock::now() - phase_start);
     }
   }
 
@@ -217,6 +254,7 @@ std::size_t append_face(scene::Mesh& mesh,
   // valid PolygonOnTriangulation under each face's triangulation, but
   // OCCT seeds both with the same boundary sample points so it does not
   // matter which face we use — picking the first one we see is correct.
+  phase_start = clock::now();
   for (TopExp_Explorer ex_e(face, TopAbs_EDGE); ex_e.More(); ex_e.Next()) {
     const TopoDS_Edge& edge = TopoDS::Edge(ex_e.Current());
     if (BRep_Tool::Degenerated(edge)) continue;
@@ -233,6 +271,9 @@ std::size_t append_face(scene::Mesh& mesh,
         base_vertex + static_cast<std::uint32_t>(nodes.Value(i) - 1));
     }
     mesh.edge_strip_indices.push_back(0xFFFFFFFFu);
+  }
+  if (opts.profile_timings) {
+    add_timing(stats, "mesh-coupled edge strips", clock::now() - phase_start);
   }
 
   stats.triangle_count += emitted;
@@ -348,7 +389,9 @@ bool sample_edge_into_lod(scene::Mesh::EdgeLod& lod,
 // the pole-collapse "edge" of a sphere) carry no 3D curve and are skipped.
 void extract_brep_edges(scene::Mesh& mesh,
                         const TopoDS_Shape& shape,
-                        const ImportOptions& opts) {
+                        const ImportOptions& opts,
+                        ConversionStats& stats) {
+  using clock = std::chrono::steady_clock;
   // Tier deflection multipliers. The factor-of-4 spacing on linear
   // deflection gives a comfortable hysteresis band when the renderer picks
   // a tier from world-per-pixel: a flip requires zooming ~4x further, so
@@ -375,10 +418,15 @@ void extract_brep_edges(scene::Mesh& mesh,
     if (!seen.insert(key).second) continue;
 
     for (std::size_t t = 0; t < kLodCount; ++t) {
+      const auto phase_start = clock::now();
       sample_edge_into_lod(
         mesh.edge_lods[t], edge,
         opts.angular_deflection * kTiers[t].angular_mul,
         opts.linear_deflection  * kTiers[t].linear_mul);
+      if (opts.profile_timings) {
+        add_timing(stats, "analytical edge LOD sampling",
+                   clock::now() - phase_start);
+      }
     }
   }
 
@@ -413,23 +461,40 @@ shape_to_mesh(const TopoDS_Shape& shape,
               const ImportOptions& opts,
               const std::optional<Quantity_Color>& vertex_color_default,
               ConversionStats& stats) {
+  using clock = std::chrono::steady_clock;
   if (shape.IsNull()) return nullptr;
+  auto phase_start = clock::now();
   tessellate(shape, opts);
+  if (opts.profile_timings) {
+    add_timing(stats, "shape safety tessellation", clock::now() - phase_start);
+  }
 
   auto mesh = std::make_shared<scene::Mesh>();
   std::uint32_t face_id = 0;
+  phase_start = clock::now();
   std::unordered_set<const void*> seen_strip_edges;
   for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
     const TopoDS_Face& face = TopoDS::Face(ex.Current());
     append_face(*mesh, face, vertex_color_default, opts, stats, face_id++,
                 seen_strip_edges);
   }
+  if (opts.profile_timings) {
+    add_timing(stats, "face topology walk", clock::now() - phase_start);
+  }
   if (mesh->indices.empty()) return nullptr;
   // Non-solid shapes (typically IGES surface quilts / open shells) have no
   // consistent outward winding; the renderer must draw them double-sided or
   // half of every part gets backface-culled away.
+  phase_start = clock::now();
   mesh->double_sided = !is_cull_safe(shape);
-  extract_brep_edges(*mesh, shape, opts);
+  if (opts.profile_timings) {
+    add_timing(stats, "cull-safety topology check", clock::now() - phase_start);
+  }
+  phase_start = clock::now();
+  extract_brep_edges(*mesh, shape, opts, stats);
+  if (opts.profile_timings) {
+    add_timing(stats, "analytical edge LOD total", clock::now() - phase_start);
+  }
   return mesh;
 }
 
@@ -446,7 +511,12 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
   // No-XDE fallback path — treat the whole shape as a single node.
   if (doc.IsNull()) {
     if (fallback_shape.IsNull()) return scn;
+    auto phase_start = std::chrono::steady_clock::now();
     auto mesh = shape_to_mesh(fallback_shape, opts, std::nullopt, stats);
+    if (opts.profile_timings) {
+      add_timing(stats, "fallback shape conversion",
+                 std::chrono::steady_clock::now() - phase_start);
+    }
     if (!mesh) return scn;
     mesh->name = "root";
     const auto mesh_idx = scn->add_mesh(mesh);
@@ -456,7 +526,12 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     root.source_label = "/root";
     scn->add_node(std::move(root));
     scn->add_material(scene::Material::brushed_metal());
+    phase_start = std::chrono::steady_clock::now();
     scn->update_transforms();
+    if (opts.profile_timings) {
+      add_timing(stats, "scene transform update",
+                 std::chrono::steady_clock::now() - phase_start);
+    }
     return scn;
   }
 
@@ -487,6 +562,7 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
   // to each face and skip the heavy work (it stays as a correctness safety net
   // for any face this batch somehow missed).
   {
+    const auto phase_start = std::chrono::steady_clock::now();
     TopoDS_Compound all;
     BRep_Builder builder;
     builder.MakeCompound(all);
@@ -498,6 +574,10 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     }
     progress.update(0.45f, "Tessellating geometry...");
     tessellate(all, opts);
+    if (opts.profile_timings) {
+      add_timing(stats, "batch document tessellation",
+                 std::chrono::steady_clock::now() - phase_start);
+    }
   }
   if (progress.cancelled()) return scn;
 
@@ -553,7 +633,12 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     if (!default_color) {
       default_color = resolve_shape_color(color_tool, proto_label, shape);
     }
+    const auto phase_start = std::chrono::steady_clock::now();
     auto mesh = shape_to_mesh(shape, opts, default_color, stats);
+    if (opts.profile_timings) {
+      add_timing(stats, "shape conversion total",
+                 std::chrono::steady_clock::now() - phase_start);
+    }
     if (!mesh) return scene::Scene::kInvalid;
     mesh->name = read_label_name(proto_label);
     if (mesh->name.empty()) mesh->name = "mesh";
@@ -643,14 +728,24 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     return node_idx;
   };
 
+  const auto walk_start = std::chrono::steady_clock::now();
   for (Standard_Integer i = 1; i <= labels.Length(); ++i) {
     if (progress.cancelled()) break;
     progress.update(static_cast<float>(i) / labels.Length(),
                     "Walking assembly...");
     walk(labels.Value(i), scene::Scene::kInvalid, "");
   }
+  if (opts.profile_timings) {
+    add_timing(stats, "assembly walk total",
+               std::chrono::steady_clock::now() - walk_start);
+  }
 
+  const auto transform_start = std::chrono::steady_clock::now();
   scn->update_transforms();
+  if (opts.profile_timings) {
+    add_timing(stats, "scene transform update",
+               std::chrono::steady_clock::now() - transform_start);
+  }
   return scn;
 }
 

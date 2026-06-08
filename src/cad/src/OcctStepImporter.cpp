@@ -83,7 +83,13 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   reader.SetMatMode(true);
 
   const std::string path_str = req.path.string();
+  auto phase_start = clock::now();
   const IFSelect_ReturnStatus status = reader.ReadFile(path_str.c_str());
+  if (req.options.profile_timings) {
+    result.summary.timings.push_back({"OCCT STEP ReadFile",
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        clock::now() - phase_start)});
+  }
   if (status != IFSelect_RetDone) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Error,
       "STEPCAFControl_Reader failed to read file (status=" +
@@ -95,10 +101,16 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   if (progress.cancelled()) return result;
   progress.update(0.25f, "Transferring shapes to OCAF document...");
 
+  phase_start = clock::now();
   if (!reader.Transfer(doc)) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Error,
       "STEPCAFControl_Reader::Transfer() returned false"});
     return result;
+  }
+  if (req.options.profile_timings) {
+    result.summary.timings.push_back({"OCCT STEP XCAF transfer",
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        clock::now() - phase_start)});
   }
   const auto t_parse = clock::now();
   result.summary.parse_time = std::chrono::duration_cast<std::chrono::milliseconds>(t_parse - t0);
@@ -109,8 +121,14 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
 
   progress.update(0.40f, "Tessellating geometry...");
   occt::ConversionStats stats;
+  phase_start = clock::now();
   auto scn = occt::document_to_scene(doc, TopoDS_Shape{}, req.options, unit_to_m,
                                      stats, progress);
+  if (req.options.profile_timings) {
+    result.summary.timings.push_back({"document_to_scene",
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        clock::now() - phase_start)});
+  }
 
   // Geometry-only fallback, evaluated lazily. document_to_scene consults the
   // fallback shape ONLY when there is no XDE document; with a valid `doc` (the
@@ -120,12 +138,18 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   // result was thrown away. Now it runs only if the XDE walk produced nothing.
   if (!scn || scn->nodes.empty()) {
     STEPControl_Reader bare;
+    phase_start = clock::now();
     if (bare.ReadFile(path_str.c_str()) == IFSelect_RetDone) {
       bare.TransferRoots();
       if (bare.NbShapes() > 0) {
         scn = occt::document_to_scene(Handle(TDocStd_Document){}, bare.OneShape(),
                                       req.options, unit_to_m, stats, progress);
       }
+    }
+    if (req.options.profile_timings) {
+      result.summary.timings.push_back({"geometry-only fallback",
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+          clock::now() - phase_start)});
     }
   }
   // Carry diagnostics + summary up.
@@ -143,6 +167,8 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   result.summary.triangle_count = stats.triangle_count;
   result.summary.vertex_count   = stats.vertex_count;
   result.summary.shape_count    = result.scene ? result.scene->nodes.size() : 0;
+  for (auto& t : stats.timings)
+    result.summary.timings.push_back(std::move(t));
   for (auto& d : stats.diagnostics)
     result.summary.diagnostics.push_back(std::move(d));
 

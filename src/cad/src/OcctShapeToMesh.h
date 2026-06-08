@@ -21,6 +21,7 @@ struct ConversionStats {
   std::size_t face_count    {0};
   std::size_t triangle_count{0};
   std::size_t vertex_count  {0};
+  std::vector<ImportTiming> timings;
   std::vector<Diagnostic> diagnostics;
 };
 

@@ -61,7 +61,13 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
   reader.SetLayerMode(true);
 
   const std::string path_str = req.path.string();
+  auto phase_start = clock::now();
   const IFSelect_ReturnStatus status = reader.ReadFile(path_str.c_str());
+  if (req.options.profile_timings) {
+    result.summary.timings.push_back({"OCCT IGES ReadFile",
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        clock::now() - phase_start)});
+  }
   if (status != IFSelect_RetDone) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Error,
       "IGESCAFControl_Reader failed to read file (status=" +
@@ -73,10 +79,16 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
   if (progress.cancelled()) return result;
   progress.update(0.25f, "Transferring shapes to OCAF document...");
 
+  phase_start = clock::now();
   if (!reader.Transfer(doc)) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Error,
       "IGESCAFControl_Reader::Transfer() returned false"});
     return result;
+  }
+  if (req.options.profile_timings) {
+    result.summary.timings.push_back({"OCCT IGES XCAF transfer",
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        clock::now() - phase_start)});
   }
   const auto t_parse = clock::now();
   result.summary.parse_time = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -84,14 +96,21 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
 
   progress.update(0.40f, "Tessellating geometry...");
   occt::ConversionStats stats;
+  phase_start = clock::now();
   auto scn = occt::document_to_scene(doc, TopoDS_Shape{}, req.options,
                                      /*unit_to_m=*/0.001f, stats, progress);
+  if (req.options.profile_timings) {
+    result.summary.timings.push_back({"document_to_scene",
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        clock::now() - phase_start)});
+  }
 
   // Lazy geometry-only fallback (see OcctStepImporter for the full rationale):
   // the second IGESControl_Reader parse only runs when the XDE walk produced
   // no nodes, instead of unconditionally re-parsing the whole file every time.
   if (!scn || scn->nodes.empty()) {
     IGESControl_Reader bare;
+    phase_start = clock::now();
     if (bare.ReadFile(path_str.c_str()) == IFSelect_RetDone) {
       bare.TransferRoots();
       if (bare.NbShapes() > 0) {
@@ -99,6 +118,11 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
                                       req.options, /*unit_to_m=*/0.001f, stats,
                                       progress);
       }
+    }
+    if (req.options.profile_timings) {
+      result.summary.timings.push_back({"geometry-only fallback",
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+          clock::now() - phase_start)});
     }
   }
   result.scene = std::move(scn);
@@ -115,6 +139,8 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
   result.summary.triangle_count = stats.triangle_count;
   result.summary.vertex_count   = stats.vertex_count;
   result.summary.shape_count    = result.scene ? result.scene->nodes.size() : 0;
+  for (auto& t : stats.timings)
+    result.summary.timings.push_back(std::move(t));
   for (auto& d : stats.diagnostics)
     result.summary.diagnostics.push_back(std::move(d));
 
