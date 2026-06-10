@@ -125,178 +125,188 @@ std::string format_length(double meters) {
     unit = {1e-3, "km"};
   }
 
-  const double value = meters * unit.scale;
+  // Up to three decimals, trailing zeros trimmed: "3.267mm", "12.4mm", "100mm".
+  // The unit is chosen above to keep the value in a readable 1–1000 range, so
+  // three places is ample precision while the label stays short.
   std::ostringstream ss;
-  if (std::abs(value) >= 100.0) {
-    ss << std::fixed << std::setprecision(0) << value;
-  } else if (std::abs(value) >= 10.0) {
-    ss << std::fixed << std::setprecision(1) << value;
-  } else {
-    ss << std::fixed << std::setprecision(2) << value;
+  ss << std::fixed << std::setprecision(3) << meters * unit.scale;
+  return trim_number(ss) + unit.label;
+}
+
+// ---------------------------------------------------------------------------
+// Compact vector font for the scale-bar label + the bar itself.
+//
+// The previous build drew digits from a 7-segment mask and unit letters from a
+// few axis-aligned bars — legible, but distinctly "calculator". Everything
+// here is instead a set of thick, round-capped polylines (straight runs plus
+// sampled arcs) emitted as triangles. The scale bar is drawn into the
+// renderer's MSAA FBO *before* the resolve (see render()), so those triangle
+// edges — diagonals and curves included — come out anti-aliased for free.
+// That is what lets a hand-built font look smooth with no glyph-atlas texture
+// and no font dependency, keeping renderer_gl self-contained.
+//
+// Glyphs are authored in a normalised em box: x to the right, baseline at
+// y = 0, cap height at y = 1; lowercase unit letters use ~0.7 x-height. y grows
+// upward, matching the overlay shader's pixel convention.
+// ---------------------------------------------------------------------------
+constexpr float kPi  = 3.14159265358979f;
+constexpr float kDeg = kPi / 180.0f;
+
+using GlyphPath = std::vector<scene::vec2>;   // one open/closed centre-line
+struct Glyph { float advance; std::vector<GlyphPath> paths; };
+
+// A laid-out stroke in pixel space: a centre-line polyline + its half width.
+struct PxStroke { std::vector<scene::vec2> pts; float half_w; };
+
+// Sample an (elliptical) arc between two angles (radians) into a polyline.
+GlyphPath arc_path(float cx, float cy, float rx, float ry,
+                   float a0, float a1, int steps) {
+  GlyphPath p;
+  p.reserve(static_cast<std::size_t>(steps) + 1);
+  for (int i = 0; i <= steps; ++i) {
+    const float a = a0 + (a1 - a0) * (static_cast<float>(i) / static_cast<float>(steps));
+    p.push_back(scene::vec2{cx + rx * std::cos(a), cy + ry * std::sin(a)});
   }
-  return trim_number(ss) + " " + unit.label;
+  return p;
 }
 
-double nice_length(double target_meters) {
-  if (!std::isfinite(target_meters) || target_meters <= 0.0) return 0.0;
-  const double exponent = std::floor(std::log10(target_meters));
-  const double base = std::pow(10.0, exponent);
-  const double normalized = target_meters / base;
-  double step = 10.0;
-  if (normalized <= 1.0) {
-    step = 1.0;
-  } else if (normalized <= 2.0) {
-    step = 2.0;
-  } else if (normalized <= 5.0) {
-    step = 5.0;
-  }
-  return step * base;
+// The glyph set, built once on first use. Only the characters format_length()
+// can emit are present: digits, '.', space, and the unit letters m/c/k/n/u.
+const std::unordered_map<char, Glyph>& glyph_table() {
+  static const std::unordered_map<char, Glyph> table = [] {
+    auto arcp = [](float cx, float cy, float rx, float ry,
+                   float d0, float d1, int s) {
+      return arc_path(cx, cy, rx, ry, d0 * kDeg, d1 * kDeg, s);
+    };
+    auto ell = [](float cx, float cy, float rx, float ry, int s) {
+      return arc_path(cx, cy, rx, ry, 0.0f, 2.0f * kPi, s);
+    };
+    // head points, then an arc, then foot points — covers every glyph that
+    // mixes straight runs with a curve inside one continuous stroke.
+    auto join = [](std::initializer_list<scene::vec2> head, GlyphPath mid,
+                   std::initializer_list<scene::vec2> foot) {
+      GlyphPath p(head);
+      p.insert(p.end(), mid.begin(), mid.end());
+      for (const auto& v : foot) p.push_back(v);
+      return p;
+    };
+    std::unordered_map<char, Glyph> m;
+    m['0'] = {0.62f, {ell(0.31f, 0.50f, 0.27f, 0.47f, 22)}};
+    m['1'] = {0.40f, {GlyphPath{{0.05f,0.72f},{0.30f,0.99f},{0.30f,0.0f}}}};
+    m['2'] = {0.60f, {join({}, arcp(0.31f,0.70f,0.27f,0.27f,168.f,-32.f,16),
+                           {{0.05f,0.0f},{0.58f,0.0f}})}};
+    m['3'] = {0.60f, {arcp(0.29f,0.74f,0.25f,0.24f,150.f,-78.f,14),
+                      arcp(0.30f,0.27f,0.29f,0.27f,85.f,-165.f,16)}};
+    m['4'] = {0.64f, {GlyphPath{{0.50f,0.97f},{0.03f,0.34f},{0.62f,0.34f}},
+                      GlyphPath{{0.50f,0.97f},{0.50f,0.0f}}}};
+    m['5'] = {0.60f, {join({{0.55f,0.96f},{0.13f,0.96f},{0.11f,0.55f}},
+                           arcp(0.30f,0.30f,0.29f,0.29f,108.f,-150.f,16), {})}};
+    m['6'] = {0.62f, {arcp(0.32f,0.40f,0.30f,0.42f,58.f,178.f,16),
+                      ell(0.31f,0.28f,0.27f,0.27f,18)}};
+    m['7'] = {0.60f, {GlyphPath{{0.04f,0.96f},{0.59f,0.96f},{0.22f,0.0f}}}};
+    m['8'] = {0.62f, {ell(0.31f,0.73f,0.23f,0.25f,18),
+                      ell(0.31f,0.26f,0.27f,0.27f,18)}};
+    m['9'] = {0.62f, {ell(0.31f,0.72f,0.27f,0.27f,18),
+                      arcp(0.30f,0.60f,0.30f,0.42f,-122.f,2.f,16)}};
+    m['.'] = {0.20f, {GlyphPath{{0.09f,0.05f},{0.09f,0.07f}}}};
+    m[' '] = {0.40f, {}};
+    m['m'] = {0.92f, {GlyphPath{{0.07f,0.0f},{0.07f,0.66f}},
+                      join({}, arcp(0.26f,0.52f,0.19f,0.14f,180.f,0.f,10), {{0.45f,0.0f}}),
+                      join({}, arcp(0.64f,0.52f,0.19f,0.14f,180.f,0.f,10), {{0.83f,0.0f}})}};
+    m['n'] = {0.56f, {GlyphPath{{0.07f,0.0f},{0.07f,0.66f}},
+                      join({}, arcp(0.27f,0.52f,0.20f,0.14f,180.f,0.f,10), {{0.47f,0.0f}})}};
+    m['u'] = {0.56f, {join({{0.07f,0.68f},{0.07f,0.18f}},
+                           arcp(0.27f,0.18f,0.20f,0.16f,180.f,360.f,10), {{0.47f,0.68f}})}};
+    m['c'] = {0.52f, {arcp(0.30f,0.35f,0.24f,0.34f,58.f,302.f,18)}};
+    m['k'] = {0.54f, {GlyphPath{{0.07f,0.0f},{0.07f,0.98f}},
+                      GlyphPath{{0.51f,0.66f},{0.10f,0.30f}},
+                      GlyphPath{{0.21f,0.40f},{0.52f,0.0f}}}};
+    return m;
+  }();
+  return table;
 }
 
-void emit_rect(std::vector<OverlayVertex>& out,
-               float x,
-               float y,
-               float w,
-               float h,
-               const scene::vec4& color) {
-  const OverlayVertex a{x,     y,     color.r, color.g, color.b, color.a};
-  const OverlayVertex b{x + w, y,     color.r, color.g, color.b, color.a};
-  const OverlayVertex c{x + w, y + h, color.r, color.g, color.b, color.a};
-  const OverlayVertex d{x,     y + h, color.r, color.g, color.b, color.a};
-  out.insert(out.end(), {a, b, c, a, c, d});
+float glyph_advance(char c) {
+  const auto& t = glyph_table();
+  const auto it = t.find(c);
+  return it != t.end() ? it->second.advance : 0.40f;
 }
 
-float glyph_advance(char c, float scale) {
-  if (c == ' ') return 2.8f * scale;
-  if (c == '.') return 2.2f * scale;
-  if (c == 'm' || c == 'w') return 6.4f * scale;
-  return 5.2f * scale;
+// Width of a rendered string in pixels (size == cap height in px). Mirrors the
+// per-glyph advance + the small fixed tracking that append_text() applies.
+float text_width(const std::string& text, float size) {
+  float w = 0.0f;
+  for (char c : text) w += glyph_advance(c) * size + size * 0.06f;
+  return std::max(0.0f, w - size * 0.06f);
 }
 
-float text_width_px(const std::string& text, float scale) {
-  float width = 0.0f;
-  for (char c : text) width += glyph_advance(c, scale);
-  return std::max(0.0f, width - scale * 0.8f);
-}
-
-void emit_h_stroke(std::vector<OverlayVertex>& out,
-                   float x,
-                   float y,
-                   float w,
-                   float t,
-                   const scene::vec4& color) {
-  emit_rect(out, x, y - t * 0.5f, w, t, color);
-}
-
-void emit_v_stroke(std::vector<OverlayVertex>& out,
-                   float x,
-                   float y,
-                   float h,
-                   float t,
-                   const scene::vec4& color) {
-  emit_rect(out, x - t * 0.5f, y, t, h, color);
-}
-
-void emit_dot(std::vector<OverlayVertex>& out,
-              float x,
-              float y,
-              float scale,
-              const scene::vec4& color) {
-  const float s = std::max(1.4f, scale * 0.58f);
-  emit_rect(out, x, y, s, s, color);
-}
-
-void emit_digit(std::vector<OverlayVertex>& out,
-                int digit,
-                float x,
-                float y,
-                float scale,
-                const scene::vec4& color) {
-  static constexpr std::array<std::uint8_t, 10> masks{
-    0b1111110, // 0: top, upper-right, lower-right, bottom, lower-left, upper-left
-    0b0110000,
-    0b1101101,
-    0b1111001,
-    0b0110011,
-    0b1011011,
-    0b1011111,
-    0b1110000,
-    0b1111111,
-    0b1111011,
-  };
-  const float w = 4.4f * scale;
-  const float h = 6.6f * scale;
-  const float t = std::max(1.2f, scale * 0.34f);
-  const std::uint8_t m = masks[static_cast<std::size_t>(digit)];
-  if (m & 0b1000000) emit_h_stroke(out, x + t, y + h, w - 2.0f * t, t, color);
-  if (m & 0b0100000) emit_v_stroke(out, x + w, y + h * 0.52f, h * 0.45f, t, color);
-  if (m & 0b0010000) emit_v_stroke(out, x + w, y + t, h * 0.43f, t, color);
-  if (m & 0b0001000) emit_h_stroke(out, x + t, y, w - 2.0f * t, t, color);
-  if (m & 0b0000100) emit_v_stroke(out, x, y + t, h * 0.43f, t, color);
-  if (m & 0b0000010) emit_v_stroke(out, x, y + h * 0.52f, h * 0.45f, t, color);
-  if (m & 0b0000001) emit_h_stroke(out, x + t, y + h * 0.5f, w - 2.0f * t, t, color);
-}
-
-void emit_unit_char(std::vector<OverlayVertex>& out,
-                    char c,
-                    float x,
-                    float y,
-                    float scale,
-                    const scene::vec4& color) {
-  const float w = (c == 'm') ? 5.8f * scale : 4.2f * scale;
-  const float h = 4.4f * scale;
-  const float t = std::max(1.0f, scale * 0.30f);
-  const float mid = y + h * 0.5f;
-  switch (c) {
-    case 'c':
-      emit_h_stroke(out, x + t, y + h, w - t, t, color);
-      emit_h_stroke(out, x + t, y, w - t, t, color);
-      emit_v_stroke(out, x, y + t, h - 2.0f * t, t, color);
-      break;
-    case 'k':
-      emit_v_stroke(out, x, y, h, t, color);
-      emit_rect(out, x + w * 0.44f, mid - t * 0.5f, w * 0.42f, t, color);
-      emit_rect(out, x + w * 0.55f, mid, t, h * 0.5f, color);
-      emit_rect(out, x + w * 0.55f, y, t, h * 0.5f, color);
-      break;
-    case 'm':
-      emit_v_stroke(out, x, y, h, t, color);
-      emit_v_stroke(out, x + w * 0.45f, y, h * 0.78f, t, color);
-      emit_v_stroke(out, x + w, y, h * 0.78f, t, color);
-      emit_h_stroke(out, x + t, y + h, w - t, t, color);
-      break;
-    case 'n':
-      emit_v_stroke(out, x, y, h, t, color);
-      emit_v_stroke(out, x + w, y, h * 0.78f, t, color);
-      emit_h_stroke(out, x + t, y + h, w - t, t, color);
-      break;
-    case 'u':
-      emit_v_stroke(out, x, y + t, h - t, t, color);
-      emit_v_stroke(out, x + w, y + t, h - t, t, color);
-      emit_h_stroke(out, x + t, y, w - t, t, color);
-      break;
-    default:
-      break;
-  }
-}
-
-void emit_text(std::vector<OverlayVertex>& out,
-               const std::string& text,
-               float x,
-               float y,
-               float scale,
-               const scene::vec4& color) {
-  float cursor = x;
+// Lay a string out into pixel-space strokes. `baseline` is the y of the glyph
+// baseline; `stroke_px` is the pen width. Round joins make each glyph a single
+// continuous ink run.
+void append_text(std::vector<PxStroke>& out, const std::string& text,
+                 float x, float baseline, float size, float stroke_px) {
+  const float hw = stroke_px * 0.5f;
+  float cur = x;
+  const auto& t = glyph_table();
   for (char c : text) {
-    if (c >= '0' && c <= '9') {
-      emit_digit(out, c - '0', cursor, y, scale, color);
-    } else if (c == '.') {
-      emit_dot(out, cursor, y, scale, color);
-    } else if (c != ' ') {
-      emit_unit_char(out, c, cursor, y, scale, color);
+    const auto it = t.find(c);
+    if (it != t.end()) {
+      for (const auto& path : it->second.paths) {
+        PxStroke s;
+        s.half_w = hw;
+        s.pts.reserve(path.size());
+        for (const auto& v : path)
+          s.pts.push_back(scene::vec2{cur + v.x * size, baseline + v.y * size});
+        out.push_back(std::move(s));
+      }
+      cur += it->second.advance * size + size * 0.06f;
+    } else {
+      cur += 0.40f * size + size * 0.06f;
     }
-    cursor += glyph_advance(c, scale);
   }
+}
+
+// Filled disc (triangle fan) — round line caps and joins.
+void emit_disc(std::vector<OverlayVertex>& out, float cx, float cy, float r,
+               const scene::vec4& col, int segments) {
+  if (r <= 0.0f) return;
+  float px = cx + r, py = cy;
+  for (int i = 1; i <= segments; ++i) {
+    const float a = 2.0f * kPi * (static_cast<float>(i) / static_cast<float>(segments));
+    const float qx = cx + r * std::cos(a);
+    const float qy = cy + r * std::sin(a);
+    out.push_back(OverlayVertex{cx, cy, col.r, col.g, col.b, col.a});
+    out.push_back(OverlayVertex{px, py, col.r, col.g, col.b, col.a});
+    out.push_back(OverlayVertex{qx, qy, col.r, col.g, col.b, col.a});
+    px = qx; py = qy;
+  }
+}
+
+// One thick segment as a quad.
+void emit_seg(std::vector<OverlayVertex>& out, scene::vec2 a, scene::vec2 b,
+              float hw, const scene::vec4& col) {
+  const float dx = b.x - a.x, dy = b.y - a.y;
+  const float len = std::sqrt(dx * dx + dy * dy);
+  if (len < 1e-6f) return;
+  const float nx = -dy / len * hw, ny = dx / len * hw;
+  const OverlayVertex p0{a.x + nx, a.y + ny, col.r, col.g, col.b, col.a};
+  const OverlayVertex p1{a.x - nx, a.y - ny, col.r, col.g, col.b, col.a};
+  const OverlayVertex p2{b.x - nx, b.y - ny, col.r, col.g, col.b, col.a};
+  const OverlayVertex p3{b.x + nx, b.y + ny, col.r, col.g, col.b, col.a};
+  out.insert(out.end(), {p0, p1, p2, p0, p2, p3});
+}
+
+// A whole stroke: thick segments + round joins/caps. `grow` widens the pen,
+// used to lay a soft white halo behind the black ink so the label stays legible
+// over arbitrary scene colours.
+void emit_stroke(std::vector<OverlayVertex>& out, const PxStroke& s,
+                 float grow, const scene::vec4& col) {
+  const float hw = s.half_w + grow;
+  if (hw <= 0.0f || s.pts.empty()) return;
+  for (std::size_t i = 0; i + 1 < s.pts.size(); ++i)
+    emit_seg(out, s.pts[i], s.pts[i + 1], hw, col);
+  const int seg = hw > 2.5f ? 12 : 8;
+  for (const auto& v : s.pts) emit_disc(out, v.x, v.y, hw, col, seg);
 }
 
 // Implementation -----------------------------------------------------------
@@ -1016,51 +1026,59 @@ void GLRendererImpl::draw_scale_bar() {
     world_per_pixel * std::max(static_cast<double>(scene_->unit_to_meters), 1e-12);
   if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0.0) return;
 
-  const float target_px =
-    std::clamp(static_cast<float>(viewport_w_) * 0.18f, 90.0f, 150.0f);
-  const double bar_meters = nice_length(static_cast<double>(target_px) * meters_per_pixel);
-  if (bar_meters <= 0.0) return;
-  const float bar_px = static_cast<float>(bar_meters / meters_per_pixel);
-  if (!std::isfinite(bar_px) || bar_px < 40.0f) return;
+  // Fixed bar length, derived only from the viewport width (≈14%, clamped), so
+  // it stays put while the camera moves. The bar is meant as a quiet reference,
+  // not UI chrome that twitches on every zoom: unlike a "nice round number"
+  // ruler, the *line* never changes length during interaction — only the label
+  // below updates to report what that fixed span currently measures in the
+  // model. (It still tracks window resizes, which are deliberate, not noise.)
+  const float bar_px =
+    std::clamp(static_cast<float>(viewport_w_) * 0.14f, 70.0f, 120.0f);
+  const double bar_meters = static_cast<double>(bar_px) * meters_per_pixel;
+  if (!std::isfinite(bar_meters) || bar_meters <= 0.0) return;
 
   const std::string label = format_length(bar_meters);
-  const float text_scale = viewport_w_ >= 520 ? 2.55f : 2.1f;
-  const float text_w = text_width_px(label, text_scale);
 
-  const float inset = 22.0f;
-  const float bar_x = inset;
-  const float bar_y = 24.0f;
-  const float bar_h = 2.0f;
-  const float tick_h = 10.0f;
-  const float text_h = 6.6f * text_scale;
-  const float text_x = bar_x + (bar_px - text_w) * 0.5f;
-  const float text_y = bar_y + tick_h + 6.0f;
-  const float plate_pad_x = 9.0f;
-  const float plate_pad_y = 7.0f;
-  const float plate_x = std::min(bar_x, text_x) - plate_pad_x;
-  const float plate_y = bar_y - plate_pad_y;
-  const float plate_w = std::max(bar_px, text_w) + plate_pad_x * 2.0f;
-  const float plate_h = (text_y + text_h - bar_y) + plate_pad_y * 2.0f;
+  // Layout in pixels (y grows up from the bottom edge): a thin bar with short
+  // end ticks and the label centred just above it. No background plate — the
+  // legibility comes from a soft white halo behind the black ink (below).
+  const float size    = viewport_w_ >= 1100 ? 13.0f : 12.0f;  // cap height (px)
+  const float stroke  = size * 0.14f;                         // pen width (px)
+  const float bar_x   = 18.0f;
+  const float bar_y   = 22.0f;   // bar centre-line, px above the bottom edge
+  const float bar_th  = 2.2f;
+  const float tick    = 8.0f;
+  const float label_y = bar_y + tick * 0.5f + 6.0f;           // text baseline
+  const float text_w  = text_width(label, size);
+  const float label_x = bar_x + (bar_px - text_w) * 0.5f;
+
+  // Collect the bar, its two end ticks, and the laid-out label as one set of
+  // centre-line strokes, then stamp them three times into the overlay buffer:
+  // two translucent white "grow" layers for a soft halo, then the crisp black
+  // ink on top. Emitting back-to-front in a single buffer lets the one blended
+  // draw call below composite them correctly (halo under ink), which is what
+  // keeps black text readable over a dark model or the mid-grey background.
+  std::vector<PxStroke> strokes;
+  strokes.reserve(16);
+  strokes.push_back({{scene::vec2{bar_x, bar_y},
+                      scene::vec2{bar_x + bar_px, bar_y}}, bar_th * 0.5f});
+  strokes.push_back({{scene::vec2{bar_x, bar_y - tick * 0.5f},
+                      scene::vec2{bar_x, bar_y + tick * 0.5f}}, 0.7f});
+  strokes.push_back({{scene::vec2{bar_x + bar_px, bar_y - tick * 0.5f},
+                      scene::vec2{bar_x + bar_px, bar_y + tick * 0.5f}}, 0.7f});
+  append_text(strokes, label, label_x, label_y, size, stroke);
 
   overlay_vertices_.clear();
-  overlay_vertices_.reserve(1024);
+  overlay_vertices_.reserve(16384);
 
-  const scene::vec4 plate{0.03f, 0.035f, 0.04f, 0.30f};
-  const scene::vec4 shadow{0.0f, 0.0f, 0.0f, 0.55f};
-  const scene::vec4 ink{0.88f, 0.91f, 0.94f, 0.88f};
-  const scene::vec4 soft_ink{0.88f, 0.91f, 0.94f, 0.42f};
-
-  emit_rect(overlay_vertices_, plate_x, plate_y, plate_w, plate_h, plate);
-
-  emit_rect(overlay_vertices_, bar_x + 1.0f, bar_y - 1.0f, bar_px, bar_h, shadow);
-  emit_rect(overlay_vertices_, bar_x, bar_y, bar_px, bar_h, ink);
-  emit_rect(overlay_vertices_, bar_x, bar_y - tick_h * 0.5f, 2.0f, tick_h, ink);
-  emit_rect(overlay_vertices_, bar_x + bar_px - 2.0f, bar_y - tick_h * 0.5f, 2.0f, tick_h, ink);
-  emit_rect(overlay_vertices_, bar_x + bar_px * 0.5f - 0.5f, bar_y - tick_h * 0.32f,
-            1.0f, tick_h * 0.64f, soft_ink);
-
-  emit_text(overlay_vertices_, label, text_x + 1.0f, text_y - 1.0f, text_scale, shadow);
-  emit_text(overlay_vertices_, label, text_x, text_y, text_scale, ink);
+  const scene::vec4 ink{0.05f, 0.05f, 0.06f, 1.0f};
+  auto glow_pass = [&](float grow, float alpha) {
+    const scene::vec4 halo{0.96f, 0.965f, 0.97f, alpha};
+    for (const auto& s : strokes) emit_stroke(overlay_vertices_, s, grow, halo);
+  };
+  glow_pass(3.0f, 0.22f);
+  glow_pass(1.5f, 0.55f);
+  for (const auto& s : strokes) emit_stroke(overlay_vertices_, s, 0.0f, ink);
 
   gl_.glEnable(GL_BLEND);
   gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
