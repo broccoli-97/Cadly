@@ -28,7 +28,8 @@ build/linux-release/bin/cadly [file.step]   # GUI; optional file opens at startu
 build/linux-release/bin/cad_import_cli f.step  # headless import, prints geo stats
 ```
 
-Presets: `linux-debug`, `linux-release`, `linux-vcpkg-debug`,
+Presets: `linux-debug`, `linux-release`, `linux-qt68-{debug,release}` (Qt 6.8
+from `~/Qt/6.8.3/gcc_64`, enables the qlementine style), `linux-vcpkg-debug`,
 `windows-msvc-{debug,release}`. There is no checked-in CI; the smoke test is the
 only automated gate.
 
