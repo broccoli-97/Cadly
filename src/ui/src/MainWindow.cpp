@@ -19,6 +19,8 @@
 #include <QIcon>
 #include <QLabel>
 #include <QMenuBar>
+#include <QPainter>
+#include <QPixmap>
 #include <QShowEvent>
 #include <QMessageBox>
 #include <QProgressDialog>
@@ -37,6 +39,45 @@
 namespace cadly::ui {
 
 namespace {
+
+// Builds a QIcon from a qlementine-icons SVG (resource path
+// ":/qlementine/icons/16/<name>.svg"), recolored to fit the application
+// palette. The shipped SVGs are monochrome with a hardcoded black fill, and
+// plain QIcon has no recoloring step — that's a feature of the full
+// qlementine QStyle, which needs Qt 6.8+ (see docs/ui-modernization-options.md)
+// — so unmodified they would be near-invisible on the dark theme. Rendering
+// the SVG and then compositing a flat color with SourceIn keeps the glyph's
+// alpha while replacing its color. Baked at a few fixed sizes so menus (16px),
+// the toolbar (20px) and their 2x HiDPI variants all get a crisp pixmap.
+QIcon themed_icon(const QString& name, const QPalette& palette) {
+  const QIcon source(QStringLiteral(":/qlementine/icons/16/%1.svg").arg(name));
+  const auto tinted = [&source](int size, const QColor& color) {
+    QPixmap pm = source.pixmap(QSize(size, size));
+    if (!pm.isNull()) {
+      QPainter painter(&pm);
+      painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+      painter.fillRect(pm.rect(), color);
+    }
+    return pm;
+  };
+  // Tint with WindowText, not ButtonText: in qlementine's theme palette
+  // ButtonText is the foreground for *filled* (secondary-colored, i.e. light)
+  // buttons — near-black in the dark theme — so it would render the glyphs
+  // invisible on the dark chrome. WindowText is the plain text color in both
+  // the qlementine theme palette and the Fusion fallback palette.
+  const QColor normal   = palette.color(QPalette::Active,   QPalette::WindowText);
+  const QColor disabled = palette.color(QPalette::Disabled, QPalette::WindowText);
+  QIcon icon;
+  for (const int size : {16, 20, 24, 32, 40}) {
+    if (auto pm = tinted(size, normal); !pm.isNull()) {
+      icon.addPixmap(pm, QIcon::Normal);
+    }
+    if (auto pm = tinted(size, disabled); !pm.isNull()) {
+      icon.addPixmap(pm, QIcon::Disabled);
+    }
+  }
+  return icon;
+}
 
 // Sink bridge: shared between the worker thread and the GUI's QProgressDialog.
 // All members are atomic / std-thread-safe; QString operations stay on the GUI
@@ -78,6 +119,7 @@ MainWindow::~MainWindow() = default;
 void MainWindow::build_menus() {
   auto* file_menu = menuBar()->addMenu(tr("&File"));
   act_open_ = new QAction(tr("&Open CAD file..."), this);
+  act_open_->setIcon(themed_icon(QStringLiteral("document/open"), palette()));
   act_open_->setShortcut(QKeySequence::Open);
   connect(act_open_, &QAction::triggered, this, QOverload<>::of(&MainWindow::open_file));
   file_menu->addAction(act_open_);
@@ -89,11 +131,13 @@ void MainWindow::build_menus() {
 
   auto* view_menu = menuBar()->addMenu(tr("&View"));
   act_fit_ = new QAction(tr("Fit to model"), this);
+  act_fit_->setIcon(themed_icon(QStringLiteral("action/zoom-fit"), palette()));
   act_fit_->setShortcut(Qt::Key_F);
   connect(act_fit_, &QAction::triggered, this, &MainWindow::on_fit_view);
   view_menu->addAction(act_fit_);
 
   act_wireframe_ = new QAction(tr("Wireframe"), this);
+  act_wireframe_->setIcon(themed_icon(QStringLiteral("shape/cube"), palette()));
   act_wireframe_->setCheckable(true);
   act_wireframe_->setShortcut(Qt::Key_W);
   act_wireframe_->setToolTip(
@@ -102,6 +146,7 @@ void MainWindow::build_menus() {
   view_menu->addAction(act_wireframe_);
 
   act_edges_ = new QAction(tr("Show edges"), this);
+  act_edges_->setIcon(themed_icon(QStringLiteral("shape/borders"), palette()));
   act_edges_->setCheckable(true);
   act_edges_->setChecked(true);
   act_edges_->setShortcut(Qt::Key_E);
@@ -110,6 +155,7 @@ void MainWindow::build_menus() {
   view_menu->addAction(act_edges_);
 
   act_triangle_mesh_ = new QAction(tr("Show triangle mesh"), this);
+  act_triangle_mesh_->setIcon(themed_icon(QStringLiteral("shape/triangle"), palette()));
   act_triangle_mesh_->setCheckable(true);
   act_triangle_mesh_->setChecked(false);
   act_triangle_mesh_->setShortcut(Qt::Key_T);
@@ -166,6 +212,7 @@ void MainWindow::build_menus() {
 
   auto* help_menu = menuBar()->addMenu(tr("&Help"));
   act_about_ = new QAction(tr("About Cadly"), this);
+  act_about_->setIcon(themed_icon(QStringLiteral("misc/info"), palette()));
   connect(act_about_, &QAction::triggered, this, &MainWindow::on_about);
   help_menu->addAction(act_about_);
 }
@@ -175,6 +222,17 @@ void MainWindow::build_toolbar() {
   tb->setObjectName("MainToolbar");
   tb->setMovable(false);
   tb->setIconSize({20, 20});
+  // Icon + label, not icon-only: most of these are mode toggles whose glyphs
+  // (cube, borders, triangle) aren't self-explanatory, so a bare icon row
+  // forces the user to hover-and-guess. The labels come from each action's
+  // iconText — set to short forms here so the toolbar stays compact while the
+  // menu entries keep their descriptive full text.
+  tb->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  act_open_->setIconText(tr("Open"));
+  act_fit_->setIconText(tr("Fit"));
+  act_wireframe_->setIconText(tr("Wireframe"));
+  act_edges_->setIconText(tr("Edges"));
+  act_triangle_mesh_->setIconText(tr("Mesh"));
   tb->addAction(act_open_);
   tb->addSeparator();
   tb->addAction(act_fit_);
