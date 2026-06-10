@@ -3,6 +3,7 @@
 
 #include "cadly/app/RecentFiles.h"
 #include "cadly/app/Settings.h"
+#include "cadly/app/Theme.h"
 #include "cadly/platform/Log.h"
 #include "cadly/ui/MainWindow.h"
 
@@ -46,6 +47,10 @@ int main(int argc, char** argv) {
   app.setApplicationName("Cadly");
   app.setApplicationVersion("0.1.0");
   app.setWindowIcon(QIcon());
+
+  // Style + palette + icon resources, before any widget is constructed so
+  // nothing ever paints with the stock platform style.
+  cadly::app::apply_theme(app);
 
   cadly::platform::init_logging("info");
 

@@ -14,6 +14,10 @@
       "name": "qtbase",
       "default-features": false,
       "features": [ "widgets", "opengl", "opengl-desktop" ]
+    },
+    {
+      "name": "qtsvg",
+      "default-features": false
     }
   ],
   "builtin-baseline": "0000000000000000000000000000000000000000"

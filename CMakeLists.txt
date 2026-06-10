@@ -69,6 +69,37 @@ endif()
 # Qt 6
 if(CADLY_BUILD_GUI)
   find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Concurrent)
+
+  # qlementine-icons — MIT, 350+ desktop-app SVG icons compiled into a Qt
+  # resource library and exposed as the "qlementine" QIcon theme. Pulled via
+  # FetchContent (pinned tag) rather than a system package because no distro
+  # ships it. Requires only Qt >= 5.15, so it works on system Qt 6.4 today —
+  # unlike the full qlementine *style*, which needs Qt 6.8+ (see
+  # docs/ui-modernization-options.md). Rendering the SVGs at runtime needs
+  # Qt's SVG icon-engine plugin (qt6-svg on Debian/Ubuntu).
+  include(FetchContent)
+  FetchContent_Declare(qlementine-icons
+    GIT_REPOSITORY https://github.com/oclero/qlementine-icons.git
+    GIT_TAG        v1.9.0
+  )
+  FetchContent_MakeAvailable(qlementine-icons)
+
+  # qlementine — a full modern QStyle (smooth animations, automatic icon
+  # colorization, coherent restyling of every widget). It hard-requires
+  # Qt 6.8+, while the Linux system-Qt path may still be on 6.4 — so it is
+  # gated on the Qt actually found, and Theme.cpp falls back to Fusion + dark
+  # palette when it's absent. Use the linux-qt68-* presets (Qt in ~/Qt) to get
+  # the real style; see docs/ui-modernization-options.md for the trade-offs.
+  if(Qt6_VERSION VERSION_GREATER_EQUAL "6.8.0")
+    set(CADLY_HAS_QLEMENTINE ON)
+    FetchContent_Declare(qlementine
+      GIT_REPOSITORY https://github.com/oclero/qlementine.git
+      GIT_TAG        v1.4.2
+    )
+    FetchContent_MakeAvailable(qlementine)
+  else()
+    set(CADLY_HAS_QLEMENTINE OFF)
+  endif()
 endif()
 
 # OCCT (system: libocct-*-dev provides OpenCASCADE CMake config files)
@@ -117,9 +148,21 @@ endif()
 install(DIRECTORY shaders/glsl
   DESTINATION ${CADLY_INSTALL_DATADIR}/shaders)
 
+# UI theme definitions (qlementine JSON themes), looked up like the shaders
+# via platform::find_asset_dir("themes").
+install(DIRECTORY themes
+  DESTINATION ${CADLY_INSTALL_DATADIR})
+
 message(STATUS "Cadly configured:")
 message(STATUS "  Qt6:    ${Qt6_VERSION}")
 message(STATUS "  OCCT:   ${OpenCASCADE_VERSION}")
 message(STATUS "  GUI:    ${CADLY_BUILD_GUI}")
 message(STATUS "  CLI:    ${CADLY_BUILD_CLI}")
 message(STATUS "  Tests:  ${CADLY_BUILD_TESTS}")
+if(CADLY_BUILD_GUI)
+  if(CADLY_HAS_QLEMENTINE)
+    message(STATUS "  Style:  qlementine (Qt >= 6.8)")
+  else()
+    message(STATUS "  Style:  Fusion + dark palette (qlementine needs Qt >= 6.8)")
+  endif()
+endif()
