@@ -100,6 +100,8 @@
     { "name": "linux-debug",   "configurePreset": "linux-debug",   "output": { "outputOnFailure": true } },
     { "name": "linux-release", "configurePreset": "linux-release", "output": { "outputOnFailure": true } },
     { "name": "linux-qt68-debug",   "configurePreset": "linux-qt68-debug",   "output": { "outputOnFailure": true } },
-    { "name": "linux-qt68-release", "configurePreset": "linux-qt68-release", "output": { "outputOnFailure": true } }
+    { "name": "linux-qt68-release", "configurePreset": "linux-qt68-release", "output": { "outputOnFailure": true } },
+    { "name": "windows-msvc-debug",   "configurePreset": "windows-msvc-debug",   "configuration": "Debug",          "output": { "outputOnFailure": true } },
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "RelWithDebInfo", "output": { "outputOnFailure": true } }
   ]
 }
