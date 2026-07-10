@@ -72,11 +72,16 @@ plain readers as geometry-only fallback) → `BRepMesh_IncrementalMesh` →
 `OcctShapeToMesh` converts faces to `scene::Mesh` → `scene::Scene` →
 `IRenderer::attach_scene()` → `render()`.
 
-Import runs on a worker thread (`QtConcurrent`/`std::thread`); the GUI shows a
-cancellable `QProgressDialog`. Importers MUST poll `IProgressSink::cancelled()`
-between heavy steps. `ImportOptions` (in `ICadImporter.h`) holds the meshing
-knobs (linear/angular deflection, healing, welding) — defaults are tuned for
-mm-scale industrial assemblies, visualization quality not simulation.
+Import runs on a worker thread (`QtConcurrent`/`std::thread`); it is **non-modal**
+— progress and cancel live in the toolbar's document capsule (`DocumentCapsule`)
+and the previous scene stays interactive throughout (`MainWindow::importing_`
+disables only the Open entry points, not the whole UI). Importers MUST poll
+`IProgressSink::cancelled()` between heavy steps. `ImportOptions` (in
+`ICadImporter.h`) holds the meshing knobs (linear/angular deflection, healing,
+welding) — defaults are tuned for mm-scale industrial assemblies, visualization
+quality not simulation. The Inspector's **Import** tab is the persistent editor
+for these; importing is immediate with the persisted options unless "Review
+options before each import" (or `⌥⌘O` / File ▸ Open with Options…) is set.
 
 ## Renderer lifetime contract
 
@@ -121,16 +126,36 @@ primitive-restart sentinel, one drawcall per tier.
 
 ## UI conventions
 
+The shell is the "Graphite" layout (a 52px custom-painted `ToolbarWidget` over
+`QSplitter{SidebarWidget | (ViewportWidget / DiagnosticsStrip) | InspectorWidget}`
+and a 26px status bar) — see `docs/ui-redesign/`. Panels are fixed-position and
+toggle visibility only; the old `QDockWidget` shell (drag-docking, `saveState`
+blobs, the un-float hack) is gone. Layout persists as explicit `QSettings` keys
+written by `MainWindow::save_settings`, not an opaque state blob.
+
 - Mouse: **right-drag orbits, middle-drag pans**, left is reserved for picking
   (not yet implemented, passed through). Wheel zoom anchors on the point under
   the cursor. Orbit uses a quaternion camera around a pluggable
   `RotationPivotResolver` (default: camera target).
 - Shortcuts: `F` fit, `W` wireframe, `E` edges, `T` triangle mesh, `P`
   perspective toggle (ortho is default for CAD). Standard views `1`-`7`
-  (Front/Back/Right/Left/Top/Bottom/Iso, Blender-style numbering).
-- Docks (model tree, properties, diagnostics) are re-openable from
-  **View ▸ Panels** via their `toggleViewAction()` — closing one only unchecks
-  it. Build docks *before* menus (the View menu references them).
+  (Front/Back/Right/Left/Top/Bottom/Iso, Blender-style numbering). `⌃.` toggles
+  zero-chrome (all panels hidden; Esc restores); `⌥⌘O` opens with the import
+  pre-flight.
+- The display modes are exclusive at the UI layer the same way as before, but
+  now *visibly*: the toolbar `Shaded|Wireframe` `SegmentedControl` plus
+  Edges/Mesh chips that are **disabled-but-remembered** while Wireframe is
+  active (replacing the old `QSignalBlocker` silent-uncheck dance).
+- Custom-painted widgets (`ToolbarButton`, `SegmentedControl`, `DocumentCapsule`,
+  the sidebar delegate, `Popover`, …) read `ui::ThemeTokens` (a struct, **not**
+  `QPalette`) so they render identically under Fusion (Qt 6.4) and qlementine
+  (Qt 6.8). `ThemeManager::changed` drives a live dark/light swap;
+  `app::apply_theme(app, dark)` keeps `QStyle`/`QPalette` in step and is safe to
+  re-call at runtime. Build the panels *before* the menus (the View menu wires
+  their toggle actions).
+- Dev aid: `cadly --screenshot <png> [--demo wireframe|light|views|getinfo|zerochrome]`
+  drives a UI state and grabs it headlessly (used to verify the shell without an
+  input-injection tool).
 
 ## Assets & logging
 

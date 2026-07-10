@@ -1,0 +1,2118 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadly — “Graphite” UI concept (macOS-inspired prototype)</title>
+<style>
+/* ============================================================
+   Cadly "Graphite" — macOS-inspired concept prototype
+   Synthesis: Pro-App shell (Xcode-calibre) + grafts:
+   zero-chrome mode, non-modal import, light theme tokens,
+   pinnable Get Info popover, visual Views popover, badge dots.
+   NOTE FOR ENGINEERS: backdrop-filter "glass" and the merged
+   title bar are mock-only aspiration; the Qt build ships flat
+   tinted panels + native title bar (see design-notes.md).
+   ============================================================ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root[data-theme="dark"] {
+  --accent: #5086FF; --accent-hov: #6494FF; --accent-prs: #7AA3FF;
+  --on-accent: #FFFFFF;
+  --sel: rgba(80,134,255,0.28); --sel-inactive: rgba(255,255,255,0.09);
+  --focus: rgba(48,151,255,0.42);
+
+  --desktop1: #1b2030; --desktop2: #2a3147; --desktop3: #171a24;
+  --macbar-bg: rgba(28,30,38,0.72); --macbar-fg: #e8eaf0;
+
+  --win-border: rgba(255,255,255,0.10);
+  --tb-bg: #26282D;
+  --sb-bg: rgba(33,35,40,0.82);          /* mock vibrancy; Qt ships #212328 */
+  --sb-bg-flat: #212328;
+  --insp-bg: #232529;
+  --strip-h: #202226; --strip-b: #17181C;
+  --status-bg: #202226;
+  --capsule-bg: #1B1D21;
+  --card-bg: rgba(35,37,41,0.96);
+
+  --hl-strong: rgba(0,0,0,0.45);
+  --hl: rgba(255,255,255,0.07);
+  --hl-top-glint: rgba(255,255,255,0.045);
+
+  --ctrl: rgba(255,255,255,0.06); --ctrl-hov: rgba(255,255,255,0.09);
+  --ctrl-prs: rgba(255,255,255,0.13); --ctrl-border: rgba(255,255,255,0.08);
+  --chk-bg: rgba(80,134,255,0.22); --chk-fg: #7AA6FF;
+  --field-bg: #1B1D21;
+
+  --t1: #E6E8EC; --t2: #A0A6B0; --t3: #6E747E; --t-dis: #585E68;
+  --err: #E96B72; --warn: #FBC064; --ok: #2BB5A0; --info: #1BA8D5;
+
+  --glass: rgba(34,36,41,0.86); --glass-border: rgba(255,255,255,0.09);
+  --shadow-pop: 0 8px 24px rgba(0,0,0,0.5);
+  --shadow-win: 0 28px 90px rgba(0,0,0,0.55), 0 4px 18px rgba(0,0,0,0.35);
+
+  /* Renderer-owned viewport gradient (DisplayMode.background_*) */
+  --vp-top: #ACB0B7; --vp-bot: #80838A;
+  --scrim: rgba(15,16,18,0.45);
+}
+
+:root[data-theme="light"] {
+  --accent: #3D6FE0; --accent-hov: #2F63D6; --accent-prs: #2A58C2;
+  --on-accent: #FFFFFF;
+  --sel: rgba(61,111,224,0.18); --sel-inactive: rgba(0,0,0,0.08);
+  --focus: rgba(61,111,224,0.40);
+
+  --desktop1: #aebed6; --desktop2: #cfd9e8; --desktop3: #93a4c2;
+  --macbar-bg: rgba(246,247,250,0.72); --macbar-fg: #1E2126;
+
+  --win-border: rgba(0,0,0,0.14);
+  --tb-bg: #F2F3F5;
+  --sb-bg: rgba(245,246,248,0.78);
+  --sb-bg-flat: #ECEDF0;
+  --insp-bg: #F6F7F9;
+  --strip-h: #ECEDF0; --strip-b: #FAFBFC;
+  --status-bg: #ECEDF0;
+  --capsule-bg: #FFFFFF;
+  --card-bg: rgba(252,252,254,0.97);
+
+  --hl-strong: rgba(0,0,0,0.16);
+  --hl: rgba(0,0,0,0.10);
+  --hl-top-glint: rgba(255,255,255,0.6);
+
+  --ctrl: rgba(0,0,0,0.045); --ctrl-hov: rgba(0,0,0,0.07);
+  --ctrl-prs: rgba(0,0,0,0.10); --ctrl-border: rgba(0,0,0,0.12);
+  --chk-bg: rgba(61,111,224,0.16); --chk-fg: #3D6FE0;
+  --field-bg: #FFFFFF;
+
+  --t1: #1E2126; --t2: #5A616C; --t3: #9AA0AA; --t-dis: #B9Bec6;
+  --err: #D6555C; --warn: #C98A1B; --ok: #1E9A87; --info: #1186AC;
+
+  --glass: rgba(250,250,252,0.85); --glass-border: rgba(0,0,0,0.08);
+  --shadow-pop: 0 8px 24px rgba(0,0,0,0.18);
+  --shadow-win: 0 28px 90px rgba(30,40,60,0.35), 0 4px 18px rgba(30,40,60,0.18);
+
+  --vp-top: #DADDE2; --vp-bot: #ABAFB7;
+  --scrim: rgba(240,241,244,0.45);
+}
+
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: -apple-system, "SF Pro Text", Inter, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px; line-height: 1.45; color: var(--t1);
+  background:
+    radial-gradient(120% 90% at 20% 0%, var(--desktop2) 0%, var(--desktop1) 48%, var(--desktop3) 100%);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  display: flex; flex-direction: column;
+}
+.mono { font-family: "SF Mono", ui-monospace, "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
+.num { font-variant-numeric: tabular-nums; }
+
+svg.ic { width: 16px; height: 16px; stroke: currentColor; fill: none;
+  stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+svg.ic.s18 { width: 18px; height: 18px; }
+svg.ic.s14 { width: 14px; height: 14px; }
+
+/* ---------- fake macOS menu bar ---------- */
+.macbar {
+  height: 25px; flex: none; display: flex; align-items: center; gap: 2px;
+  padding: 0 12px; font-size: 13px; color: var(--macbar-fg);
+  background: var(--macbar-bg); backdrop-filter: blur(28px) saturate(160%);
+  z-index: 300; position: relative;
+}
+.macbar .apple { font-size: 14px; padding: 0 10px; }
+.macbar .mb-item {
+  padding: 2px 10px; border-radius: 5px; cursor: default; white-space: nowrap;
+}
+.macbar .mb-item.appname { font-weight: 700; }
+.macbar .mb-item:hover, .macbar .mb-item.open { background: var(--sel); }
+.macbar .mb-right { margin-left: auto; display: flex; gap: 14px; font-size: 12px; opacity: .85; }
+
+/* ---------- the app window ---------- */
+.stage { flex: 1; display: flex; padding: 18px 22px 26px; min-height: 0; }
+.window {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--win-border);
+  box-shadow: var(--shadow-win);
+  background: var(--tb-bg);
+  position: relative;
+}
+
+/* ---------- unified toolbar (52px, merged title bar — mock aspiration) ---------- */
+.toolbar {
+  height: 52px; flex: none; display: flex; align-items: center;
+  padding: 0 12px; gap: 6px; background: var(--tb-bg);
+  border-bottom: 1px solid var(--hl-strong);
+  box-shadow: inset 0 1px 0 var(--hl-top-glint);
+  position: relative; z-index: 60;
+}
+.traffic { display: flex; gap: 8px; margin-right: 6px; flex: none; }
+.traffic span { width: 12px; height: 12px; border-radius: 50%; display: block;
+  border: 0.5px solid rgba(0,0,0,0.15); }
+.traffic .r { background: #FF5F57; } .traffic .y { background: #FEBC2E; }
+.traffic .g { background: #28C840; }
+
+.tb-zone { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.toolbar.compact .cl { display: none; }   /* chips go icon-only on narrow windows */
+.tb-zone.left  { flex: 1 1 0; }
+.tb-zone.right { flex: 1 1 0; justify-content: flex-end; }
+.tb-sep { width: 1px; height: 20px; background: var(--hl); margin: 0 4px; flex: none; }
+
+.icon-btn {
+  width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent;
+  color: var(--t2); display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; flex: none; position: relative;
+}
+.icon-btn:hover  { background: var(--ctrl-hov); color: var(--t1); }
+.icon-btn:active { background: var(--ctrl-prs); }
+.icon-btn.checked { background: var(--chk-bg); color: var(--chk-fg); }
+.icon-btn:disabled { color: var(--t-dis); pointer-events: none; }
+.icon-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.icon-btn .badge-dot {
+  position: absolute; top: 3px; right: 3px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--accent); display: none;
+}
+.icon-btn.has-badge .badge-dot { display: block; }
+
+/* Open split-button */
+.split-btn { display: inline-flex; height: 28px; border-radius: 6px; overflow: hidden;
+  background: var(--ctrl); border: 1px solid var(--ctrl-border); flex: none; }
+.split-btn > button { border: none; background: transparent; color: var(--t1);
+  font: 500 12px/1 inherit; font-family: inherit; display: inline-flex; align-items: center;
+  gap: 6px; cursor: pointer; padding: 0 10px; }
+.split-btn > button:hover { background: var(--ctrl-hov); }
+.split-btn > button:active { background: var(--ctrl-prs); }
+.split-btn > button:disabled { color: var(--t-dis); pointer-events: none; }
+.split-btn .chev { padding: 0 5px; border-left: 1px solid var(--ctrl-border); color: var(--t2); }
+
+/* Document / activity capsule */
+.capsule {
+  width: clamp(220px, 22vw, 380px); height: 34px; border-radius: 8px;
+  background: var(--capsule-bg); box-shadow: inset 0 0 0 1px var(--hl);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  cursor: default; position: relative; overflow: hidden; flex: none;
+}
+.capsule .l1 { font-size: 12px; font-weight: 500; color: var(--t1); max-width: 92%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.25; }
+.capsule .l2 { font-size: 10.5px; color: var(--t3); line-height: 1.25; }
+.capsule .prog { position: absolute; left: 0; bottom: 0; height: 2px; width: 0%;
+  background: var(--accent); border-radius: 1px; transition: width .12s linear; }
+.capsule.ok .prog { background: var(--ok); }
+.capsule.err .l1 { color: var(--err); }
+.capsule .cancel { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--ctrl-hov); color: var(--t2); display: none;
+  align-items: center; justify-content: center; }
+.capsule.importing .cancel { display: inline-flex; }
+.capsule .l1 .doc-name:hover { text-decoration: underline; cursor: pointer; }
+
+/* Segmented control (display mode, inspector tabs, strip tabs) */
+.seg { display: inline-flex; height: 26px; background: var(--ctrl);
+  border: 1px solid var(--ctrl-border); border-radius: 6px; padding: 2px; flex: none; }
+.seg button {
+  border: none; background: transparent; color: var(--t2); border-radius: 4px;
+  font: 500 12px/1 inherit; font-family: inherit; padding: 0 10px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.seg button:hover { color: var(--t1); }
+.seg button.active { background: var(--ctrl-prs); color: var(--t1); }
+.seg.icons button { padding: 0 9px; }
+.seg button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* Edges / Mesh chips */
+.chip-group { display: inline-flex; gap: 2px; padding: 2px; height: 26px;
+  border: 1px solid var(--ctrl-border); border-radius: 6px; background: var(--ctrl); flex: none; }
+.chip { border: none; border-radius: 4px; background: transparent; color: var(--t2);
+  font: 500 11px/1 inherit; font-family: inherit; padding: 0 7px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; }
+.chip:hover { color: var(--t1); background: var(--ctrl-hov); }
+.chip.on { background: var(--chk-bg); color: var(--chk-fg); }
+.chip:disabled { opacity: .4; pointer-events: none; }
+
+/* ---------- main row ---------- */
+.main { flex: 1; display: flex; min-height: 0; position: relative; }
+
+/* splitter hairlines */
+.vsplit { width: 1px; background: var(--hl-strong); position: relative; flex: none; z-index: 40; }
+.vsplit::after { content: ""; position: absolute; top: 0; bottom: 0; left: -3px; right: -3px;
+  cursor: col-resize; }
+.vsplit:hover, .vsplit.drag { background: rgba(80,134,255,0.6); }
+.hsplit { height: 1px; background: var(--hl-strong); position: relative; flex: none; z-index: 40; }
+.hsplit::after { content: ""; position: absolute; left: 0; right: 0; top: -3px; bottom: -3px;
+  cursor: row-resize; }
+.hsplit:hover, .hsplit.drag { background: rgba(80,134,255,0.6); }
+
+/* ---------- left sidebar: model source list ---------- */
+.sidebar {
+  width: 260px; min-width: 0; flex: none; display: flex; flex-direction: column;
+  background: var(--sb-bg); backdrop-filter: blur(24px) saturate(140%);
+  overflow: hidden;
+  transition: width .18s cubic-bezier(.2,0,0,1);
+}
+.sidebar.collapsed, .inspector.collapsed { width: 0 !important; }
+.panel-head { height: 36px; flex: none; display: flex; align-items: center;
+  padding: 0 12px; gap: 8px; }
+.panel-head .sect { font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  color: var(--t3); text-transform: uppercase; white-space: nowrap; }
+.filter-wrap { margin-left: auto; display: flex; align-items: center; }
+.filter-field { display: flex; align-items: center; gap: 5px; height: 24px;
+  border-radius: 6px; background: var(--field-bg); border: 1px solid var(--ctrl-border);
+  padding: 0 7px; width: 26px; transition: width .15s ease; overflow: hidden; cursor: pointer; }
+.filter-field.open { width: 130px; cursor: text; }
+.filter-field input { border: none; outline: none; background: transparent; color: var(--t1);
+  font: 400 11px/1 inherit; font-family: inherit; width: 100%; display: none; }
+.filter-field.open input { display: block; }
+.filter-field svg { color: var(--t3); }
+
+.tree { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 8px 10px; }
+.row { height: 28px; display: flex; align-items: center; gap: 4px; border-radius: 5px;
+  padding: 0 6px; cursor: default; position: relative; color: var(--t1); }
+.row:hover { background: var(--ctrl-hov); }
+.row.sel { background: var(--sel); }
+.row .twirl { width: 16px; height: 16px; flex: none; display: inline-flex;
+  align-items: center; justify-content: center; color: var(--t3); cursor: pointer;
+  transition: transform .12s ease; }
+.row .twirl.openD { transform: rotate(90deg); }
+.row .twirl.leaf { visibility: hidden; }
+.row .glyph { color: var(--t3); flex: none; }
+.row .nm { font-size: 13px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0; flex: 1; }
+.row .cnt { font-size: 11px; color: var(--t3); margin-left: auto; flex: none; }
+.row .rbtn { width: 18px; height: 18px; border: none; border-radius: 4px;
+  background: transparent; color: var(--t2); cursor: pointer; flex: none;
+  display: none; align-items: center; justify-content: center; }
+.row:hover .rbtn { display: inline-flex; }
+.row .rbtn:hover { background: var(--ctrl-prs); color: var(--t1); }
+.row.hiddenNode .rbtn.eye { display: inline-flex; color: var(--t3); }
+.row.hiddenNode .nm, .row.hiddenNode .cnt { color: var(--t3); }
+.row.filtered-out { display: none; }
+
+/* ---------- center: viewport + bottom strip ---------- */
+.center { flex: 1; min-width: 200px; display: flex; flex-direction: column; min-height: 0; }
+.viewport { flex: 1; position: relative; min-height: 120px; overflow: hidden;
+  background: linear-gradient(var(--vp-top), var(--vp-bot)); }
+.viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* floating view cluster (in-viewport HUD, top-right) */
+.hud { position: absolute; top: 14px; right: 14px; display: flex; gap: 4px;
+  padding: 4px; border-radius: 9px; background: var(--glass);
+  border: 1px solid var(--glass-border); backdrop-filter: blur(20px) saturate(140%);
+  box-shadow: var(--shadow-pop); opacity: .9; transition: opacity .15s ease; z-index: 30; }
+.hud:hover { opacity: 1; }
+.hud .icon-btn { width: 30px; height: 30px; }
+
+/* import progress / drop overlays */
+.drop-ring { position: absolute; inset: 12px; border: 2px dashed var(--accent);
+  border-radius: 16px; background: rgba(80,134,255,0.10); display: none;
+  align-items: center; justify-content: center; z-index: 50; pointer-events: none; }
+.drop-ring .lbl { font-size: 15px; font-weight: 600; color: var(--t1);
+  background: var(--glass); padding: 10px 18px; border-radius: 10px;
+  border: 1px solid var(--glass-border); }
+.viewport.dropping .drop-ring { display: flex; }
+
+/* welcome card (empty state) */
+.welcome { position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; z-index: 20; }
+.welcome .card { width: 380px; border-radius: 10px; background: var(--card-bg);
+  border: 1px solid var(--hl); box-shadow: var(--shadow-pop); padding: 24px;
+  text-align: center; }
+.welcome .appglyph { width: 48px; height: 48px; margin: 0 auto 12px; border-radius: 11px;
+  background: linear-gradient(135deg, var(--accent), #7AA3FF);
+  display: flex; align-items: center; justify-content: center; color: #fff; }
+.welcome h2 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.welcome .sub { font-size: 11px; color: var(--t3); margin-bottom: 14px; }
+.welcome .open-big { width: 100%; height: 32px; border-radius: 6px; border: none;
+  background: var(--accent); color: var(--on-accent); font: 500 13px/1 inherit;
+  font-family: inherit; cursor: pointer; }
+.welcome .open-big:hover { background: var(--accent-hov); }
+.welcome .recents { margin-top: 10px; text-align: left; }
+.welcome .recents .row { height: 28px; }
+
+/* ---------- bottom strip: diagnostics ---------- */
+.strip { height: 200px; flex: none; display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden; transition: height .18s cubic-bezier(.2,0,0,1); }
+.strip.collapsed { height: 0 !important; }
+.strip-head { height: 32px; flex: none; background: var(--strip-h);
+  display: flex; align-items: center; gap: 8px; padding: 0 10px;
+  border-bottom: 1px solid var(--hl); }
+.strip-head .seg { height: 22px; }
+.strip-head .seg button { font-size: 11px; padding: 0 8px; }
+.strip-body { flex: 1; background: var(--strip-b); overflow: auto; min-height: 0; }
+.summary-grid { display: grid; grid-template-columns: max-content max-content;
+  gap: 3px 26px; padding: 12px 16px; font-size: 11px; }
+.summary-grid .k { color: var(--t3); }
+.summary-grid .v { color: var(--t1); }
+.log { padding: 8px 12px; font-size: 12px; line-height: 1.6; white-space: pre; }
+.log .ts { color: var(--t3); }
+.log .lvl { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .05em;
+  border-radius: 3px; padding: 1px 5px; margin: 0 6px; vertical-align: 1px; }
+.log .lvl.info { color: var(--info); background: color-mix(in srgb, var(--info) 14%, transparent); }
+.log .lvl.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.log .lvl.error { color: var(--err); background: color-mix(in srgb, var(--err) 16%, transparent); }
+.log .msg { color: var(--t2); }
+
+/* ---------- right inspector ---------- */
+.inspector { width: 300px; flex: none; display: flex; flex-direction: column;
+  background: var(--insp-bg); overflow: hidden;
+  transition: width .18s cubic-bezier(.2,0,0,1); }
+.insp-tabs { height: 36px; flex: none; display: flex; align-items: center;
+  justify-content: center; border-bottom: 1px solid var(--hl); }
+.insp-pages { flex: 1; overflow-y: auto; min-height: 0; }
+.insp-page { display: none; padding: 12px; }
+.insp-page.active { display: block; }
+.group { margin-bottom: 16px; }
+.group > .ghead { display: flex; align-items: center; gap: 6px; height: 24px;
+  font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--t3); cursor: pointer; }
+.group > .ghead .twirl { transition: transform .12s ease; display: inline-flex; }
+.group.closed > .ghead .twirl { transform: rotate(-90deg); }
+.group.closed > .gbody { display: none; }
+.frow { display: flex; align-items: center; min-height: 26px; gap: 10px; }
+.frow > label { width: 96px; flex: none; text-align: right; font-size: 11px; color: var(--t3); }
+.frow > .val { font-size: 12px; color: var(--t1); min-width: 0; user-select: text;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frow > .val.wrap { white-space: normal; }
+.frow .stack { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.no-sel { text-align: center; color: var(--t3); font-size: 12px; padding: 28px 0; }
+
+/* inspector controls */
+select, input[type="number"], input[type="text"].ctl {
+  height: 24px; border-radius: 6px; border: 1px solid var(--ctrl-border);
+  background: var(--field-bg); color: var(--t1); font: 400 12px/1 inherit;
+  font-family: inherit; padding: 0 6px; outline: none; min-width: 0;
+}
+select:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+input[type="number"] { width: 86px; text-align: right; font-variant-numeric: tabular-nums; }
+input[type="number"]:disabled { color: var(--t-dis); background: var(--ctrl); }
+.frow .unit { font-size: 11px; color: var(--t3); }
+.checkline { display: flex; align-items: center; gap: 8px; min-height: 24px;
+  font-size: 12px; color: var(--t1); cursor: pointer; }
+.checkline input { accent-color: var(--accent); width: 14px; height: 14px; }
+.checkline.indent { margin-left: 106px; }
+.checkline:has(input:disabled) { color: var(--t-dis); }
+input[type="range"] { accent-color: var(--accent); flex: 1; height: 4px; }
+.btn { height: 26px; border-radius: 6px; border: 1px solid var(--ctrl-border);
+  background: var(--ctrl); color: var(--t1); font: 500 12px/1 inherit; font-family: inherit;
+  padding: 0 12px; cursor: pointer; }
+.btn:hover { background: var(--ctrl-hov); }
+.btn.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-hov); }
+.btn.full { width: 100%; }
+.btn:disabled { color: var(--t-dis); pointer-events: none; }
+.txtbtn { border: none; background: none; color: var(--accent); font: 500 11px/1 inherit;
+  font-family: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.txtbtn:hover { background: var(--chk-bg); }
+
+/* ---------- status bar ---------- */
+.statusbar { height: 26px; flex: none; background: var(--status-bg);
+  border-top: 1px solid var(--hl-strong); display: flex; align-items: center;
+  gap: 16px; padding: 0 12px; font-size: 11px; color: var(--t2); z-index: 60; position: relative; }
+.statusbar .file { display: flex; align-items: center; gap: 6px; min-width: 0;
+  color: var(--t2); }
+.statusbar .file .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statusbar .right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+.status-badge { height: 17px; display: inline-flex; align-items: center; padding: 0 7px;
+  border-radius: 4px; background: var(--ctrl); border: 1px solid var(--ctrl-border);
+  font-size: 10px; font-weight: 600; color: var(--t2); cursor: pointer; }
+.status-badge:hover { background: var(--ctrl-hov); color: var(--t1); }
+.frame-ms { min-width: 52px; text-align: right; transition: opacity .6s ease; }
+.frame-ms.idle { opacity: .45; }
+.lvl-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+
+/* ---------- menus & popovers ---------- */
+.menu { position: fixed; min-width: 200px; background: var(--glass);
+  backdrop-filter: blur(20px) saturate(140%); border: 1px solid var(--glass-border);
+  border-radius: 8px; box-shadow: var(--shadow-pop); padding: 4px;
+  z-index: 400; display: none; animation: pop .13s ease-out; }
+.menu.open { display: block; }
+@keyframes pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+.mi { height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 9px;
+  border-radius: 5px; font-size: 13px; color: var(--t1); cursor: default; white-space: nowrap; }
+.mi:hover { background: var(--accent); color: var(--on-accent); }
+.mi:hover .kbd, .mi:hover .mi-sub { color: var(--on-accent); opacity: .8; border-color: transparent; }
+.mi.disabled { color: var(--t-dis); pointer-events: none; }
+.mi .chk { width: 14px; flex: none; text-align: center; font-size: 11px; }
+.mi .kbd { margin-left: auto; }
+.mi .mi-sub { margin-left: auto; font-size: 11px; color: var(--t3); }
+.msep { height: 1px; background: var(--hl); margin: 4px 8px; }
+.mhead { font-size: 10.5px; font-weight: 600; color: var(--t3); padding: 5px 9px 3px;
+  letter-spacing: .06em; text-transform: uppercase; }
+
+.kbd { display: inline-flex; align-items: center; height: 15px; padding: 0 4px;
+  border: 1px solid var(--ctrl-border); border-radius: 3px; font-size: 9px;
+  font-weight: 500; color: var(--t3); font-family: inherit; }
+
+/* views popover (face tiles) */
+.views-pop { width: 248px; padding: 10px; }
+.views-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.vtile { border: 1px solid var(--ctrl-border); border-radius: 7px; background: var(--ctrl);
+  padding: 7px 2px 5px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  cursor: pointer; color: var(--t2); position: relative; }
+.vtile:hover { background: var(--ctrl-hov); color: var(--t1); border-color: var(--accent); }
+.vtile .vk { position: absolute; top: 3px; right: 4px; font-size: 8.5px; color: var(--t3); }
+.vtile .vl { font-size: 9.5px; }
+.vtile svg { width: 26px; height: 26px; }
+.views-fit { margin-top: 8px; }
+
+/* get-info popover / pinned card */
+.info-pop { width: 300px; padding: 0; }
+.info-pop .ip-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
+.info-pop .ip-head .ttl { font-size: 13px; font-weight: 600; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.info-pop .ip-body { padding: 2px 12px 12px; max-height: 56vh; overflow-y: auto; }
+.info-pop.pinned { position: absolute; z-index: 35; animation: none; }
+
+/* generic popover card (about, shortcuts, path) */
+.pop-card { padding: 14px 16px; max-width: 360px; }
+.pop-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.pop-card p { font-size: 12px; color: var(--t2); margin-bottom: 6px; user-select: text; }
+.sc-grid { display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px;
+  font-size: 12px; color: var(--t2); margin-top: 8px; }
+.sc-grid .keys { display: flex; gap: 3px; }
+
+/* scrim + sheet (Open with Options…) */
+.scrim { position: absolute; inset: 0; background: rgba(0,0,0,0.25); z-index: 80;
+  display: none; }
+.scrim.open { display: block; }
+.sheet { position: absolute; top: 0; left: 50%; transform: translate(-50%, -8px);
+  width: 420px; max-height: 78%; background: var(--card-bg); z-index: 90;
+  border-radius: 0 0 12px 12px; border: 1px solid var(--hl); border-top: none;
+  box-shadow: var(--shadow-pop); display: none; flex-direction: column;
+  animation: sheetin .2s ease-out; }
+.sheet.open { display: flex; }
+@keyframes sheetin { from { transform: translate(-50%, -24px); opacity: 0; } }
+.sheet .sh-body { overflow-y: auto; padding: 14px 16px 4px; }
+.sheet .sh-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px;
+  border-top: 1px solid var(--hl); }
+
+/* tooltip */
+.tooltip { position: fixed; z-index: 500; background: var(--glass);
+  border: 1px solid var(--glass-border); backdrop-filter: blur(20px);
+  color: var(--t1); border-radius: 6px; padding: 4px 8px; font-size: 11px;
+  display: none; pointer-events: none; box-shadow: var(--shadow-pop);
+  align-items: center; gap: 7px; white-space: nowrap; }
+.tooltip.show { display: inline-flex; }
+
+/* first-run gesture hint */
+.hint { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: var(--glass); border: 1px solid var(--glass-border);
+  backdrop-filter: blur(20px); border-radius: 9px; box-shadow: var(--shadow-pop);
+  padding: 7px 14px; font-size: 11px; color: var(--t2); z-index: 25;
+  transition: opacity .6s ease; display: flex; gap: 12px; align-items: center; }
+.hint.gone { opacity: 0; pointer-events: none; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--ctrl-prs); border-radius: 5px;
+  border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--t3); }
+::-webkit-scrollbar-corner, ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<!-- ======== icon set (SF-Symbols spirit, 1.5px stroke, 16/24 grid) ======== -->
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-panel-left" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><line x1="6" y1="2.5" x2="6" y2="13.5"/><line x1="3.4" y1="5" x2="4.4" y2="5"/><line x1="3.4" y1="7" x2="4.4" y2="7"/></symbol>
+  <symbol id="i-panel-right" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><line x1="10" y1="2.5" x2="10" y2="13.5"/></symbol>
+  <symbol id="i-panel-bottom" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><line x1="1.5" y1="10" x2="14.5" y2="10"/></symbol>
+  <symbol id="i-folder-open" viewBox="0 0 16 16"><path d="M1.8 13 1.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h6.3a1 1 0 0 1 1 1V7"/><path d="M1.8 13h10.7a1 1 0 0 0 .95-.7l1.3-4.1a.8.8 0 0 0-.76-1.05H4.3a1 1 0 0 0-.95.7L1.8 13Z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h5.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-7.5Z"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4"/></symbol>
+  <symbol id="i-cube" viewBox="0 0 16 16"><path d="M8 1.8 14 5v6L8 14.2 2 11V5l6-3.2Z"/><path d="M2 5l6 3.2L14 5M8 8.2v6"/></symbol>
+  <symbol id="i-edges" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M2.5 8h11M8 2.5v11"/></symbol>
+  <symbol id="i-mesh" viewBox="0 0 16 16"><path d="M8 2 14 13H2L8 2Z"/><path d="M5 7.5h6M8 2v11M6.5 13 11 7.5M9.5 13 5 7.5"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 16 16"><path d="M2 5V3a1 1 0 0 1 1-1h2M11 2h2a1 1 0 0 1 1 1v2M14 11v2a1 1 0 0 1-1 1h-2M5 14H3a1 1 0 0 1-1-1v-2"/><rect x="5.2" y="5.2" width="5.6" height="5.6" rx="0.8"/></symbol>
+  <symbol id="i-ortho" viewBox="0 0 16 16"><rect x="2.5" y="4.5" width="9" height="9" rx="1"/><path d="M2.5 4.5 5 2h9v9l-2.5 2.5M5 2l-2.5 2.5M14 2l-2.5 2.5"/></symbol>
+  <symbol id="i-persp" viewBox="0 0 16 16"><path d="M2 13 5.5 3h5L14 13H2Z"/><path d="M5.5 3 8 13M10.5 3 8 13" opacity=".55"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.7 8S4 3.8 8 3.8 14.3 8 14.3 8 12 12.2 8 12.2 1.7 8 1.7 8Z"/><circle cx="8" cy="8" r="2"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 16 16"><path d="M3.3 4.6C2.1 5.9 1.7 8 1.7 8S4 12.2 8 12.2c1.1 0 2.1-.3 2.9-.8M6.4 4.1C6.9 3.9 7.4 3.8 8 3.8c4 0 6.3 4.2 6.3 4.2s-.6 1.1-1.7 2.2"/><path d="m2.5 2.5 11 11"/></symbol>
+  <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3"/><path d="M8 7.3v3.5"/><circle cx="8" cy="5.1" r="0.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 16 16"><path d="M9.5 2 14 6.5l-3 1-2 4-1.2-3.3L4.5 5l4-1L9.5 2Z"/><path d="M6.6 9.4 2.5 13.5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 1.3v1.6M8 13.1v1.6M1.3 8h1.6M13.1 8h1.6M3.3 3.3l1.1 1.1M11.6 11.6l1.1 1.1M12.7 3.3l-1.1 1.1M4.4 11.6l-1.1 1.1"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.5 9.7A6 6 0 0 1 6.3 2.5a6 6 0 1 0 7.2 7.2Z"/></symbol>
+  <symbol id="i-part" viewBox="0 0 16 16"><path d="M8 2.2 13.5 5v6L8 13.8 2.5 11V5L8 2.2Z"/><path d="M2.5 5 8 7.8 13.5 5M8 7.8v6" opacity=".55"/></symbol>
+  <symbol id="i-asm" viewBox="0 0 16 16"><rect x="2" y="6.5" width="7.5" height="7.5" rx="1.2"/><path d="M5.5 6.5V3.8A1.3 1.3 0 0 1 6.8 2.5H12.7A1.3 1.3 0 0 1 14 3.8v5.9a1.3 1.3 0 0 1-1.3 1.3H9.5"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2.2 14.8 13.2H1.2L8 2.2Z"/><path d="M8 6.5v3.2"/><circle cx="8" cy="11.6" r="0.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></symbol>
+  <symbol id="i-zero" viewBox="0 0 16 16"><path d="M9.8 2.5h3.7v3.7M13.5 2.5 9.3 6.7M6.2 13.5H2.5V9.8M2.5 13.5l4.2-4.2"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 16 16"><path d="M2 4.5h6M11 4.5h3M2 11.5h3M8 11.5h6"/><circle cx="9.5" cy="4.5" r="1.7"/><circle cx="6.5" cy="11.5" r="1.7"/></symbol>
+  <symbol id="i-tray" viewBox="0 0 16 16"><path d="M8 2.5v7M5.2 6.7 8 9.5l2.8-2.8"/><path d="M2 9.5v2.5a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V9.5"/></symbol>
+  <symbol id="i-clear" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1M4.5 4.5l.7 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.7-8"/></symbol>
+</svg>
+
+<!-- ======== fake macOS system menu bar ======== -->
+<div class="macbar" id="macbar">
+  <span class="apple"></span>
+  <span class="mb-item appname" data-menu="menuFile">Cadly</span>
+  <span class="mb-item" data-menu="menuFile">File</span>
+  <span class="mb-item" data-menu="menuView">View</span>
+  <span class="mb-item" data-menu="menuWindow">Window</span>
+  <span class="mb-item" data-menu="menuHelp">Help</span>
+  <span class="mb-right"><span>Graphite concept — HTML preview</span><span id="clock"></span></span>
+</div>
+
+<div class="stage">
+<div class="window" id="appwin">
+
+  <!-- ======== unified toolbar ======== -->
+  <div class="toolbar">
+    <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+
+    <div class="tb-zone left">
+      <button class="icon-btn" id="tglSidebar" data-tip="Hide Sidebar" aria-pressed="true">
+        <svg class="ic s18"><use href="#i-panel-left"/></svg></button>
+      <div class="split-btn" id="openSplit">
+        <button id="btnOpen" data-tip="Open CAD File" data-key="⌘O">
+          <svg class="ic"><use href="#i-folder-open"/></svg>Open</button>
+        <button class="chev" id="btnOpenChev" data-tip="Open Recent">
+          <svg class="ic s14"><use href="#i-chev-d"/></svg></button>
+      </div>
+    </div>
+
+    <div class="capsule" id="capsule">
+      <div class="l1"><span class="doc-name" id="docName">No file loaded</span></div>
+      <div class="l2 num" id="docStats">drop a STEP or IGES file</div>
+      <div class="prog" id="capProg"></div>
+      <button class="cancel" id="capCancel" data-tip="Cancel Import">
+        <svg class="ic s14"><use href="#i-x"/></svg></button>
+    </div>
+
+    <div class="tb-zone right">
+      <div class="seg" id="segMode" role="tablist">
+        <button id="segShaded" class="active" data-tip="Shaded surfaces" data-key="W">Shaded</button>
+        <button id="segWire" data-tip="BRep wireframe — analytical edges, refined on zoom" data-key="W">Wireframe</button>
+      </div>
+      <div class="chip-group">
+        <button class="chip on" id="chipEdges" data-tip="Overlay BRep edges" data-key="E">
+          <svg class="ic s14"><use href="#i-edges"/></svg><span class="cl">Edges</span></button>
+        <button class="chip" id="chipMesh" data-tip="Debug: draw every triangle of the tessellation" data-key="T">
+          <svg class="ic s14"><use href="#i-mesh"/></svg><span class="cl">Mesh</span></button>
+      </div>
+      <div class="tb-sep"></div>
+      <button class="icon-btn" id="btnProj" data-tip="Perspective projection — orthographic is the CAD default" data-key="P">
+        <svg class="ic s18" id="projIcon"><use href="#i-ortho"/></svg></button>
+      <button class="icon-btn" id="btnViews" data-tip="Standard Views" data-key="1–7">
+        <svg class="ic s18"><use href="#i-cube"/></svg></button>
+      <button class="icon-btn" id="btnFit" data-tip="Fit to Model" data-key="F">
+        <svg class="ic s18"><use href="#i-fit"/></svg></button>
+      <div class="tb-sep"></div>
+      <button class="icon-btn" id="btnTheme" data-tip="Appearance">
+        <svg class="ic s18" id="themeIcon"><use href="#i-sun"/></svg></button>
+      <button class="icon-btn" id="tglStrip" data-tip="Show Diagnostics" aria-pressed="false">
+        <svg class="ic s18"><use href="#i-panel-bottom"/></svg><span class="badge-dot"></span></button>
+      <button class="icon-btn checked" id="tglInsp" data-tip="Hide Inspector" aria-pressed="true">
+        <svg class="ic s18"><use href="#i-panel-right"/></svg></button>
+      <button class="icon-btn" id="btnZero" data-tip="Zero-chrome mode" data-key="⌃.">
+        <svg class="ic s18"><use href="#i-zero"/></svg></button>
+    </div>
+  </div>
+
+  <!-- ======== main row ======== -->
+  <div class="main">
+
+    <aside class="sidebar" id="sidebar">
+      <div class="panel-head">
+        <span class="sect">Model</span>
+        <div class="filter-wrap">
+          <div class="filter-field" id="filterField">
+            <svg class="ic s14"><use href="#i-search"/></svg>
+            <input id="filterInput" placeholder="Filter parts" spellcheck="false">
+          </div>
+        </div>
+      </div>
+      <div class="tree" id="tree"></div>
+    </aside>
+
+    <div class="vsplit" id="splitL"></div>
+
+    <div class="center">
+      <div class="viewport" id="vp">
+        <canvas id="cv"></canvas>
+
+        <div class="hud" id="hud">
+          <button class="icon-btn" id="hudViews" data-tip="Standard Views" data-key="1–7">
+            <svg class="ic s18"><use href="#i-cube"/></svg></button>
+          <button class="icon-btn" id="hudFit" data-tip="Fit to Model" data-key="F">
+            <svg class="ic s18"><use href="#i-fit"/></svg></button>
+          <button class="icon-btn" id="hudProj" data-tip="Orthographic ↔ Perspective" data-key="P">
+            <svg class="ic s18" id="projIcon2"><use href="#i-ortho"/></svg></button>
+        </div>
+
+        <div class="drop-ring"><span class="lbl">Drop to import</span></div>
+
+        <div class="welcome" id="welcome" style="display:none">
+          <div class="card">
+            <div class="appglyph"><svg class="ic" style="width:26px;height:26px"><use href="#i-cube"/></svg></div>
+            <h2>Drop a STEP or IGES file</h2>
+            <div class="sub">or</div>
+            <button class="open-big" id="welcomeOpen">Open CAD File…</button>
+            <div class="recents" id="welcomeRecents"></div>
+          </div>
+        </div>
+
+        <div class="hint" id="hint">
+          <span><b>Right-drag</b> orbit</span><span><b>Middle-drag</b> pan</span>
+          <span><b>Scroll</b> zoom</span><span><b>1–7</b> views</span>
+          <span><b>F</b> fit&nbsp;·&nbsp;<b>W/E/T/P</b> modes</span>
+        </div>
+      </div>
+
+      <div class="hsplit" id="splitB"></div>
+
+      <div class="strip collapsed" id="strip">
+        <div class="strip-head">
+          <div class="seg" id="segStrip">
+            <button id="segSummary" class="active">Summary</button>
+            <button id="segLog">Log</button>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:4px;align-items:center">
+            <button class="icon-btn" id="logClear" data-tip="Clear Log" style="width:24px;height:24px">
+              <svg class="ic s14"><use href="#i-clear"/></svg></button>
+            <button class="icon-btn" id="stripClose" data-tip="Collapse" style="width:24px;height:24px">
+              <svg class="ic s14"><use href="#i-chev-d"/></svg></button>
+          </div>
+        </div>
+        <div class="strip-body">
+          <div class="summary-grid num" id="sumGrid"></div>
+          <div class="log mono num" id="logBody" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="vsplit" id="splitR"></div>
+
+    <aside class="inspector" id="inspector">
+      <div class="insp-tabs">
+        <div class="seg icons" id="segInsp">
+          <button id="tabProps" class="active" data-tip="Properties">
+            <svg class="ic"><use href="#i-info"/></svg></button>
+          <button id="tabDisplay" data-tip="Display">
+            <svg class="ic"><use href="#i-sliders"/></svg></button>
+          <button id="tabImport" data-tip="Import">
+            <svg class="ic"><use href="#i-tray"/></svg></button>
+        </div>
+      </div>
+      <div class="insp-pages">
+
+        <div class="insp-page active" id="pageProps"></div>
+
+        <div class="insp-page" id="pageDisplay">
+          <div class="group">
+            <div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Mode</div>
+            <div class="gbody">
+              <div class="frow"><label>Surface</label>
+                <div class="seg" id="segMode2" style="height:24px">
+                  <button id="segShaded2" class="active">Shaded</button><button id="segWire2">Wireframe</button>
+                </div></div>
+              <label class="checkline indent"><input type="checkbox" id="cbEdges" checked> Show edges <span class="kbd">E</span></label>
+              <label class="checkline indent"><input type="checkbox" id="cbMesh"> Show triangle mesh <span class="kbd">T</span></label>
+            </div>
+          </div>
+          <div class="group">
+            <div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Quality</div>
+            <div class="gbody">
+              <div class="frow"><label>Edge intensity</label>
+                <input type="range" id="slEdge" min="0" max="100" value="65">
+                <span class="unit num" id="slEdgeVal" style="width:30px">65%</span></div>
+              <div class="frow"><label>Anti-aliasing</label>
+                <select id="selMsaa"><option>Off</option><option>2×</option><option selected>4×</option><option>8×</option></select>
+                <span class="unit">MSAA</span></div>
+              <label class="checkline indent"><input type="checkbox" id="cbScaleBar" checked> Scale bar</label>
+              <label class="checkline indent"><input type="checkbox" id="cbAxes" checked> Axes triad</label>
+            </div>
+          </div>
+          <div class="group">
+            <div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Camera</div>
+            <div class="gbody">
+              <label class="checkline indent"><input type="radio" name="proj" id="rbOrtho" checked> Orthographic</label>
+              <label class="checkline indent"><input type="radio" name="proj" id="rbPersp"> Perspective <span class="kbd">P</span></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="insp-page" id="pageImport">
+          <div style="display:flex;justify-content:flex-end;margin-bottom:2px">
+            <button class="txtbtn" id="btnResetOpts">Reset to Defaults</button>
+          </div>
+          <div class="group">
+            <div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Tessellation</div>
+            <div class="gbody">
+              <div class="frow"><label>Mode</label>
+                <select id="optMode"><option>Visual-relative</option><option>Absolute</option></select></div>
+              <div class="frow"><label>Linear deflection</label>
+                <input type="number" id="optLinear" value="0.1000" step="0.1" min="0.0001"><span class="unit">mm</span></div>
+              <div class="frow"><label>Angular deflection</label>
+                <input type="number" id="optAngular" value="0.350" step="0.05"><span class="unit">rad</span></div>
+              <div class="frow"><label>Target error</label>
+                <input type="number" id="optTarget" value="0.75" step="0.25"><span class="unit">px</span></div>
+              <div class="frow"><label>Reference pixels</label>
+                <input type="number" id="optRefPx" value="1500" step="250"></div>
+              <div class="frow"><label>Min deflection</label>
+                <input type="number" id="optMinDefl" value="0.010000" step="0.01"><span class="unit">mm</span></div>
+              <div class="frow"><label>Max relative</label>
+                <input type="number" id="optMaxRel" value="0.001000" step="0.0001"></div>
+              <label class="checkline indent"><input type="checkbox" id="optRelative" disabled> Relative deflection</label>
+              <label class="checkline indent"><input type="checkbox" id="optParallel" checked> Parallel meshing</label>
+            </div>
+          </div>
+          <div class="group">
+            <div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Healing</div>
+            <div class="gbody">
+              <label class="checkline indent"><input type="checkbox" id="optHeal" checked> Heal geometry</label>
+              <label class="checkline indent"><input type="checkbox" id="optWeld"> Weld vertices</label>
+            </div>
+          </div>
+          <div class="group">
+            <div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Metadata</div>
+            <div class="gbody">
+              <label class="checkline indent"><input type="checkbox" id="optColors" checked> Load colours</label>
+              <label class="checkline indent"><input type="checkbox" id="optNames" checked> Load names</label>
+              <label class="checkline indent"><input type="checkbox" id="optHier" checked> Load assembly hierarchy</label>
+            </div>
+          </div>
+          <div class="group">
+            <label class="checkline"><input type="checkbox" id="optReview"> Review options before each import</label>
+            <div style="height:8px"></div>
+            <button class="btn full" id="btnReimport">Re-import Current File</button>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+  </div>
+
+  <!-- ======== status bar ======== -->
+  <div class="statusbar">
+    <span class="file"><svg class="ic s14"><use href="#i-folder"/></svg>
+      <span class="nm" id="statusFile" data-tip="">No file loaded</span></span>
+    <div class="right">
+      <span class="status-badge num" id="msaaBadge" data-tip="Anti-aliasing — click to open Display">MSAA 4×</span>
+      <span class="num" id="statusCounts"></span>
+      <span class="frame-ms num idle" id="frameMs">idle</span>
+      <span class="lvl-dot" id="lvlDot" data-tip="Log level: info"></span>
+    </div>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+</div><!-- /window -->
+</div><!-- /stage -->
+
+<!-- ======== menus / popovers (positioned by JS) ======== -->
+<div class="menu" id="menuFile"></div>
+<div class="menu" id="menuView"></div>
+<div class="menu" id="menuWindow"></div>
+<div class="menu" id="menuHelp"></div>
+<div class="menu" id="menuOpen"></div>
+<div class="menu views-pop" id="popViews"></div>
+<div class="menu pop-card" id="popPath"></div>
+<div class="menu info-pop" id="popInfo"></div>
+<div class="menu pop-card" id="popAbout"></div>
+<div class="menu pop-card" id="popShortcuts"></div>
+<div class="menu pop-card" id="popPreflight"></div>
+
+<div class="tooltip" id="tooltip"><span id="tipText"></span><span class="kbd" id="tipKey" style="display:none"></span></div>
+
+<script>
+/* ============================================================
+   Cadly Graphite prototype — interactions + software renderer.
+   Vanilla JS, no dependencies. The "renderer" mimics what the
+   real GLRenderer draws: gradient background, flat-shaded PBR-ish
+   surfaces, BRep feature edges, triangle-mesh debug overlay,
+   scale bar (fixed length, live label), axes triad, pivot marker.
+   Event-driven repaints only — like the real app.
+   ============================================================ */
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const $$ = sel => Array.from(document.querySelectorAll(sel));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const fmt = n => n.toLocaleString("en-US");
+const D2R = Math.PI / 180;
+
+/* ---------------- vec3 helpers ---------------- */
+const vadd = (a,b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
+const vsub = (a,b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+const vscale = (a,s) => [a[0]*s, a[1]*s, a[2]*s];
+const vdot = (a,b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const vcross = (a,b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const vlen = a => Math.hypot(a[0], a[1], a[2]);
+const vnorm = a => { const l = vlen(a) || 1; return [a[0]/l, a[1]/l, a[2]/l]; };
+
+/* ---------------- mesh builders (Z-up, mm) ---------------- */
+function newMesh(name) { return { name, verts: [], tris: [] }; }
+function pushV(m, x, y, z) { m.verts.push([x, y, z]); return m.verts.length - 1; }
+function pushT(m, a, b, c) { m.tris.push(a, b, c); }
+
+function addBox(m, cx, cy, z0, w, d, h) {
+  const x0 = cx - w/2, x1 = cx + w/2, y0 = cy - d/2, y1 = cy + d/2, z1 = z0 + h;
+  const v = [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],
+             [x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]].map(p => pushV(m, ...p));
+  const q = (a,b,c,d2) => { pushT(m, v[a], v[b], v[c]); pushT(m, v[a], v[c], v[d2]); };
+  q(0,1,5,4); q(1,2,6,5); q(2,3,7,6); q(3,0,4,7); q(4,5,6,7); q(3,2,1,0);
+}
+function addCylinder(m, cx, cy, z0, r, h, n, caps = true) {
+  const z1 = z0 + h, lo = [], hi = [];
+  for (let i = 0; i < n; i++) {
+    const a = i / n * Math.PI * 2, x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+    lo.push(pushV(m, x, y, z0)); hi.push(pushV(m, x, y, z1));
+  }
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    pushT(m, lo[i], lo[j], hi[j]); pushT(m, lo[i], hi[j], hi[i]);
+  }
+  if (caps) {
+    const ct = pushV(m, cx, cy, z1), cb = pushV(m, cx, cy, z0);
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      pushT(m, hi[i], hi[j], ct); pushT(m, lo[j], lo[i], cb);
+    }
+  }
+}
+function addTube(m, cx, cy, z0, ro, ri, h, n) {
+  const z1 = z0 + h, oL = [], oH = [], iL = [], iH = [];
+  for (let i = 0; i < n; i++) {
+    const a = i / n * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+    oL.push(pushV(m, cx + ro*c, cy + ro*s, z0)); oH.push(pushV(m, cx + ro*c, cy + ro*s, z1));
+    iL.push(pushV(m, cx + ri*c, cy + ri*s, z0)); iH.push(pushV(m, cx + ri*c, cy + ri*s, z1));
+  }
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    pushT(m, oL[i], oL[j], oH[j]); pushT(m, oL[i], oH[j], oH[i]);    // outer wall
+    pushT(m, iL[j], iL[i], iH[i]); pushT(m, iL[j], iH[i], iH[j]);    // inner wall
+    pushT(m, oH[i], oH[j], iH[j]); pushT(m, oH[i], iH[j], iH[i]);    // top ring
+    pushT(m, oL[j], oL[i], iL[i]); pushT(m, oL[j], iL[i], iL[j]);    // bottom ring
+  }
+}
+/* triangular rib: 2D profile in (y,z), extruded x0..x1 */
+function addRib(m, x0, x1, prof) {
+  const a = prof.map(p => pushV(m, x0, p[0], p[1]));
+  const b = prof.map(p => pushV(m, x1, p[0], p[1]));
+  pushT(m, a[0], a[1], a[2]); pushT(m, b[2], b[1], b[0]);
+  for (let i = 0; i < 3; i++) {
+    const j = (i + 1) % 3;
+    pushT(m, a[i], b[i], b[j]); pushT(m, a[i], b[j], a[j]);
+  }
+}
+
+/* segment count from linear deflection (chord-error formula, like OCCT) */
+const segsFor = (r, defl) =>
+  2 * Math.round(clamp(Math.PI / Math.acos(clamp(1 - defl / r, -1, 1)), 8, 96) / 2);
+
+/* ---------------- sample "files" ---------------- */
+const MATS = {
+  alu:   { name: "Aluminium 6061, machined", rgb: [0.620, 0.648, 0.700] },
+  steel: { name: "Steel, polished",          rgb: [0.545, 0.580, 0.660] },
+  black: { name: "Steel, black oxide",       rgb: [0.300, 0.310, 0.340] },
+  iron:  { name: "Cast iron GG25",           rgb: [0.520, 0.545, 0.560] },
+};
+
+function buildFlangeBracket(defl) {
+  const nBoss = segsFor(21, defl), nBolt = 6;
+  const mk = (name, mat, fill) => { const m = newMesh(name); fill(m); m.mat = mat; return m; };
+  const base  = mk("base_plate",  "alu",  m => addBox(m, 0, 0, 0, 120, 80, 12));
+  const boss  = mk("hub_boss_Ø42","steel",m => addTube(m, 0, -8, 12, 21, 12, 26, nBoss));
+  const back  = mk("back_plate",  "alu",  m => addBox(m, 0, 33, 12, 120, 10, 70));
+  const ribL  = mk("rib_gusset",  "alu",  m => addRib(m, -52, -44, [[28,82],[28,12],[-14,12]]));
+  const ribR  = mk("rib_gusset",  "alu",  m => addRib(m,  44,  52, [[28,82],[28,12],[-14,12]]));
+  const bolt  = (x, y) => mk("bolt_hex_M8", "black",
+    m => { addCylinder(m, x, y, 12, 7, 6, nBolt); addCylinder(m, x, y, 18, 3.6, 3, 12); });
+  return {
+    file: "flange_bracket.step", path: "~/parts/brackets/flange_bracket.step",
+    kind: "STEP AP242", faces: 38,
+    tree: {
+      name: "flange_bracket", label: "#1 (SHAPE)", children: [
+        { name: "base_plate",   label: "#12 (NAUO)", mesh: base },
+        { name: "hub_boss_Ø42", label: "#27 (NAUO)", mesh: boss },
+        { name: "frame", label: "#33 (SHAPE)", children: [
+          { name: "back_plate", label: "#34 (NAUO)", mesh: back },
+          { name: "rib_left",   label: "#41 (NAUO)", mesh: ribL },
+          { name: "rib_right",  label: "#42 (NAUO)", mesh: ribR },
+        ]},
+        { name: "hardware", label: "#50 (SHAPE)", children: [
+          { name: "bolt_1", label: "#51 (NAUO)", mesh: bolt(-48, -26) },
+          { name: "bolt_2", label: "#52 (NAUO)", mesh: bolt( 48, -26) },
+          { name: "bolt_3", label: "#53 (NAUO)", mesh: bolt(-48,  18) },
+          { name: "bolt_4", label: "#54 (NAUO)", mesh: bolt( 48,  18) },
+        ]},
+      ],
+    },
+  };
+}
+function buildGearHousing(defl) {
+  const n1 = segsFor(62, defl), n2 = segsFor(45, defl), n3 = segsFor(20, defl);
+  const mk = (name, mat, fill) => { const m = newMesh(name); fill(m); m.mat = mat; return m; };
+  const flange = mk("flange_Ø124", "iron", m => addTube(m, 0, 0, 0, 62, 38, 8, n1));
+  const barrel = mk("barrel",      "iron", m => addTube(m, 0, 0, 8, 45, 38, 50, n2));
+  const top    = mk("top_plate",   "iron", m => addTube(m, 0, 0, 58, 45, 11, 6, n2));
+  const neck   = mk("bearing_neck","steel",m => addTube(m, 0, 0, 64, 20, 11, 12, n3));
+  const kids = [
+    { name: "flange_Ø124",  label: "#8 (NAUO)",  mesh: flange },
+    { name: "barrel",       label: "#9 (NAUO)",  mesh: barrel },
+    { name: "top_plate",    label: "#10 (NAUO)", mesh: top },
+    { name: "bearing_neck", label: "#11 (NAUO)", mesh: neck },
+  ];
+  const hw = [];
+  for (let i = 0; i < 6; i++) {
+    const a = i / 6 * Math.PI * 2, x = 53 * Math.cos(a), y = 53 * Math.sin(a);
+    hw.push({ name: "bolt_" + (i + 1), label: "#2" + i + " (NAUO)",
+      mesh: mk("bolt_hex_M10", "black",
+        m => { addCylinder(m, x, y, 8, 8, 7, 6); addCylinder(m, x, y, 15, 4.2, 3.5, 12); }) });
+  }
+  kids.push({ name: "hardware", label: "#19 (SHAPE)", children: hw });
+  return {
+    file: "gear_housing.step", path: "~/parts/housings/gear_housing.step",
+    kind: "STEP AP214", faces: 27,
+    tree: { name: "gear_housing", label: "#1 (SHAPE)", children: kids },
+  };
+}
+const FILES = {
+  "flange_bracket.step":   { build: buildFlangeBracket },
+  "gear_housing.step":     { build: buildGearHousing },
+  "corrupted_export.iges": { build: null, path: "~/inbox/corrupted_export.iges" }, // fails
+};
+
+/* ---------------- scene prep: ids, bounds, feature edges ---------------- */
+let nodeSeq = 0;
+function prepScene(def) {
+  const flat = [];
+  (function walk(n, parent) {
+    n.id = "n" + (nodeSeq++); n.parent = parent; n.visible = true;
+    flat.push(n);
+    if (n.mesh) prepMesh(n.mesh);
+    (n.children || []).forEach(c => walk(c, n));
+  })(def.tree, null);
+  def.flat = flat;
+  def.totals = { nodes: flat.length, tris: 0, verts: 0 };
+  flat.forEach(n => { if (n.mesh) {
+    def.totals.tris += n.mesh.tris.length / 3; def.totals.verts += n.mesh.verts.length; } });
+  return def;
+}
+function prepMesh(m) {
+  if (m.prepped) return; m.prepped = true;
+  const nt = m.tris.length / 3;
+  m.normals = new Array(nt); m.bounds = [[1e9,1e9,1e9], [-1e9,-1e9,-1e9]];
+  m.verts.forEach(v => { for (let k = 0; k < 3; k++) {
+    m.bounds[0][k] = Math.min(m.bounds[0][k], v[k]);
+    m.bounds[1][k] = Math.max(m.bounds[1][k], v[k]); } });
+  const keyOf = v => v.map(x => Math.round(x * 100)).join(",");
+  const edgeMap = new Map();
+  for (let t = 0; t < nt; t++) {
+    const i0 = m.tris[t*3], i1 = m.tris[t*3+1], i2 = m.tris[t*3+2];
+    m.normals[t] = vnorm(vcross(vsub(m.verts[i1], m.verts[i0]), vsub(m.verts[i2], m.verts[i0])));
+    const ks = [keyOf(m.verts[i0]), keyOf(m.verts[i1]), keyOf(m.verts[i2])];
+    const ids = [i0, i1, i2];
+    for (let e = 0; e < 3; e++) {
+      const a = e, b = (e + 1) % 3;
+      const ek = ks[a] < ks[b] ? ks[a] + "|" + ks[b] : ks[b] + "|" + ks[a];
+      let rec = edgeMap.get(ek);
+      if (!rec) { rec = { a: ids[a], b: ids[b], tris: [] }; edgeMap.set(ek, rec); }
+      rec.tris.push(t);
+    }
+  }
+  // feature edge: boundary, or dihedral angle > 25°
+  const cosThresh = Math.cos(25 * D2R);
+  m.featureEdges = [];   // {a, b, t1, t2}
+  edgeMap.forEach(rec => {
+    const feature = rec.tris.length !== 2 ||
+      vdot(m.normals[rec.tris[0]], m.normals[rec.tris[1]]) < cosThresh;
+    if (feature) m.featureEdges.push({ a: rec.a, b: rec.b, t1: rec.tris[0], t2: rec.tris[1] ?? -1 });
+  });
+}
+function effVisible(n) { for (let p = n; p; p = p.parent) if (!p.visible) return false; return true; }
+
+/* ---------------- camera (matches app conventions) ---------------- */
+const cam = { yaw: 30, pitch: -22, target: [0, 0, 30], dist: 320, persp: false };
+const TAN_HALF_FOV = Math.tan(22.5 * D2R);
+function camBasis() {
+  const a = cam.yaw * D2R, e = -cam.pitch * D2R;
+  const off = [Math.sin(a)*Math.cos(e), -Math.cos(a)*Math.cos(e), Math.sin(e)];
+  const eye = vadd(cam.target, vscale(off, cam.dist));
+  const f = vnorm(vscale(off, -1));
+  let r = vcross(f, [0, 0, 1]);
+  if (vlen(r) < 1e-4) r = [Math.cos(a), Math.sin(a), 0];
+  r = vnorm(r);
+  const u = vcross(r, f);
+  return { eye, f, r, u };
+}
+
+/* ---------------- display-mode model (single source of truth) ---------------- */
+const disp = {
+  surface: "shaded",            // 'shaded' | 'wire'
+  edges: true, mesh: false,     // chips (remembered while in wireframe)
+  edgeIntensity: 0.65, msaa: "4×", scaleBar: true, axes: true,
+};
+const docState = { def: null, selected: null, solo: null, recents: [], importing: false };
+
+/* ---------------- renderer ---------------- */
+const cv = $("cv"), ctx = cv.getContext("2d");
+let lastInteract = 0, idleTimer = null, orbiting = false;
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+function render() {
+  const t0 = performance.now();
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // background gradient (DisplayMode.background_top/bottom — theme-pushed)
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, cssVar("--vp-top")); g.addColorStop(1, cssVar("--vp-bot"));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+
+  const def = docState.def;
+  if (def) {
+    const { eye, f, r, u } = camBasis();
+    const cx = w / 2, cy = h / 2;
+    const sOrtho = (h / 2) / (cam.dist * TAN_HALF_FOV);
+    const sPersp = (h / 2) / TAN_HALF_FOV;
+    const project = p => {
+      const d = vsub(p, eye);
+      const x = vdot(d, r), y = vdot(d, u), z = vdot(d, f);
+      const s = cam.persp ? sPersp / Math.max(z, 1) : sOrtho;
+      return [cx + x * s, cy - y * s, z];
+    };
+
+    // gather draw list
+    const list = [];  // {depth, node, mesh, t, pts, fill}
+    const accent = cssVar("--accent");
+    const keyL = vnorm([0.42, 0.62, -0.66]), fillL = vnorm([-0.5, 0.1, -0.5]);
+    for (const n of def.flat) {
+      if (!n.mesh || !effVisible(n)) continue;
+      const m = n.mesh, proj = m.verts.map(project);
+      m._proj = proj;
+      const sel = docState.selected === n;
+      const base = MATS[m.mat].rgb;
+      const nt = m.tris.length / 3;
+      for (let t = 0; t < nt; t++) {
+        const p0 = proj[m.tris[t*3]], p1 = proj[m.tris[t*3+1]], p2 = proj[m.tris[t*3+2]];
+        const depth = (p0[2] + p1[2] + p2[2]) / 3;
+        if (depth <= 0.5) continue;
+        let fillStyle = null;
+        if (disp.surface === "shaded") {
+          const nrm = m.normals[t];
+          let nv = [vdot(nrm, r), vdot(nrm, u), vdot(nrm, f)];
+          if (nv[2] > 0) nv = vscale(nv, -1);             // two-sided
+          const diff = Math.max(0, vdot(nv, keyL)) * 0.58 +
+                       Math.max(0, vdot(nv, fillL)) * 0.18 + 0.30;
+          const rim = Math.pow(1 - Math.abs(nv[2]), 2) * 0.10;
+          let cr = base[0] * diff + rim, cg = base[1] * diff + rim, cb = base[2] * diff + rim;
+          if (sel) { cr = cr * 0.72 + 0.28 * 0.31; cg = cg * 0.72 + 0.28 * 0.53; cb = cb * 0.72 + 0.28 * 1.0; }
+          fillStyle = `rgb(${Math.round(clamp(cr,0,1)*255)},${Math.round(clamp(cg,0,1)*255)},${Math.round(clamp(cb,0,1)*255)})`;
+        }
+        list.push({ depth, m, t, p0, p1, p2, fillStyle, sel });
+      }
+    }
+    list.sort((a, b) => b.depth - a.depth);
+
+    if (disp.surface === "shaded") {
+      // assign each feature edge to its nearest-drawn adjacent triangle
+      const rank = new Map();
+      list.forEach((it, i) => rank.set(it.m.name + "/" + it.t, i));
+      const edgeBuckets = new Map();    // listIndex -> edges[]
+      const ink = `rgba(16,18,22,${disp.edgeIntensity})`;
+      const inkSel = accent;
+      for (const n of def.flat) {
+        if (!n.mesh || !effVisible(n)) continue;
+        const m = n.mesh;
+        for (const e of m.featureEdges) {
+          const r1 = rank.get(m.name + "/" + e.t1), r2 = e.t2 >= 0 ? rank.get(m.name + "/" + e.t2) : undefined;
+          const owner = Math.max(r1 ?? -1, r2 ?? -1);
+          if (owner < 0) continue;
+          let b = edgeBuckets.get(owner); if (!b) { b = []; edgeBuckets.set(owner, b); }
+          b.push(e);
+        }
+      }
+      for (let i = 0; i < list.length; i++) {
+        const it = list[i];
+        ctx.beginPath();
+        ctx.moveTo(it.p0[0], it.p0[1]); ctx.lineTo(it.p1[0], it.p1[1]); ctx.lineTo(it.p2[0], it.p2[1]);
+        ctx.closePath();
+        ctx.fillStyle = it.fillStyle; ctx.fill();
+        if (disp.mesh) {                       // triangle-mesh debug overlay
+          ctx.strokeStyle = "rgba(120,160,255,0.5)"; ctx.lineWidth = 0.6; ctx.stroke();
+        }
+        if (disp.edges) {
+          const bucket = edgeBuckets.get(i);
+          if (bucket) {
+            ctx.strokeStyle = it.sel ? inkSel : ink; ctx.lineWidth = it.sel ? 1.6 : 1.1;
+            ctx.beginPath();
+            for (const e of bucket) {
+              const a = it.m._proj[e.a], b = it.m._proj[e.b];
+              ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+            }
+            ctx.stroke();
+          }
+        }
+      }
+    } else {
+      // analytic wireframe: BRep edges only, see-through (matches edge_lods behavior)
+      ctx.lineWidth = 1.1;
+      for (const n of def.flat) {
+        if (!n.mesh || !effVisible(n)) continue;
+        const m = n.mesh;
+        ctx.strokeStyle = docState.selected === n ? accent : `rgba(16,18,22,${Math.max(0.5, disp.edgeIntensity)})`;
+        ctx.beginPath();
+        for (const e of m.featureEdges) {
+          const a = m._proj[e.a], b = m._proj[e.b];
+          ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+        }
+        ctx.stroke();
+      }
+    }
+
+    if (disp.scaleBar && w > 220 && h > 120) drawScaleBar(w, h, sOrtho);
+    if (disp.axes) drawTriad(w, h, r, u, f);
+    if (orbiting) drawPivot(project(cam.target));
+  }
+
+  // frame-time readout (event-driven, like the real renderer)
+  const ms = performance.now() - t0;
+  const fr = $("frameMs");
+  fr.textContent = ms.toFixed(1) + " ms"; fr.classList.remove("idle");
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => { fr.classList.add("idle"); fr.textContent = "idle"; }, 600);
+}
+
+function drawScaleBar(w, h, sOrtho) {
+  // fixed pixel length; only the LABEL changes with zoom (matches GLRenderer)
+  const px = clamp(0.14 * w, 70, 120);
+  const wpp = 1 / sOrtho;                      // world (mm) per pixel at focal plane
+  let v = px * wpp, unit = "mm";
+  if (v >= 1000) { v /= 1000; unit = "m"; }
+  else if (v < 0.001) { v *= 1e6; unit = "nm"; }
+  else if (v < 1) { v *= 1000; unit = "µm"; }
+  const label = (Math.round(v * 1000) / 1000).toString() + unit;
+  const x = 18, y = h - 22;
+  ctx.lineCap = "round";
+  for (const pass of [
+    { c: "rgba(245,246,248,0.85)", lw: 4.4 }, { c: "rgba(13,13,15,0.9)", lw: 2.2 }]) {
+    ctx.strokeStyle = pass.c; ctx.lineWidth = pass.lw;
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x + px, y);
+    ctx.moveTo(x, y - 4); ctx.lineTo(x, y + 4);
+    ctx.moveTo(x + px, y - 4); ctx.lineTo(x + px, y + 4);
+    ctx.stroke();
+  }
+  ctx.font = "500 12px -apple-system, 'SF Pro Text', Inter, sans-serif";
+  ctx.lineWidth = 3; ctx.strokeStyle = "rgba(245,246,248,0.85)";
+  ctx.strokeText(label, x + px + 8, y + 4);
+  ctx.fillStyle = "rgba(13,13,15,0.92)"; ctx.fillText(label, x + px + 8, y + 4);
+}
+function drawTriad(w, h, r, u, f) {
+  const ox = w - 46, oy = h - 46, L = 21;
+  const axes = [
+    { v: [1,0,0], c: "#E96B72", l: "X" },
+    { v: [0,1,0], c: "#2BB5A0", l: "Y" },
+    { v: [0,0,1], c: "#5086FF", l: "Z" },
+  ].map(a => ({ ...a, x: vdot(a.v, r), y: -vdot(a.v, u), z: vdot(a.v, f) }))
+   .sort((a, b) => b.z - a.z);
+  ctx.lineCap = "round";
+  ctx.font = "600 10px -apple-system, 'SF Pro Text', Inter, sans-serif";
+  for (const a of axes) {
+    const tx = ox + a.x * L, ty = oy + a.y * L;
+    ctx.strokeStyle = "rgba(245,246,248,0.7)"; ctx.lineWidth = 3.6;
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.strokeStyle = a.c; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(tx, ty); ctx.stroke();
+    const lx = ox + a.x * (L + 9) - 3, ly = oy + a.y * (L + 9) + 3.5;
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(245,246,248,0.8)";
+    ctx.strokeText(a.l, lx, ly);
+    ctx.fillStyle = a.c; ctx.fillText(a.l, lx, ly);
+  }
+}
+function drawPivot(p) {
+  ctx.beginPath(); ctx.arc(p[0], p[1], 9, 0, 7);
+  ctx.strokeStyle = "rgba(13,13,15,0.9)"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.beginPath(); ctx.arc(p[0], p[1], 5, 0, 7);
+  ctx.fillStyle = "rgba(255,199,51,0.7)"; ctx.fill();
+}
+
+/* ---------------- camera ops ---------------- */
+function fitView() {
+  const def = docState.def; if (!def) return;
+  const lo = [1e9,1e9,1e9], hi = [-1e9,-1e9,-1e9];
+  let any = false;
+  for (const n of def.flat) {
+    if (!n.mesh || !effVisible(n)) continue; any = true;
+    for (let k = 0; k < 3; k++) {
+      lo[k] = Math.min(lo[k], n.mesh.bounds[0][k]);
+      hi[k] = Math.max(hi[k], n.mesh.bounds[1][k]);
+    }
+  }
+  if (!any) return;
+  cam.target = vscale(vadd(lo, hi), 0.5);
+  const radius = vlen(vsub(hi, lo)) / 2;
+  cam.dist = (radius * 1.4) / TAN_HALF_FOV;    // fit_factor 1.4, like Camera::frame_bounds
+  render();
+}
+function setView(yaw, pitch) { cam.yaw = yaw; cam.pitch = pitch; render(); }
+
+/* ---------------- viewport input (contract unchanged) ---------------- */
+const vp = $("vp");
+let drag = null;   // {mode:'orbit'|'pan', x, y}
+vp.addEventListener("contextmenu", e => e.preventDefault());
+cv.addEventListener("pointerdown", e => {
+  if (e.button === 2) drag = { mode: "orbit", x: e.clientX, y: e.clientY };
+  else if (e.button === 1) drag = { mode: "pan", x: e.clientX, y: e.clientY };
+  else return;                                   // left reserved for picking
+  e.preventDefault();
+  cv.setPointerCapture(e.pointerId);
+  cv.style.cursor = "grabbing";
+  if (drag.mode === "orbit") { orbiting = true; render(); }
+});
+cv.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.mode === "orbit") {
+    cam.yaw   -= dx * 0.34;                       // 0.006 rad/px, negated (grab the world)
+    cam.pitch  = clamp(cam.pitch + dy * 0.34, -89.9, 89.9);
+  } else {
+    const { r, u } = camBasis();
+    const k = cam.dist * 0.0025;                  // kPanSpeed
+    cam.target = vadd(vsub(cam.target, vscale(r, dx * k)), vscale(u, dy * k));
+  }
+  render();
+});
+const endDrag = e => {
+  if (!drag) return;
+  drag = null; orbiting = false; cv.style.cursor = ""; render();
+};
+cv.addEventListener("pointerup", endDrag);
+cv.addEventListener("pointercancel", endDrag);
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  if (!docState.def) return;
+  const rect = cv.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const h = cv.clientHeight, cx = cv.clientWidth / 2, cy = h / 2;
+  const { r, u } = camBasis();
+  const s0 = (h / 2) / (cam.dist * TAN_HALF_FOV);
+  const A = vadd(cam.target, vadd(vscale(r, (mx - cx) / s0), vscale(u, -(my - cy) / s0)));
+  cam.dist = Math.max(1e-4, cam.dist * Math.exp(e.deltaY * 0.0015));  // kWheelSpeed
+  const s1 = (cv.clientHeight / 2) / (cam.dist * TAN_HALF_FOV);
+  cam.target = vsub(A, vadd(vscale(r, (mx - cx) / s1), vscale(u, -(my - cy) / s1)));
+  render();
+}, { passive: false });
+
+new ResizeObserver(() => render()).observe(vp);
+
+/* ================= display-mode model (one source of truth) ================= */
+function syncDisplayUI() {
+  const wire = disp.surface === "wire";
+  $("segShaded").classList.toggle("active", !wire);
+  $("segWire").classList.toggle("active", wire);
+  $("segShaded2").classList.toggle("active", !wire);
+  $("segWire2").classList.toggle("active", wire);
+  const ce = $("chipEdges"), cm = $("chipMesh");
+  ce.classList.toggle("on", disp.edges); cm.classList.toggle("on", disp.mesh);
+  ce.disabled = wire; cm.disabled = wire;     // remembered, dimmed — no silent uncheck
+  $("cbEdges").checked = disp.edges; $("cbMesh").checked = disp.mesh;
+  $("cbEdges").disabled = wire; $("cbMesh").disabled = wire;
+  $("projIcon").firstElementChild.setAttribute("href", cam.persp ? "#i-persp" : "#i-ortho");
+  $("projIcon2").firstElementChild.setAttribute("href", cam.persp ? "#i-persp" : "#i-ortho");
+  $("btnProj").classList.toggle("checked", cam.persp);
+  $("hudProj").classList.toggle("checked", cam.persp);
+  $("rbOrtho").checked = !cam.persp; $("rbPersp").checked = cam.persp;
+  $("msaaBadge").textContent = "MSAA " + disp.msaa;
+  render();
+}
+const setSurface = s => { disp.surface = s; syncDisplayUI(); };
+const toggleEdges = () => {
+  if (disp.surface === "wire") disp.surface = "shaded";   // edges-on forces wireframe off
+  else disp.edges = !disp.edges;
+  syncDisplayUI();
+};
+const toggleMesh = () => {
+  if (disp.surface === "wire") { disp.surface = "shaded"; disp.mesh = true; }
+  else disp.mesh = !disp.mesh;
+  syncDisplayUI();
+};
+const toggleProj = () => { cam.persp = !cam.persp; syncDisplayUI(); };
+
+$("segShaded").onclick = () => setSurface("shaded");
+$("segWire").onclick = () => setSurface("wire");
+$("segShaded2").onclick = () => setSurface("shaded");
+$("segWire2").onclick = () => setSurface("wire");
+$("chipEdges").onclick = toggleEdges;
+$("chipMesh").onclick = toggleMesh;
+$("cbEdges").onchange = toggleEdges;
+$("cbMesh").onchange = toggleMesh;
+$("btnProj").onclick = toggleProj; $("hudProj").onclick = toggleProj;
+$("rbOrtho").onchange = () => { cam.persp = false; syncDisplayUI(); };
+$("rbPersp").onchange = () => { cam.persp = true; syncDisplayUI(); };
+$("slEdge").oninput = e => {
+  disp.edgeIntensity = e.target.value / 100;
+  $("slEdgeVal").textContent = e.target.value + "%"; render();
+};
+$("selMsaa").onchange = e => { disp.msaa = e.target.value; syncDisplayUI(); };
+$("cbScaleBar").onchange = e => { disp.scaleBar = e.target.checked; render(); };
+$("cbAxes").onchange = e => { disp.axes = e.target.checked; render(); };
+$("btnFit").onclick = fitView; $("hudFit").onclick = fitView;
+
+/* ================= panels, splitters, zero-chrome ================= */
+const PANELS = {
+  sidebar: { el: $("sidebar"), btn: $("tglSidebar"), open: true, size: 260,
+             def: 260, min: 200, max: 420, tipShow: "Show Sidebar", tipHide: "Hide Sidebar" },
+  insp:    { el: $("inspector"), btn: $("tglInsp"), open: true, size: 300,
+             def: 300, min: 260, max: 400, tipShow: "Show Inspector", tipHide: "Hide Inspector" },
+  strip:   { el: $("strip"), btn: $("tglStrip"), open: false, size: 200,
+             def: 200, min: 120, max: 500, tipShow: "Show Diagnostics", tipHide: "Hide Diagnostics" },
+};
+function setPanel(key, open) {
+  const p = PANELS[key]; p.open = open;
+  p.el.classList.toggle("collapsed", !open);
+  if (open) p.el.style[key === "strip" ? "height" : "width"] = p.size + "px";
+  p.btn.classList.toggle("checked", open);
+  p.btn.dataset.tip = open ? p.tipHide : p.tipShow;
+  p.btn.setAttribute("aria-pressed", open);
+  if (key === "strip" && open) p.btn.classList.remove("has-badge");
+}
+Object.keys(PANELS).forEach(k => {
+  PANELS[k].btn.onclick = () => setPanel(k, !PANELS[k].open);
+});
+$("stripClose").onclick = () => setPanel("strip", false);
+
+function bindSplitter(splitEl, key, horizontal) {
+  const p = PANELS[key];
+  splitEl.addEventListener("pointerdown", e => {
+    e.preventDefault(); splitEl.setPointerCapture(e.pointerId);
+    splitEl.classList.add("drag");
+    const start = horizontal ? e.clientY : e.clientX;
+    const startSize = p.open ? p.size : 0;
+    p.el.style.transition = "none";
+    const move = ev => {
+      let d = (horizontal ? ev.clientY : ev.clientX) - start;
+      if (key === "sidebar") d = +d; else d = -d;   // inspector & strip grow leftward/upward
+      let s = startSize + d;
+      if (s < p.min - 40) {                          // drag past min snaps closed (Xcode)
+        if (p.open) setPanel(key, false);
+        return;
+      }
+      s = clamp(s, p.min, p.max);
+      p.size = s;
+      if (!p.open) setPanel(key, true);
+      p.el.style[horizontal ? "height" : "width"] = s + "px";
+    };
+    const up = () => {
+      splitEl.classList.remove("drag");
+      p.el.style.transition = "";
+      splitEl.removeEventListener("pointermove", move);
+      splitEl.removeEventListener("pointerup", up);
+    };
+    splitEl.addEventListener("pointermove", move);
+    splitEl.addEventListener("pointerup", up);
+  });
+  splitEl.addEventListener("dblclick", () => {       // reset to default width
+    p.size = p.def; setPanel(key, true);
+    p.el.style[horizontal ? "height" : "width"] = p.def + "px";
+  });
+}
+bindSplitter($("splitL"), "sidebar", false);
+bindSplitter($("splitR"), "insp", false);
+bindSplitter($("splitB"), "strip", true);
+
+let zeroChrome = null;
+function toggleZeroChrome(force) {
+  const on = force !== undefined ? force : !zeroChrome;
+  if (on && !zeroChrome) {
+    zeroChrome = { sidebar: PANELS.sidebar.open, insp: PANELS.insp.open, strip: PANELS.strip.open };
+    setPanel("sidebar", false); setPanel("insp", false); setPanel("strip", false);
+    $("btnZero").classList.add("checked");
+  } else if (!on && zeroChrome) {
+    setPanel("sidebar", zeroChrome.sidebar); setPanel("insp", zeroChrome.insp);
+    setPanel("strip", zeroChrome.strip);
+    zeroChrome = null; $("btnZero").classList.remove("checked");
+  }
+}
+$("btnZero").onclick = () => toggleZeroChrome();
+
+/* ================= theme ================= */
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $("themeIcon").firstElementChild.setAttribute("href", t === "dark" ? "#i-sun" : "#i-moon");
+  render();
+}
+$("btnTheme").onclick = () =>
+  setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+
+/* ================= model tree ================= */
+const treeEl = $("tree");
+function buildTree() {
+  treeEl.innerHTML = "";
+  const def = docState.def; if (!def) return;
+  const filter = $("filterInput").value.trim().toLowerCase();
+  const matches = n => !filter || n.name.toLowerCase().includes(filter) ||
+                       (n.children || []).some(matches);
+  (function emit(n, depth) {
+    if (filter && !matches(n)) return;
+    const row = document.createElement("div");
+    row.className = "row" + (docState.selected === n ? " sel" : "") +
+                    (!n.visible ? " hiddenNode" : "");
+    row.style.paddingLeft = (6 + depth * 14) + "px";
+    const kids = n.children || [];
+    const tris = countTris(n);
+    row.innerHTML =
+      `<span class="twirl ${kids.length ? (n.expanded ? "openD" : "") : "leaf"}">` +
+        `<svg class="ic s14"><use href="#i-chev-r"/></svg></span>` +
+      `<svg class="ic s14 glyph"><use href="#i-${kids.length ? "asm" : "part"}"/></svg>` +
+      `<span class="nm">${n.name}</span>` +
+      `<button class="rbtn info" data-tip="Get Info" data-key="Space">` +
+        `<svg class="ic s14"><use href="#i-info"/></svg></button>` +
+      `<button class="rbtn eye" data-tip="${n.visible ? "Hide" : "Show"} — ⌥click to solo">` +
+        `<svg class="ic s14"><use href="#i-eye${n.visible ? "" : "-off"}"/></svg></button>` +
+      `<span class="cnt num">${fmt(tris)}</span>`;
+    row.querySelector(".twirl").onclick = e => {
+      e.stopPropagation();
+      if (kids.length) { n.expanded = !n.expanded; buildTree(); }
+    };
+    row.querySelector(".eye").onclick = e => {
+      e.stopPropagation();
+      if (e.altKey) {                                  // ⌥-click solos (FCP convention)
+        if (docState.solo === n) {
+          docState.def.flat.forEach(x => x.visible = true); docState.solo = null;
+        } else {
+          docState.def.flat.forEach(x => x.visible = false);
+          for (let p = n; p; p = p.parent) p.visible = true;
+          (function down(x) { x.visible = true; (x.children || []).forEach(down); })(n);
+          docState.solo = n;
+        }
+      } else { n.visible = !n.visible; docState.solo = null; }
+      buildTree(); render(); updateCounts();
+    };
+    row.querySelector(".info").onclick = e => {
+      e.stopPropagation();
+      selectNode(n, { silent: true });                  // rebuilds the tree DOM…
+      const live = treeEl.querySelector(".row.sel");    // …so re-anchor to the live row
+      openInfoPopover(n, (live || treeEl).getBoundingClientRect());
+    };
+    row.onclick = () => selectNode(n);
+    row.ondblclick = () => {
+      const live = treeEl.querySelector(".row.sel");
+      openInfoPopover(n, (live || treeEl).getBoundingClientRect());
+    };
+    treeEl.appendChild(row);
+    if (kids.length && (n.expanded || filter)) kids.forEach(c => emit(c, depth + 1));
+  })(def.tree, 0);
+}
+function countTris(n) {
+  let t = n.mesh ? n.mesh.tris.length / 3 : 0;
+  (n.children || []).forEach(c => t += countTris(c));
+  return t;
+}
+function selectNode(n, opts = {}) {
+  docState.selected = n;
+  buildTree(); fillProps(n); render();
+  if (!opts.silent) {
+    // auto-open Properties unless the user is working in Display/Import
+    if (!PANELS.insp.open) setPanel("insp", true);
+    if (!$("pageDisplay").classList.contains("active") &&
+        !$("pageImport").classList.contains("active")) switchTab("props");
+    else if ($("pageProps").classList.contains("active")) switchTab("props");
+  }
+}
+$("filterField").onclick = () => {
+  $("filterField").classList.add("open"); $("filterInput").focus();
+};
+$("filterInput").oninput = buildTree;
+$("filterInput").onkeydown = e => {
+  if (e.key === "Escape") {
+    e.stopPropagation();
+    e.target.value = ""; $("filterField").classList.remove("open");
+    e.target.blur(); buildTree();
+  }
+};
+
+/* ================= inspector ================= */
+function switchTab(which) {
+  const map = { props: ["tabProps", "pageProps"], display: ["tabDisplay", "pageDisplay"],
+                import: ["tabImport", "pageImport"] };
+  Object.values(map).forEach(([b, p]) => {
+    $(b).classList.remove("active"); $(p).classList.remove("active"); });
+  $(map[which][0]).classList.add("active"); $(map[which][1]).classList.add("active");
+}
+$("tabProps").onclick = () => switchTab("props");
+$("tabDisplay").onclick = () => switchTab("display");
+$("tabImport").onclick = () => switchTab("import");
+$("msaaBadge").onclick = () => { setPanel("insp", true); switchTab("display"); };
+$$(".ghead").forEach(h => h.onclick = () => h.parentElement.classList.toggle("closed"));
+
+function nodeBounds(n) {
+  const lo = [1e9,1e9,1e9], hi = [-1e9,-1e9,-1e9];
+  (function walk(x) {
+    if (x.mesh) for (let k = 0; k < 3; k++) {
+      lo[k] = Math.min(lo[k], x.mesh.bounds[0][k]); hi[k] = Math.max(hi[k], x.mesh.bounds[1][k]); }
+    (x.children || []).forEach(walk);
+  })(n);
+  return lo[0] > hi[0] ? null : [lo, hi];
+}
+function propsRows(n) {
+  const def = docState.def;
+  const b = nodeBounds(n);
+  const ext = b ? vsub(b[1], b[0]).map(v => v.toFixed(2)) : null;
+  const mat = n.mesh ? MATS[n.mesh.mat].name : "—";
+  const verts = n.mesh ? fmt(n.mesh.verts.length) : "—";
+  return `
+    <div class="group"><div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Source</div>
+      <div class="gbody">
+        <div class="frow"><label>Source</label><div class="val" title="${def.path}">${def.file}</div></div>
+        <div class="frow"><label>Node</label><div class="val">${n.name}</div></div>
+        <div class="frow"><label>Label</label><div class="val mono">${n.label}</div></div>
+      </div></div>
+    <div class="group"><div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Geometry</div>
+      <div class="gbody">
+        <div class="frow"><label>Mesh</label><div class="val">${n.mesh ? n.mesh.name : `— assembly, ${(n.children||[]).length} children`}</div></div>
+        <div class="frow"><label>Material</label><div class="val">${mat}</div></div>
+        <div class="frow"><label>Triangles</label><div class="val num">${fmt(countTris(n))}</div></div>
+        <div class="frow"><label>Vertices</label><div class="val num">${verts}</div></div>
+        <div class="frow"><label>Bounds</label><div class="stack">
+          ${ext ? `<div class="val num">${ext[0]} × ${ext[1]} × ${ext[2]} mm</div>
+          <div class="val mono num" style="font-size:10.5px;color:var(--t3)">min ${b[0].map(v=>v.toFixed(1)).join(", ")}</div>
+          <div class="val mono num" style="font-size:10.5px;color:var(--t3)">max ${b[1].map(v=>v.toFixed(1)).join(", ")}</div>` : `<div class="val">—</div>`}
+        </div></div>
+      </div></div>`;
+}
+function fillProps(n) {
+  $("pageProps").innerHTML = n ? propsRows(n) : `<div class="no-sel">No Selection</div>`;
+  $$("#pageProps .ghead").forEach(h => h.onclick = () => h.parentElement.classList.toggle("closed"));
+}
+
+/* import-options enablement (same rules as ImportOptionsDialog) */
+function syncOptEnable() {
+  const visual = $("optMode").value === "Visual-relative";
+  ["optTarget", "optRefPx", "optMinDefl", "optMaxRel"].forEach(id => $(id).disabled = !visual);
+  $("optRelative").disabled = visual;
+}
+$("optMode").onchange = syncOptEnable;
+$("btnResetOpts").onclick = () => {
+  $("optMode").value = "Visual-relative"; $("optLinear").value = "0.1000";
+  $("optAngular").value = "0.350"; $("optTarget").value = "0.75";
+  $("optRefPx").value = "1500"; $("optMinDefl").value = "0.010000";
+  $("optMaxRel").value = "0.001000"; $("optRelative").checked = false;
+  $("optParallel").checked = true; $("optHeal").checked = true; $("optWeld").checked = false;
+  $("optColors").checked = true; $("optNames").checked = true; $("optHier").checked = true;
+  syncOptEnable();
+};
+$("btnReimport").onclick = () => { if (docState.def) startImport(docState.def.file); };
+
+/* ================= diagnostics strip ================= */
+const logLines = [];
+let logClock = 0;
+function logAdd(lvl, msg) {
+  logClock += 17 + Math.floor((logLines.length * 37) % 211);
+  const t = new Date(8 * 3600e3 + logClock * 97);
+  const ts = String(t.getUTCHours()).padStart(2, "0") + ":" +
+             String(t.getUTCMinutes()).padStart(2, "0") + ":" +
+             String(t.getUTCSeconds()).padStart(2, "0") + "." +
+             String(t.getUTCMilliseconds()).padStart(3, "0");
+  logLines.push({ ts, lvl, msg });
+  $("logBody").innerHTML = logLines.map(l =>
+    `<span class="ts">${l.ts}</span><span class="lvl ${l.lvl}">${l.lvl.toUpperCase()}</span><span class="msg">${l.msg}</span>`
+  ).join("\n");
+  const sb = $("logBody").parentElement;                // keep latest lines in view
+  sb.scrollTop = sb.scrollHeight;
+}
+$("logClear").onclick = () => { logLines.length = 0; $("logBody").innerHTML = ""; };
+$("segSummary").onclick = () => {
+  $("segSummary").classList.add("active"); $("segLog").classList.remove("active");
+  $("sumGrid").style.display = ""; $("logBody").style.display = "none";
+};
+$("segLog").onclick = () => {
+  $("segLog").classList.add("active"); $("segSummary").classList.remove("active");
+  $("sumGrid").style.display = "none"; $("logBody").style.display = "";
+  const sb = $("logBody").parentElement;
+  sb.scrollTop = sb.scrollHeight;                       // jump to the latest lines
+};
+function fillSummary(def, times) {
+  const rows = [
+    ["Parse time", times.parse + " ms"], ["Mesh time", times.mesh + " ms"],
+    ["Total time", times.total + " ms"], ["Shapes / nodes", def.totals.nodes],
+    ["Faces", def.faces], ["Triangles", fmt(def.totals.tris)],
+    ["Vertices", fmt(def.totals.verts)],
+  ];
+  $("sumGrid").innerHTML = rows.map(([k, v]) =>
+    `<span class="k">${k}</span><span class="v num">${v}</span>`).join("");
+}
+
+/* ================= import flow (non-modal — graft from judges) ================= */
+const capsule = $("capsule");
+let cancelFlag = false;
+$("capCancel").onclick = () => { cancelFlag = true; };
+
+function updateDocChrome() {
+  const def = docState.def;
+  if (!def) {
+    $("docName").textContent = "No file loaded";
+    $("docStats").textContent = "drop a STEP or IGES file";
+    $("statusFile").textContent = "No file loaded"; $("statusFile").dataset.tip = "";
+    $("statusCounts").textContent = "";
+    $("welcome").style.display = ""; buildWelcome();
+    document.title = "Cadly — Graphite concept";
+  } else {
+    $("docName").textContent = def.file;
+    $("docStats").textContent =
+      `${def.totals.nodes} nodes · ${fmt(def.totals.tris)} tris · ${fmt(def.totals.verts)} verts`;
+    $("statusFile").textContent = def.file; $("statusFile").dataset.tip = def.path;
+    $("welcome").style.display = "none";
+    document.title = def.file + " — Cadly";
+  }
+  updateCounts();
+}
+function updateCounts() {
+  const def = docState.def; if (!def) return;
+  let tris = 0, verts = 0;
+  def.flat.forEach(n => { if (n.mesh && effVisible(n)) {
+    tris += n.mesh.tris.length / 3; verts += n.mesh.verts.length; } });
+  $("statusCounts").textContent = `${def.totals.nodes} nodes · ${fmt(tris)} tris · ${fmt(verts)} verts`;
+}
+
+function doImport(fname) {
+  if (docState.importing) return;
+  if ($("optReview").checked) openPreflight(fname);
+  else startImport(fname);
+}
+function startImport(fname) {
+  if (docState.importing) return;
+  closeMenus();
+  docState.importing = true; cancelFlag = false;
+  $("btnOpen").disabled = true;
+  capsule.classList.add("importing"); capsule.classList.remove("err", "ok");
+  const fails = !FILES[fname].build;
+  const prevTitle = $("docName").textContent;
+  $("docName").textContent = "Importing " + fname + "…";
+  logAdd("info", `selected importer: ${fname.endsWith(".iges") ? "OcctIgesImporter" : "OcctStepImporter"} for '${fname}'`);
+  const phases = fails
+    ? [[0.18, "Reading IGES directory entry…"], [0.42, "Transferring entities…"]]
+    : [[0.14, "Reading STEP schema…"], [0.36, "Transferring 38 shapes (XCAF)…"],
+       [0.52, "Healing geometry…"], [0.80, "Meshing " + (FILES[fname].faces || 38) + " faces…"],
+       [0.92, "Welding vertices…"], [1.0, "Building scene graph…"]];
+  let i = 0, prog = 0;
+  const t0 = performance.now();
+  const tick = () => {
+    if (cancelFlag) {
+      logAdd("warn", "import cancelled by user");
+      finishImport(null, prevTitle); return;
+    }
+    prog = Math.min(prog + 0.025 + (i * 7 % 5) * 0.004, phases[i][0]);
+    $("capProg").style.width = (prog * 100) + "%";
+    $("docStats").textContent = phases[i][1];
+    if (prog >= phases[i][0]) {
+      if (phases[i][1].startsWith("Healing") && !$("optHeal").checked) logAdd("info", "healing skipped (disabled)");
+      else logAdd("info", phases[i][1].toLowerCase().replace("…", " — ok"));
+      i++;
+    }
+    if (i < phases.length) setTimeout(tick, 55);
+    else if (fails) {
+      logAdd("error", "IGES line 8421: unexpected EOF in entity 412");
+      logAdd("error", "transfer produced 0 shapes");
+      finishImport("fail", prevTitle, fname);
+    } else {
+      const defl = Math.max(0.0001, parseFloat($("optLinear").value) || 0.1);
+      const def = prepScene(FILES[fname].build(defl));
+      const total = Math.round(performance.now() - t0);
+      const times = { parse: Math.round(total * 0.42), mesh: Math.round(total * 0.47), total };
+      if (fname === "flange_bracket.step")
+        logAdd("warn", "face 31: degenerated pcurve replaced (tolerance 1e-4)");
+      logAdd("info", `scene ready: ${def.totals.nodes} nodes, ${fmt(def.totals.tris)} triangles`);
+      fillSummary(def, times);
+      finishImport(def, prevTitle, fname);
+    }
+  };
+  setTimeout(tick, 50);
+}
+function finishImport(result, prevTitle, fname) {
+  docState.importing = false;
+  $("btnOpen").disabled = false;
+  capsule.classList.remove("importing");
+  $("capProg").style.width = "0%";
+  if (result === null) {                               // cancelled
+    $("docName").textContent = prevTitle; updateDocChrome(); return;
+  }
+  if (result === "fail") {
+    capsule.classList.add("err");
+    $("docName").textContent = "Import failed — " + fname;
+    $("docStats").textContent = "see Diagnostics for details";
+    setPanel("strip", true); $("segLog").click();       // failure auto-opens the log
+    addRecent(fname);
+    return;
+  }
+  capsule.classList.add("ok"); $("capProg").style.width = "100%";
+  setTimeout(() => { capsule.classList.remove("ok"); $("capProg").style.width = "0%"; }, 800);
+  docState.def = result; docState.selected = null; docState.solo = null;
+  result.tree.expanded = true;
+  (result.tree.children || []).forEach(c => c.expanded = true);
+  addRecent(result.file);
+  buildTree(); fillProps(null); updateDocChrome(); fitView();
+  if (!PANELS.strip.open) PANELS.strip.btn.classList.add("has-badge");  // badge, don't steal focus
+  else $("segSummary").click();
+}
+function addRecent(f) {
+  docState.recents = [f, ...docState.recents.filter(x => x !== f)].slice(0, 8);
+}
+function closeFile() {
+  docState.def = null; docState.selected = null;
+  buildTree(); fillProps(null); updateDocChrome(); render();
+}
+
+/* ================= menus & popovers ================= */
+let openMenuEl = null, menuAnchor = null;
+function closeMenus() {
+  $$(".menu.open").forEach(m => m.classList.remove("open"));
+  $$(".mb-item.open").forEach(m => m.classList.remove("open"));
+  openMenuEl = null; menuAnchor = null;
+}
+function openMenuAt(menu, x, y) {
+  closeMenus();
+  menu.classList.add("open");
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  menu.style.left = clamp(x, 8, innerWidth - mw - 8) + "px";
+  menu.style.top = clamp(y, 8, innerHeight - mh - 8) + "px";
+  openMenuEl = menu;
+}
+function openMenuFor(anchor, menu, opts = {}) {
+  const r = anchor.getBoundingClientRect();
+  openMenuAt(menu, opts.right ? r.right - menu.offsetWidth : r.left, r.bottom + (opts.dy ?? 6));
+  menuAnchor = anchor;
+}
+document.addEventListener("pointerdown", e => {
+  if (openMenuEl && !openMenuEl.contains(e.target) &&
+      !(menuAnchor && menuAnchor.contains(e.target))) closeMenus();
+}, true);
+
+function mi(label, opts = {}) {
+  const chk = opts.chk === undefined ? "" : `<span class="chk">${opts.chk ? "✓" : ""}</span>`;
+  const key = opts.key ? `<span class="kbd">${opts.key}</span>` : "";
+  const sub = opts.sub ? `<span class="mi-sub">${opts.sub}</span>` : "";
+  const icon = opts.icon ? `<svg class="ic s14" style="color:${opts.color || "currentColor"}"><use href="#i-${opts.icon}"/></svg>` : "";
+  return `<div class="mi ${opts.disabled ? "disabled" : ""}" data-act="${opts.act || ""}">${chk}${icon}${label}${key}${sub}</div>`;
+}
+const ACTIONS = {
+  open: () => openMenuFor($("openSplit"), buildOpenMenu()),
+  close: closeFile,
+  reimport: () => docState.def && startImport(docState.def.file),
+  openWithOptions: () => { setPanel("insp", true); switchTab("import");
+    if (docState.def) openPreflight(docState.def.file); },
+  fit: fitView,
+  shaded: () => setSurface("shaded"), wire: () => setSurface("wire"),
+  edges: toggleEdges, mesh: toggleMesh, proj: toggleProj,
+  v1: () => setView(0, 0), v2: () => setView(180, 0), v3: () => setView(90, 0),
+  v4: () => setView(-90, 0), v5: () => setView(0, -90), v6: () => setView(0, 90),
+  v7: () => setView(30, -22),
+  pSidebar: () => setPanel("sidebar", !PANELS.sidebar.open),
+  pInsp: () => setPanel("insp", !PANELS.insp.open),
+  pStrip: () => setPanel("strip", !PANELS.strip.open),
+  themeDark: () => setTheme("dark"), themeLight: () => setTheme("light"),
+  zero: () => toggleZeroChrome(),
+  about: () => { buildAbout(); openMenuAt($("popAbout"), innerWidth/2 - 170, 120); },
+  shortcuts: () => { buildShortcuts(); openMenuAt($("popShortcuts"), innerWidth/2 - 170, 120); },
+  clearRecents: () => { docState.recents = []; },
+};
+document.addEventListener("click", e => {
+  const item = e.target.closest("[data-act]");
+  if (!item || !item.dataset.act) return;
+  const fileAct = item.dataset.act.match(/^file:(.+)$/);
+  closeMenus();
+  if (fileAct) doImport(fileAct[1]);
+  else ACTIONS[item.dataset.act]?.();
+});
+
+function buildOpenMenu() {
+  const m = $("menuOpen");
+  const rec = docState.recents.length
+    ? docState.recents.map(f => mi(f, { act: "file:" + f, icon: "part" })).join("")
+    : mi("(no recent files)", { disabled: true });
+  m.innerHTML =
+    `<div class="mhead">Samples — the file dialog is native in the app</div>` +
+    mi("flange_bracket.step", { act: "file:flange_bracket.step", icon: "part", sub: "~/parts/brackets" }) +
+    mi("gear_housing.step", { act: "file:gear_housing.step", icon: "part", sub: "~/parts/housings" }) +
+    mi("corrupted_export.iges", { act: "file:corrupted_export.iges", icon: "warn", sub: "fails — demo" }) +
+    `<div class="msep"></div><div class="mhead">Recent</div>` + rec +
+    `<div class="msep"></div>` + mi("Clear Recent", { act: "clearRecents" });
+  return m;
+}
+$("btnOpen").onclick = () => openMenuFor($("openSplit"), buildOpenMenu());
+$("btnOpenChev").onclick = () => openMenuFor($("openSplit"), buildOpenMenu());
+
+function buildFileMenu() {
+  const m = $("menuFile");
+  m.innerHTML =
+    mi("Open CAD File…", { act: "open", key: "⌘O" }) +
+    mi("Open with Options…", { act: "openWithOptions", key: "⌥⌘O" }) +
+    mi("Re-import Current File", { act: "reimport", key: "⌘R", disabled: !docState.def }) +
+    `<div class="msep"></div>` +
+    mi("Close", { act: "close", key: "⌘W", disabled: !docState.def }) +
+    `<div class="msep"></div>` +
+    mi("Quit Cadly", { key: "⌘Q", disabled: true });
+  return m;
+}
+function buildViewMenu() {
+  const m = $("menuView");
+  m.innerHTML =
+    mi("Fit to Model", { act: "fit", key: "F" }) +
+    `<div class="msep"></div>` +
+    mi("Shaded", { act: "shaded", chk: disp.surface === "shaded" }) +
+    mi("Wireframe", { act: "wire", chk: disp.surface === "wire", key: "W" }) +
+    mi("Show Edges", { act: "edges", chk: disp.edges, key: "E" }) +
+    mi("Show Triangle Mesh", { act: "mesh", chk: disp.mesh, key: "T" }) +
+    `<div class="msep"></div>` +
+    mi("Perspective Projection", { act: "proj", chk: cam.persp, key: "P" }) +
+    `<div class="mhead">Standard Views</div>` +
+    mi("Front", { act: "v1", key: "1" }) + mi("Back", { act: "v2", key: "2" }) +
+    mi("Right", { act: "v3", key: "3" }) + mi("Left", { act: "v4", key: "4" }) +
+    mi("Top", { act: "v5", key: "5" }) + mi("Bottom", { act: "v6", key: "6" }) +
+    mi("Isometric", { act: "v7", key: "7" }) +
+    `<div class="msep"></div><div class="mhead">Panels</div>` +
+    mi("Sidebar", { act: "pSidebar", chk: PANELS.sidebar.open }) +
+    mi("Inspector", { act: "pInsp", chk: PANELS.insp.open }) +
+    mi("Diagnostics", { act: "pStrip", chk: PANELS.strip.open }) +
+    `<div class="msep"></div>` +
+    mi("Dark Appearance", { act: "themeDark", chk: document.documentElement.dataset.theme === "dark" }) +
+    mi("Light Appearance", { act: "themeLight", chk: document.documentElement.dataset.theme === "light" }) +
+    mi("Zero Chrome", { act: "zero", chk: !!zeroChrome, key: "⌃." });
+  return m;
+}
+function buildWindowMenu() {
+  $("menuWindow").innerHTML =
+    mi("Minimize", { key: "⌘M", disabled: true }) + mi("Zoom", { disabled: true }) +
+    `<div class="msep"></div>` +
+    mi(document.title, { chk: true });
+  return $("menuWindow");
+}
+function buildHelpMenu() {
+  $("menuHelp").innerHTML =
+    mi("About Cadly", { act: "about" }) +
+    mi("Keyboard Shortcuts", { act: "shortcuts", key: "⌘/" }) +
+    `<div class="msep"></div>` +
+    mi("Concept notes: docs/ui-redesign/design-notes.md", { disabled: true });
+  return $("menuHelp");
+}
+const MENU_BUILDERS = { menuFile: buildFileMenu, menuView: buildViewMenu,
+                        menuWindow: buildWindowMenu, menuHelp: buildHelpMenu };
+$$(".mb-item").forEach(item => {
+  const open = () => {
+    $$(".mb-item.open").forEach(x => x.classList.remove("open"));
+    item.classList.add("open");
+    openMenuFor(item, MENU_BUILDERS[item.dataset.menu](), { dy: 4 });
+    menuAnchor = item;
+  };
+  item.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    if (openMenuEl && item.classList.contains("open")) closeMenus(); else open();
+  });
+  item.addEventListener("pointerenter", () => { if (openMenuEl) open(); });
+});
+
+/* views popover with face tiles + keycap badges */
+function cubeTile(face) {
+  const top = "12,4 20,8 12,12 4,8", left = "4,8 12,12 12,21 4,17", right = "12,12 20,8 20,17 12,21";
+  const f = { front: [left], back: [right], right: [right], left: [left],
+              top: [top], bottom: [top], iso: [top, left, right] }[face];
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round">
+    ${f.map(p => `<polygon points="${p}" fill="currentColor" opacity="0.32" stroke="none"/>`).join("")}
+    <polygon points="${top}"/><polygon points="${left}"/><polygon points="${right}"/></svg>`;
+}
+function buildViewsPop() {
+  const m = $("popViews");
+  const tiles = [["Front","1","front","v1"],["Back","2","back","v2"],["Right","3","right","v3"],
+    ["Left","4","left","v4"],["Top","5","top","v5"],["Bottom","6","bottom","v6"],["Iso","7","iso","v7"]];
+  m.innerHTML = `<div class="views-grid">` +
+    tiles.map(([l, k, f, act]) =>
+      `<div class="vtile" data-act="${act}"><span class="vk">${k}</span>${cubeTile(f)}<span class="vl">${l}</span></div>`
+    ).join("") + `</div>` +
+    `<div class="views-fit">` + mi("Fit to Model", { act: "fit", key: "F", icon: "fit" }) + `</div>`;
+  return m;
+}
+$("btnViews").onclick = () => openMenuFor($("btnViews"), buildViewsPop(), { right: true });
+$("hudViews").onclick = () => openMenuFor($("hudViews"), buildViewsPop(), { right: true });
+
+/* document path popover */
+$("docName").onclick = () => {
+  if (!docState.def || docState.importing) return;
+  const m = $("popPath");
+  m.innerHTML = `<h3>${docState.def.file}</h3>
+    <p class="mono" style="font-size:11px">${docState.def.path}</p>
+    <p style="color:var(--t3);font-size:11px">${docState.def.kind} · imported with linear deflection ${$("optLinear").value} mm</p>
+    <button class="btn" id="copyPath" style="margin-top:4px"><svg class="ic s14" style="vertical-align:-3px;margin-right:5px"><use href="#i-copy"/></svg>Copy Path</button>`;
+  openMenuFor(capsule, m);
+  $("copyPath").onclick = () => { navigator.clipboard?.writeText(docState.def.path); closeMenus(); };
+};
+
+/* get-info popover (pinnable — graft from Preview-calm concept) */
+function infoBody(n) {
+  return `<div class="ip-head">
+      <svg class="ic"><use href="#i-${(n.children||[]).length ? "asm" : "part"}"/></svg>
+      <span class="ttl">${n.name}</span>
+      <button class="icon-btn" data-pin style="width:22px;height:22px" data-tip="Pin as floating card">
+        <svg class="ic s14"><use href="#i-pin"/></svg></button>
+      <button class="icon-btn" data-close style="width:22px;height:22px">
+        <svg class="ic s14"><use href="#i-x"/></svg></button>
+    </div><div class="ip-body">${propsRows(n)}</div>`;
+}
+function openInfoPopover(n, anchorRect) {
+  const m = $("popInfo");
+  m.innerHTML = infoBody(n);
+  m.classList.add("open");
+  const x = Math.min(anchorRect.right + 10, innerWidth - 312);
+  openMenuAt(m, x, clamp(anchorRect.top - 8, 40, innerHeight - 360));
+  m.querySelector("[data-close]").onclick = closeMenus;
+  m.querySelector("[data-pin]").onclick = () => { closeMenus(); pinInfo(n); };
+  $$("#popInfo .ghead").forEach(h => h.onclick = () => h.parentElement.classList.toggle("closed"));
+}
+function pinInfo(n) {
+  document.querySelector(".info-pop.pinned")?.remove();
+  const card = document.createElement("div");
+  card.className = "menu info-pop pinned open";
+  card.innerHTML = infoBody(n);
+  card.querySelector("[data-pin]").style.display = "none";
+  card.style.right = "14px"; card.style.top = "62px"; card.style.left = "auto";
+  vp.appendChild(card);
+  card.querySelector("[data-close]").onclick = () => card.remove();
+  card.querySelectorAll(".ghead").forEach(h => h.onclick = () => h.parentElement.classList.toggle("closed"));
+}
+
+/* pre-flight options popover (anchored, not a modal toll-booth) */
+function openPreflight(fname) {
+  const m = $("popPreflight");
+  m.innerHTML = `<h3>Import ${fname}</h3>
+    <p style="font-size:11px;color:var(--t3)">Mode <b style="color:var(--t1)">${$("optMode").value}</b> ·
+      linear ${$("optLinear").value} mm · angular ${$("optAngular").value} rad<br>
+      healing ${$("optHeal").checked ? "on" : "off"} · welding ${$("optWeld").checked ? "on" : "off"} ·
+      colours/names/hierarchy ${$("optColors").checked ? "on" : "off"}</p>
+    <div style="display:flex;gap:8px;justify-content:space-between;margin-top:10px;align-items:center">
+      <button class="txtbtn" id="pfEdit">Edit in Inspector</button>
+      <span style="display:flex;gap:8px">
+        <button class="btn" id="pfCancel">Cancel</button>
+        <button class="btn primary" id="pfGo">Import</button></span></div>`;
+  openMenuFor(capsule, m);
+  $("pfEdit").onclick = () => { closeMenus(); setPanel("insp", true); switchTab("import"); };
+  $("pfCancel").onclick = closeMenus;
+  $("pfGo").onclick = () => { closeMenus(); startImport(fname); };
+}
+
+function buildAbout() {
+  $("popAbout").innerHTML = `
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+      <div class="appglyph" style="width:40px;height:40px;border-radius:9px;margin:0;background:linear-gradient(135deg,var(--accent),#7AA3FF);display:flex;align-items:center;justify-content:center;color:#fff">
+        <svg class="ic"><use href="#i-cube"/></svg></div>
+      <div><h3 style="margin:0">Cadly</h3><p style="margin:0;font-size:11px;color:var(--t3)">Version 0.1.0 — “Graphite” concept</p></div></div>
+    <p>Native C++ CAD viewer. STEP/IGES via OCCT, OpenGL 4.1 PBR renderer, Qt 6.8 / qlementine.</p>
+    <p style="font-size:11px;color:var(--t3)">This HTML page is a design prototype — backdrop blur and the merged title bar are aspirational; the Qt build ships flat panels and a native title bar.</p>`;
+}
+function buildShortcuts() {
+  const rows = [["F","Fit to model"],["W","Shaded ↔ Wireframe"],["E","Toggle edges"],
+    ["T","Toggle triangle mesh"],["P","Ortho ↔ Perspective"],["1–7","Standard views"],
+    ["⌘O","Open"],["⌘R","Re-import"],["⌃.","Zero chrome"],["Space","Get Info on selection"],
+    ["Right-drag","Orbit (pivot marker)"],["Middle-drag","Pan"],["Scroll","Zoom to cursor"]];
+  $("popShortcuts").innerHTML = `<h3>Keyboard &amp; Mouse</h3><div class="sc-grid">` +
+    rows.map(([k, d]) => `<span class="keys">${k.split(" ").map(x => `<span class="kbd">${x}</span>`).join("")}</span><span>${d}</span>`).join("") + `</div>`;
+}
+
+/* ================= welcome card ================= */
+function buildWelcome() {
+  const wr = $("welcomeRecents");
+  wr.innerHTML = docState.recents.slice(0, 4).map(f =>
+    `<div class="row" data-f="${f}"><svg class="ic s14 glyph"><use href="#i-part"/></svg><span class="nm">${f}</span></div>`).join("");
+  wr.querySelectorAll(".row").forEach(r => r.onclick = () => doImport(r.dataset.f));
+}
+$("welcomeOpen").onclick = () => openMenuFor($("welcomeOpen"), buildOpenMenu());
+
+/* ================= tooltips ================= */
+const tip = $("tooltip");
+let tipTimer = null;
+document.addEventListener("pointerover", e => {
+  const el = e.target.closest("[data-tip]");
+  clearTimeout(tipTimer); tip.classList.remove("show");
+  if (!el || !el.dataset.tip) return;
+  tipTimer = setTimeout(() => {
+    $("tipText").textContent = el.dataset.tip;
+    const k = $("tipKey");
+    if (el.dataset.key) { k.textContent = el.dataset.key; k.style.display = ""; }
+    else k.style.display = "none";
+    tip.classList.add("show");
+    const r = el.getBoundingClientRect();
+    const tw = tip.offsetWidth;
+    tip.style.left = clamp(r.left + r.width / 2 - tw / 2, 6, innerWidth - tw - 6) + "px";
+    tip.style.top = (r.bottom + 7 > innerHeight - 40 ? r.top - 32 : r.bottom + 7) + "px";
+  }, 550);
+});
+document.addEventListener("pointerdown", () => { clearTimeout(tipTimer); tip.classList.remove("show"); }, true);
+
+/* ================= drag & drop ================= */
+let dragDepth = 0;
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("dragenter", e => {
+  if (e.dataTransfer?.types?.includes("Files")) { dragDepth++; vp.classList.add("dropping"); }
+});
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; vp.classList.remove("dropping"); } });
+window.addEventListener("drop", e => {
+  e.preventDefault(); dragDepth = 0; vp.classList.remove("dropping");
+  // any dropped file imports the next sample — the real app reads the actual path
+  doImport(docState.def?.file === "flange_bracket.step" ? "gear_housing.step" : "flange_bracket.step");
+});
+
+/* ================= keyboard ================= */
+document.addEventListener("keydown", e => {
+  const tag = e.target.tagName;
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  const k = e.key.toLowerCase(), mod = e.metaKey || e.ctrlKey;
+  if (e.key === "Escape") {
+    if (openMenuEl) { closeMenus(); return; }
+    if (zeroChrome) { toggleZeroChrome(false); return; }
+    return;
+  }
+  if (mod && k === "o") { e.preventDefault();
+    e.altKey ? ACTIONS.openWithOptions() : openMenuFor($("openSplit"), buildOpenMenu()); return; }
+  if (mod && k === "r") { e.preventDefault(); ACTIONS.reimport(); return; }
+  if (mod && k === "/") { e.preventDefault(); ACTIONS.shortcuts(); return; }
+  if (e.ctrlKey && e.key === ".") { e.preventDefault(); toggleZeroChrome(); return; }
+  if (mod) return;
+  switch (k) {
+    case "f": fitView(); break;
+    case "w": setSurface(disp.surface === "wire" ? "shaded" : "wire"); break;
+    case "e": toggleEdges(); break;
+    case "t": toggleMesh(); break;
+    case "p": toggleProj(); break;
+    case "1": setView(0, 0); break;    case "2": setView(180, 0); break;
+    case "3": setView(90, 0); break;   case "4": setView(-90, 0); break;
+    case "5": setView(0, -90); break;  case "6": setView(0, 90); break;
+    case "7": setView(30, -22); break;
+    case " ": if (docState.selected) {
+      e.preventDefault();
+      const row = treeEl.querySelector(".row.sel");
+      openInfoPopover(docState.selected, (row || treeEl).getBoundingClientRect());
+    } break;
+  }
+});
+
+/* ================= boot ================= */
+function tickClock() {
+  const d = new Date();
+  $("clock").textContent = d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" }) +
+    "  " + d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+tickClock(); setInterval(tickClock, 30000);
+const syncCompact = () =>
+  document.querySelector(".toolbar").classList.toggle("compact", innerWidth < 1680);
+syncCompact(); window.addEventListener("resize", syncCompact);
+syncOptEnable();
+fillProps(null);
+updateDocChrome();
+render();
+setTimeout(() => $("hint").classList.add("gone"), 9000);
+cv.addEventListener("pointerdown", () => $("hint").classList.add("gone"), { once: true });
+setTimeout(() => startImport("flange_bracket.step"), 600);   // show the import flow on load
+})();
+</script>
+</body>
+</html>
