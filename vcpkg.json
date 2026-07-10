@@ -6,19 +6,28 @@
     "fmt",
     "spdlog",
     "glm",
-    {
-      "name": "opencascade",
-      "features": []
-    },
+    "opencascade",
     {
       "name": "qtbase",
       "default-features": false,
-      "features": [ "widgets", "opengl", "opengl-desktop" ]
+      "features": [
+        "concurrent",
+        "doubleconversion",
+        "freetype",
+        "gui",
+        "harfbuzz",
+        "opengl",
+        "pcre2",
+        "png",
+        "thread",
+        "widgets",
+        { "name": "windeployqt", "platform": "windows" },
+        { "name": "fontconfig", "platform": "linux" },
+        { "name": "xcb", "platform": "linux" },
+        { "name": "xcb-xlib", "platform": "linux" }
+      ]
     },
-    {
-      "name": "qtsvg",
-      "default-features": false
-    }
+    "qtsvg"
   ],
-  "builtin-baseline": "0000000000000000000000000000000000000000"
+  "builtin-baseline": "52c9e08cdf8580d2d9762f547d22b96fd81e82f2"
 }
