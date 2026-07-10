@@ -221,6 +221,14 @@ const std::unordered_map<char, Glyph>& glyph_table() {
     m['k'] = {0.54f, {GlyphPath{{0.07f,0.0f},{0.07f,0.98f}},
                       GlyphPath{{0.51f,0.66f},{0.10f,0.30f}},
                       GlyphPath{{0.21f,0.40f},{0.52f,0.0f}}}};
+    // Uppercase axis labels for the orientation triad. Straight strokes only —
+    // they ride the same emit_stroke pipeline as the digits.
+    m['X'] = {0.62f, {GlyphPath{{0.05f,0.98f},{0.55f,0.0f}},
+                      GlyphPath{{0.55f,0.98f},{0.05f,0.0f}}}};
+    m['Y'] = {0.64f, {GlyphPath{{0.05f,0.98f},{0.31f,0.52f}},
+                      GlyphPath{{0.57f,0.98f},{0.31f,0.52f},{0.31f,0.0f}}}};
+    m['Z'] = {0.62f, {GlyphPath{{0.06f,0.98f},{0.56f,0.98f},
+                                {0.06f,0.0f},{0.56f,0.0f}}}};
     return m;
   }();
   return table;
@@ -330,7 +338,11 @@ private:
   void update_frame_uniforms();
   void draw_background(const renderer::DisplayMode& mode);
   void draw_pivot(const renderer::DisplayMode& mode);
-  void draw_scale_bar();
+  void draw_scale_bar(const renderer::DisplayMode& mode);
+  void draw_axes_triad(const renderer::DisplayMode& mode);
+  // Upload `overlay_vertices_` and draw them as one blended, depth-ignoring
+  // triangle batch. Shared tail of every 2D overlay pass (scale bar, triad).
+  void submit_overlay();
   void draw_edges(const renderer::DisplayMode& mode);
   void draw_triangle_mesh(const renderer::DisplayMode& mode);
 
@@ -1012,7 +1024,8 @@ void GLRendererImpl::draw_pivot(const renderer::DisplayMode& mode) {
   gl_.glDisable(GL_BLEND);
 }
 
-void GLRendererImpl::draw_scale_bar() {
+void GLRendererImpl::draw_scale_bar(const renderer::DisplayMode& mode) {
+  if (!mode.show_scale_bar) return;
   if (!scene_ || !prog_overlay_.valid() || vao_overlay_ == 0 || vbo_overlay_ == 0) return;
   if (viewport_w_ < 220 || viewport_h_ < 120) return;
 
@@ -1079,6 +1092,82 @@ void GLRendererImpl::draw_scale_bar() {
   glow_pass(3.0f, 0.22f);
   glow_pass(1.5f, 0.55f);
   for (const auto& s : strokes) emit_stroke(overlay_vertices_, s, 0.0f, ink);
+
+  submit_overlay();
+}
+
+// World-axes orientation triad, bottom-right corner. Three screen-space arms
+// are the world unit axes pushed through the view rotation: view space is
+// x-right / y-up, the same convention as the overlay's pixel coordinates, so
+// the 2D arm direction is simply the .xy of the rotated axis and the natural
+// foreshortening (an axis pointing at the camera collapses toward a dot)
+// falls out for free. Painter's order on view-space z keeps the rear arm
+// underneath the front ones.
+void GLRendererImpl::draw_axes_triad(const renderer::DisplayMode& mode) {
+  if (!mode.show_axes) return;
+  if (!scene_ || !prog_overlay_.valid() || vao_overlay_ == 0 || vbo_overlay_ == 0) return;
+  if (viewport_w_ < 220 || viewport_h_ < 160) return;
+
+  const scene::mat4 view = scene_->camera.view();
+
+  struct Arm {
+    scene::vec3 dir;    // world axis in view space (unit length)
+    scene::vec4 color;
+    const char* label;
+  };
+  // glm matrices are column-major: column i of the rotation part is the image
+  // of world basis vector i, i.e. exactly view * (axis_i, w=0).
+  std::array<Arm, 3> arms{{
+    {scene::vec3(view[0]), {0.84f, 0.30f, 0.33f, 1.0f}, "X"},
+    {scene::vec3(view[1]), {0.30f, 0.62f, 0.38f, 1.0f}, "Y"},
+    {scene::vec3(view[2]), {0.32f, 0.49f, 0.83f, 1.0f}, "Z"},
+  }};
+  // Camera looks down -Z in view space: the smaller (more negative) the z
+  // component, the farther the arm tip is from the viewer — draw those first.
+  std::sort(arms.begin(), arms.end(),
+            [](const Arm& a, const Arm& b) { return a.dir.z < b.dir.z; });
+
+  const float radius  = 26.0f;
+  const float cx      = static_cast<float>(viewport_w_) - 54.0f;
+  const float cy      = 54.0f;   // overlay y grows up from the bottom edge
+  const float size    = 9.0f;    // label cap height (px)
+  const float stroke  = 1.6f;
+
+  overlay_vertices_.clear();
+  overlay_vertices_.reserve(8192);
+
+  const scene::vec4 halo{0.96f, 0.965f, 0.97f, 0.40f};
+  for (const auto& arm : arms) {
+    const scene::vec2 tip{cx + arm.dir.x * radius, cy + arm.dir.y * radius};
+    PxStroke line{{scene::vec2{cx, cy}, tip}, 1.1f};
+
+    // Label sits past the arm tip; an arm pointing straight at the camera has
+    // a near-zero 2D direction, so fall back to stacking the label above the
+    // hub rather than dividing by ~0.
+    const float len2d = std::sqrt(arm.dir.x * arm.dir.x + arm.dir.y * arm.dir.y);
+    scene::vec2 ldir = len2d > 0.15f
+      ? scene::vec2{arm.dir.x / len2d, arm.dir.y / len2d}
+      : scene::vec2{0.0f, 1.0f};
+    const float lw = text_width(arm.label, size);
+    const float lx = cx + ldir.x * (radius + 8.0f) - lw * 0.5f;
+    const float ly = cy + ldir.y * (radius + 8.0f) - size * 0.5f;
+
+    std::vector<PxStroke> strokes;
+    strokes.push_back(std::move(line));
+    append_text(strokes, arm.label, lx, ly, size, stroke);
+
+    for (const auto& s : strokes) emit_stroke(overlay_vertices_, s, 1.4f, halo);
+    for (const auto& s : strokes) emit_stroke(overlay_vertices_, s, 0.0f, arm.color);
+  }
+  // Hub dot on top, neutral ink.
+  emit_disc(overlay_vertices_, cx, cy, 2.2f,
+            scene::vec4{0.05f, 0.05f, 0.06f, 0.9f}, 12);
+
+  submit_overlay();
+}
+
+void GLRendererImpl::submit_overlay() {
+  if (overlay_vertices_.empty()) return;
 
   gl_.glEnable(GL_BLEND);
   gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
@@ -1424,7 +1513,8 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
 
   if (!scene_ || scene_->nodes.empty()) {
     draw_pivot(mode);
-    draw_scale_bar();
+    draw_axes_triad(mode);
+    draw_scale_bar(mode);
     return;
   }
 
@@ -1436,7 +1526,8 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (!prog_pbr_.valid()) {
     CADLY_LOG_WARN("PBR program not available; skipping mesh draw.");
     draw_pivot(mode);
-    draw_scale_bar();
+    draw_axes_triad(mode);
+    draw_scale_bar(mode);
     return;
   }
 
@@ -1453,7 +1544,8 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (mode.wireframe) {
     draw_edges(mode);
     draw_pivot(mode);
-    draw_scale_bar();
+    draw_axes_triad(mode);
+    draw_scale_bar(mode);
     return;
   }
 
@@ -1559,7 +1651,8 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   draw_triangle_mesh(mode);
   draw_edges(mode);
   draw_pivot(mode);
-  draw_scale_bar();
+  draw_axes_triad(mode);
+  draw_scale_bar(mode);
 }
 
 void GLRendererImpl::shutdown() {

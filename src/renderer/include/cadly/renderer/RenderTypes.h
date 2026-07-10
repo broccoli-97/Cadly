@@ -23,7 +23,8 @@ struct MaterialHandle : ResourceHandle {};
 struct DisplayMode {
   bool wireframe        {false};
   bool show_edges       {true};    // outline at sharp creases
-  bool show_axes        {true};
+  bool show_axes        {true};    // world-axes triad overlay (corner)
+  bool show_scale_bar   {true};    // fixed-length scale bar overlay (corner)
   bool draw_background  {true};
   // Debug overlay: draw every triangle edge of the face triangulation on
   // top of the shaded surface. Independent of show_edges (BRep edges) and
