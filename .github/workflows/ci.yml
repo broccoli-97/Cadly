@@ -1,0 +1,242 @@
+# CI: build + test on Linux and Windows, and publish runnable packages.
+#
+# Two build flavors, matching the two supported dependency strategies:
+#   - Linux: system Qt6 + OCCT from apt (the primary dev configuration).
+#     Pinned to ubuntu-24.04 (Qt 6.4, OCCT 7.6) so a runner-image bump can't
+#     silently change the toolchain the way `ubuntu-latest` would.
+#   - Windows: vcpkg manifest build (Qt 6.11, OCCT 8.0 at the pinned
+#     baseline), packaged self-contained with windeployqt.
+#
+# Packages land as workflow artifacts on every run (Actions tab -> run ->
+# Artifacts). Pushing a `v*` tag additionally attaches them to a GitHub
+# Release for login-free downloads.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.preset }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [linux-debug, linux-release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build \
+            qt6-base-dev qt6-svg-dev \
+            libocct-foundation-dev libocct-modeling-data-dev \
+            libocct-modeling-algorithms-dev libocct-data-exchange-dev \
+            libocct-ocaf-dev \
+            libglm-dev libfmt-dev libspdlog-dev \
+            libgl1-mesa-dev
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+      # End-to-end import check on a real STEP assembly — exercises the OCCT
+      # reader + tessellation without needing a GL context or display.
+      - name: Import smoke check (STEP)
+        run: ./build/${{ matrix.preset }}/bin/cad_import_cli test_files/as1-ug-214.stp
+
+      - name: Package
+        if: matrix.preset == 'linux-release'
+        run: |
+          cmake --install build/${{ matrix.preset }} --prefix stage/cadly
+          # FetchContent'd deps (qlementine-icons) install dev files into the
+          # prefix; the viewer package only needs bin/ + share/.
+          rm -rf stage/cadly/include stage/cadly/lib
+          mkdir -p stage/cadly/sample-files
+          cp test_files/as1-ug-214.stp stage/cadly/sample-files/
+          cat > stage/cadly/README.txt <<'EOF'
+          Cadly — Linux build (not self-contained)
+
+          Built on Ubuntu 24.04 against the system Qt 6 and Open CASCADE 7.6
+          packages. It needs those runtime libraries present; the easiest way
+          to get them all is the dev packages:
+
+            sudo apt install qt6-base-dev qt6-svg-dev libocct-data-exchange-dev \
+                 libocct-ocaf-dev libfmt-dev libspdlog-dev
+
+          Run:
+            bin/cadly sample-files/as1-ug-214.stp     # GUI viewer
+            bin/cad_import_cli sample-files/as1-ug-214.stp   # headless import stats
+          EOF
+          # Validate the installed tree actually runs from its own layout
+          # (asset lookup via ../share/cadly, system libs resolvable).
+          ./stage/cadly/bin/cad_import_cli test_files/as1-ug-214.stp
+          # Tar before upload: artifact zips don't preserve the exec bit.
+          tar -czf cadly-linux-x64.tar.gz -C stage cadly
+
+      - name: Upload package artifact
+        if: matrix.preset == 'linux-release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cadly-linux-x64
+          path: cadly-linux-x64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows (windows-msvc-release)
+    runs-on: windows-latest
+    # First run builds Qt + OCCT from source via vcpkg (a few hours); later
+    # runs restore the binary cache and take minutes.
+    timeout-minutes: 350
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
+    steps:
+      - uses: actions/checkout@v4
+
+      # Check out vcpkg at exactly the manifest's builtin-baseline so the
+      # dependency set is fully pinned by vcpkg.json (single source of truth).
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+          Write-Host "vcpkg baseline: $baseline"
+          git init $env:VCPKG_ROOT
+          git -C $env:VCPKG_ROOT remote add origin https://github.com/microsoft/vcpkg.git
+          git -C $env:VCPKG_ROOT fetch --depth 1 origin $baseline
+          git -C $env:VCPKG_ROOT checkout FETCH_HEAD
+          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      - name: Restore vcpkg binary cache
+        id: bincache
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg-bincache
+          key: vcpkg-bin-x64-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-bin-x64-windows-
+
+      - name: Configure (builds vcpkg dependencies)
+        run: cmake --preset windows-msvc-release
+
+      # Save the dependency binaries immediately after configure — that's
+      # when vcpkg is done — and even if the Cadly build/tests fail later,
+      # so a red first run doesn't throw away hours of Qt/OCCT compilation.
+      - name: Save vcpkg binary cache
+        if: always() && steps.bincache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-bincache
+          key: vcpkg-bin-x64-windows-${{ hashFiles('vcpkg.json') }}
+
+      - name: Build
+        run: cmake --build --preset windows-msvc-release
+
+      - name: Test
+        run: ctest --preset windows-msvc-release
+
+      - name: Import smoke check (STEP)
+        shell: pwsh
+        run: |
+          & "build/windows-msvc-release/bin/RelWithDebInfo/cad_import_cli.exe" test_files/as1-ug-214.stp
+          if ($LASTEXITCODE -ne 0) { throw "cad_import_cli failed ($LASTEXITCODE)" }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --install build/windows-msvc-release --config RelWithDebInfo --prefix package/cadly
+          if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
+          # FetchContent'd deps (qlementine, qlementine-icons) install dev
+          # files into the prefix; the viewer package only needs bin/ + share/.
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue package/cadly/include, package/cadly/lib
+
+          # Non-Qt runtime DLLs (OCCT TK*, fmt, freetype, ...): vcpkg's
+          # applocal post-build step already computed the exact closure next
+          # to the built executables — reuse it instead of re-deriving.
+          Copy-Item "build/windows-msvc-release/bin/RelWithDebInfo/*.dll" "package/cadly/bin/" -Force
+
+          # Qt DLLs + runtime-loaded plugins (platforms, imageformats,
+          # iconengines) via windeployqt from the vcpkg tools tree.
+          $wdq = Get-ChildItem "build/windows-msvc-release/vcpkg_installed" -Recurse -Filter "windeployqt.exe" | Select-Object -First 1
+          if (-not $wdq) { throw "windeployqt.exe not found under vcpkg_installed (qtbase[windeployqt] feature missing?)" }
+          & $wdq.FullName --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime package/cadly/bin/cadly.exe
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }
+
+          # Fail loudly if the deploy silently missed the plugins the app
+          # can't run without (window platform, SVG icon theme rendering).
+          foreach ($f in @('platforms/qwindows.dll', 'imageformats/qsvg.dll', 'iconengines/qsvgicon.dll')) {
+            if (-not (Test-Path "package/cadly/bin/$f")) { throw "packaged Qt deploy is missing $f" }
+          }
+
+          New-Item -ItemType Directory -Force package/cadly/sample-files | Out-Null
+          Copy-Item test_files/as1-ug-214.stp package/cadly/sample-files/
+          @'
+          Cadly — Windows x64 build (self-contained)
+
+          Run:
+            bin\cadly.exe sample-files\as1-ug-214.stp     (GUI viewer)
+            bin\cad_import_cli.exe sample-files\as1-ug-214.stp   (headless import stats)
+
+          Requires the Microsoft Visual C++ Redistributable (x64), which most
+          systems already have: https://aka.ms/vs/17/release/vc_redist.x64.exe
+          Requires a GPU/driver with OpenGL 4.1+.
+          '@ | Set-Content package/cadly/README.txt
+
+          # Validate the package's own DLL closure by running it in place.
+          & "package/cadly/bin/cad_import_cli.exe" test_files/as1-ug-214.stp
+          if ($LASTEXITCODE -ne 0) { throw "packaged cad_import_cli failed ($LASTEXITCODE) - DLL closure incomplete?" }
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cadly-windows-x64
+          path: package
+          if-no-files-found: error
+
+  # On `v*` tags, promote the artifacts to a GitHub Release so testers can
+  # download without logging in to Actions.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Attach packages to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # download-artifact extracts the windows zip; re-zip for release.
+          (cd dist/cadly-windows-x64 && zip -qr ../cadly-windows-x64.zip cadly)
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Cadly $GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/cadly-linux-x64/cadly-linux-x64.tar.gz \
+            dist/cadly-windows-x64.zip \
+          || gh release upload "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/cadly-linux-x64/cadly-linux-x64.tar.gz \
+            dist/cadly-windows-x64.zip
