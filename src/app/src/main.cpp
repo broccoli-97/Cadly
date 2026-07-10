@@ -12,6 +12,7 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QIcon>
 #include <QScreen>
@@ -45,6 +46,24 @@ int main(int argc, char** argv) {
   fmt.setStencilBufferSize(8);
   fmt.setAlphaBufferSize(0);
   QSurfaceFormat::setDefaultFormat(fmt);
+
+#ifdef Q_OS_LINUX
+  // WSLg ships both a Wayland compositor and XWayland, and Qt prefers the
+  // wayland platform whenever WAYLAND_DISPLAY is set. On WSLg's Weston +
+  // Mesa D3D12 stack, creating our 4.1 core context under the wayland
+  // platform deadlocks in a compositor roundtrip inside show(): the process
+  // stays alive blocked in poll(), no window ever appears, and the event
+  // loop never starts. The identical context request through XWayland/GLX
+  // works (GL 4.6 core via D3D12 passthrough), so under WSL steer Qt to
+  // xcb — but only when the user hasn't chosen a platform explicitly.
+  if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
+    QFile osrelease(QStringLiteral("/proc/sys/kernel/osrelease"));
+    if (osrelease.open(QIODevice::ReadOnly) &&
+        osrelease.readAll().toLower().contains("microsoft")) {
+      qputenv("QT_QPA_PLATFORM", "xcb");
+    }
+  }
+#endif
 
   QApplication app(argc, argv);
   app.setOrganizationName("Cadly");
