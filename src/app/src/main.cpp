@@ -1,18 +1,22 @@
 // Cadly entry point. Wires up the Qt application, MainWindow, and shared
-// process state (logging, surface format).
+// process state (logging, surface format, theme, recents persistence).
 
 #include "cadly/app/RecentFiles.h"
 #include "cadly/app/Settings.h"
 #include "cadly/app/Theme.h"
 #include "cadly/platform/Log.h"
 #include "cadly/ui/MainWindow.h"
+#include "cadly/ui/ThemeTokens.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileInfo>
 #include <QIcon>
+#include <QScreen>
 #include <QSurfaceFormat>
+#include <QTimer>
 
 int main(int argc, char** argv) {
   // Request a 4.1 core context before QApplication exists; QOpenGLWidget will
@@ -48,9 +52,21 @@ int main(int argc, char** argv) {
   app.setApplicationVersion("0.1.0");
   app.setWindowIcon(QIcon());
 
-  // Style + palette + icon resources, before any widget is constructed so
-  // nothing ever paints with the stock platform style.
-  cadly::app::apply_theme(app);
+  cadly::app::Settings settings;
+
+  // Theme before any widget is constructed so nothing ever paints with the
+  // stock platform style. ThemeManager (ui) carries the token table the
+  // custom chrome reads; apply_theme keeps QStyle/QPalette in step. The
+  // changed() hookup makes the View ▸ Dark Appearance toggle restyle the
+  // running app and persist the choice.
+  auto& theme_mgr = cadly::ui::ThemeManager::instance();
+  theme_mgr.set_dark(settings.dark_theme());
+  cadly::app::apply_theme(app, theme_mgr.dark());
+  QObject::connect(&theme_mgr, &cadly::ui::ThemeManager::changed,
+                   &app, [&app, &settings, &theme_mgr]() {
+    cadly::app::apply_theme(app, theme_mgr.dark());
+    settings.set_dark_theme(theme_mgr.dark());
+  });
 
   cadly::platform::init_logging("info");
 
@@ -61,6 +77,18 @@ int main(int argc, char** argv) {
   QCommandLineOption logOpt({"l", "log-level"},
     "Log level: trace|debug|info|warn|error", "level", "info");
   parser.addOption(logOpt);
+  // Developer aid: grab the fully-started window into a PNG and exit. Lets
+  // UI changes be eyeballed from a terminal (CI, agents, WSL) without a
+  // human driving the session.
+  QCommandLineOption shotOpt("screenshot",
+    "Save a screenshot of the window to <path> ~3.5s after startup, then exit.",
+    "path");
+  parser.addOption(shotOpt);
+  QCommandLineOption demoOpt("demo",
+    "Dev aid: drive a UI state before the screenshot "
+    "(wireframe|light|dark|views|getinfo|zerochrome).",
+    "state");
+  parser.addOption(demoOpt);
   parser.addPositionalArgument("file", "Optional CAD file to open at startup.");
   parser.process(app);
 
@@ -71,12 +99,28 @@ int main(int argc, char** argv) {
 
   cadly::ui::MainWindow window;
 
-  cadly::app::Settings settings;
+  // Recents + last-open-dir live in app-side persistence; the shell only
+  // displays them and reports successful imports. This wiring is what turns
+  // the previously dead RecentFiles/last_open_directory code into features.
+  cadly::app::RecentFiles recents;
+  window.set_recent_files(recents.entries());
+  window.set_last_open_directory(settings.last_open_directory());
+  QObject::connect(&window, &cadly::ui::MainWindow::file_imported,
+                   &recents, [&recents, &settings, &window](const QString& path) {
+    recents.add(path);
+    const QString dir = QFileInfo(path).absolutePath();
+    settings.set_last_open_directory(dir);
+    window.set_last_open_directory(dir);
+  });
+  QObject::connect(&recents, &cadly::app::RecentFiles::changed,
+                   &window, [&recents, &window]() {
+    window.set_recent_files(recents.entries());
+  });
+  QObject::connect(&window, &cadly::ui::MainWindow::recents_clear_requested,
+                   &recents, &cadly::app::RecentFiles::clear);
+
   if (auto blob = settings.window_geometry(); !blob.isEmpty()) {
     window.restoreGeometry(blob);
-  }
-  if (auto blob = settings.window_state(); !blob.isEmpty()) {
-    window.restoreState(blob);
   }
   window.show();
 
@@ -88,9 +132,35 @@ int main(int argc, char** argv) {
     }, Qt::QueuedConnection);
   }
 
+  if (parser.isSet(shotOpt)) {
+    const QString shot_path = parser.value(shotOpt);
+    const QString demo = parser.value(demoOpt);
+    // Trigger the demo state a beat before the grab so any import has landed
+    // and the action's repaint has flushed.
+    if (!demo.isEmpty()) {
+      QTimer::singleShot(3000, &window, [&window, demo]() {
+        window.run_demo(demo);
+      });
+    }
+    QTimer::singleShot(3500, &window, [&window, shot_path, demo]() {
+      // Popovers are separate top-level Qt::Popup windows; QWidget::grab() on
+      // the main window misses them and an X11 screen grab can't see their
+      // Wayland surface on WSLg. Grab the active popup widget directly when
+      // one is up, so the popover demos actually show the card.
+      QPixmap pm;
+      const bool has_popup = demo == QLatin1String("views") ||
+                             demo == QLatin1String("getinfo");
+      if (has_popup) {
+        if (auto* popup = QApplication::activePopupWidget()) pm = popup->grab();
+      }
+      if (pm.isNull()) pm = window.grab();
+      pm.save(shot_path);
+      QApplication::quit();
+    });
+  }
+
   QObject::connect(&app, &QApplication::aboutToQuit, [&]() {
     settings.set_window_geometry(window.saveGeometry());
-    settings.set_window_state(window.saveState());
   });
 
   return app.exec();

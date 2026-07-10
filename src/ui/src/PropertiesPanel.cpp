@@ -1,31 +1,31 @@
-#include "cadly/ui/PropertiesDock.h"
+#include "PropertiesPanel.h"
+
+#include "IconUtils.h"
 
 #include "cadly/scene/Material.h"
 #include "cadly/scene/Mesh.h"
 #include "cadly/scene/Node.h"
 
 #include <QFormLayout>
-#include <QFrame>
 #include <QLabel>
 #include <QVBoxLayout>
 
 namespace cadly::ui {
 
-PropertiesDock::PropertiesDock(QWidget* parent)
-  : QDockWidget(tr("Properties"), parent) {
-  setObjectName("PropertiesDock");
+PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(12, 10, 12, 10);
 
-  auto* host = new QWidget(this);
-  auto* outer = new QVBoxLayout(host);
-  outer->setContentsMargins(8, 8, 8, 8);
+  auto* form = new QFormLayout();
+  form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  form->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
+  form->setHorizontalSpacing(10);
+  form->setVerticalSpacing(6);
 
-  form_ = new QFormLayout();
-  form_->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  form_->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
-
-  auto make = []() {
-    auto* l = new QLabel("—");
+  auto make = [this]() {
+    auto* l = new QLabel(QStringLiteral("—"), this);
     l->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    l->setWordWrap(true);
     return l;
   };
   lbl_source_    = make();
@@ -35,39 +35,43 @@ PropertiesDock::PropertiesDock(QWidget* parent)
   lbl_material_  = make();
   lbl_triangles_ = make();
   lbl_bounds_    = make();
+  lbl_triangles_->setFont(mono_font(12));
+  lbl_bounds_->setFont(mono_font(12));
 
-  form_->addRow(tr("Source"),     lbl_source_);
-  form_->addRow(tr("Node"),       lbl_name_);
-  form_->addRow(tr("Label"),      lbl_label_);
-  form_->addRow(tr("Mesh"),       lbl_mesh_);
-  form_->addRow(tr("Material"),   lbl_material_);
-  form_->addRow(tr("Triangles"),  lbl_triangles_);
-  form_->addRow(tr("Bounds"),     lbl_bounds_);
+  form->addRow(tr("Source"),    lbl_source_);
+  form->addRow(tr("Node"),      lbl_name_);
+  form->addRow(tr("Label"),     lbl_label_);
+  form->addRow(tr("Mesh"),      lbl_mesh_);
+  form->addRow(tr("Material"),  lbl_material_);
+  form->addRow(tr("Triangles"), lbl_triangles_);
+  form->addRow(tr("Bounds"),    lbl_bounds_);
 
-  outer->addLayout(form_);
+  outer->addLayout(form);
   outer->addStretch();
-  setWidget(host);
 }
 
-void PropertiesDock::set_scene(std::shared_ptr<scene::Scene> scene) {
+void PropertiesPanel::set_scene(std::shared_ptr<scene::Scene> scene) {
   scene_ = std::move(scene);
   if (scene_) {
     lbl_source_->setText(QString::fromStdString(scene_->source_file.string()));
+  } else {
+    lbl_source_->setText(QStringLiteral("—"));
   }
   clear();
 }
 
-void PropertiesDock::clear() {
-  lbl_name_->setText("—");
-  lbl_label_->setText("—");
-  lbl_mesh_->setText("—");
-  lbl_material_->setText("—");
-  lbl_triangles_->setText("—");
-  lbl_bounds_->setText("—");
+void PropertiesPanel::clear() {
+  for (auto* l : {lbl_name_, lbl_label_, lbl_mesh_, lbl_material_,
+                  lbl_triangles_, lbl_bounds_}) {
+    l->setText(QStringLiteral("—"));
+  }
 }
 
-void PropertiesDock::show_node(std::uint32_t node_index) {
-  if (!scene_ || node_index >= scene_->nodes.size()) { clear(); return; }
+void PropertiesPanel::show_node(std::uint32_t node_index) {
+  if (!scene_ || node_index >= scene_->nodes.size()) {
+    clear();
+    return;
+  }
   const auto& n = scene_->nodes[node_index];
   lbl_name_->setText(QString::fromStdString(n.name));
   lbl_label_->setText(QString::fromStdString(n.source_label));
@@ -90,12 +94,12 @@ void PropertiesDock::show_node(std::uint32_t node_index) {
 
   if (n.world_bounds.valid()) {
     const auto e = n.world_bounds.extent();
-    lbl_bounds_->setText(QString("%1 × %2 × %3")
+    lbl_bounds_->setText(QStringLiteral("%1 × %2 × %3")
       .arg(e.x, 0, 'f', 2)
       .arg(e.y, 0, 'f', 2)
       .arg(e.z, 0, 'f', 2));
   } else {
-    lbl_bounds_->setText("—");
+    lbl_bounds_->setText(QStringLiteral("—"));
   }
 }
 

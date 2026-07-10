@@ -25,24 +25,24 @@ void Settings::set_last_open_directory(const QString& dir) {
   s.setValue("io/last_open_directory", dir);
 }
 
+bool Settings::dark_theme() const {
+  auto s = settings_handle();
+  return s.value("ui/dark_theme", true).toBool();
+}
+
+void Settings::set_dark_theme(bool dark) {
+  auto s = settings_handle();
+  s.setValue("ui/dark_theme", dark);
+}
+
 QByteArray Settings::window_geometry() const {
   auto s = settings_handle();
   return s.value("window/geometry").toByteArray();
 }
 
-QByteArray Settings::window_state() const {
-  auto s = settings_handle();
-  return s.value("window/state").toByteArray();
-}
-
 void Settings::set_window_geometry(const QByteArray& blob) {
   auto s = settings_handle();
   s.setValue("window/geometry", blob);
-}
-
-void Settings::set_window_state(const QByteArray& blob) {
-  auto s = settings_handle();
-  s.setValue("window/state", blob);
 }
 
 } // namespace cadly::app

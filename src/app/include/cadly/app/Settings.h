@@ -16,11 +16,15 @@ public:
   QString last_open_directory() const;
   void    set_last_open_directory(const QString& dir);
 
-  // Window geometry / dock state are stored as opaque blobs.
+  // Appearance variant for the Graphite shell (ui::ThemeTokens).
+  bool dark_theme() const;
+  void set_dark_theme(bool dark);
+
+  // Window geometry is stored as an opaque blob. (The old window *state*
+  // blob — QMainWindow dock/toolbar layout — died with the QDockWidget
+  // shell; panel layout now persists as explicit keys written by MainWindow.)
   QByteArray window_geometry() const;
-  QByteArray window_state() const;
   void       set_window_geometry(const QByteArray& blob);
-  void       set_window_state(const QByteArray& blob);
 };
 
 } // namespace cadly::app

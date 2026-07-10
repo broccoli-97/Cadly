@@ -1,19 +1,38 @@
 add_library(cadly_ui STATIC
   src/CameraController.cpp
-  src/ImportDiagnosticsDock.cpp
-  src/ImportOptionsDialog.cpp
+  src/DiagnosticsStrip.cpp
+  src/DocumentCapsule.cpp
+  src/IconUtils.cpp
+  src/ImportOptionsWidget.cpp
+  src/InspectorWidget.cpp
   src/MainWindow.cpp
-  src/ModelTreeDock.cpp
-  src/PropertiesDock.cpp
+  src/Popover.cpp
+  src/PropertiesPanel.cpp
+  src/SegmentedControl.cpp
+  src/SidebarWidget.cpp
+  src/ThemeTokens.cpp
+  src/ToolbarButton.cpp
+  src/ToolbarWidget.cpp
   src/ViewportWidget.cpp
+  src/ViewsGrid.cpp
 
   include/cadly/ui/CameraController.h
-  include/cadly/ui/ImportDiagnosticsDock.h
-  include/cadly/ui/ImportOptionsDialog.h
   include/cadly/ui/MainWindow.h
-  include/cadly/ui/ModelTreeDock.h
-  include/cadly/ui/PropertiesDock.h
+  include/cadly/ui/ThemeTokens.h
   include/cadly/ui/ViewportWidget.h
+
+  src/DiagnosticsStrip.h
+  src/DocumentCapsule.h
+  src/IconUtils.h
+  src/ImportOptionsWidget.h
+  src/InspectorWidget.h
+  src/Popover.h
+  src/PropertiesPanel.h
+  src/SegmentedControl.h
+  src/SidebarWidget.h
+  src/ToolbarButton.h
+  src/ToolbarWidget.h
+  src/ViewsGrid.h
 )
 add_library(Cadly::Ui ALIAS cadly_ui)
 

@@ -4,6 +4,7 @@
 #include "cadly/renderer/RenderTypes.h"
 #include "cadly/scene/Scene.h"
 
+#include <QElapsedTimer>
 #include <QOpenGLWidget>
 
 #include <memory>
@@ -30,6 +31,13 @@ public:
   // Re-frame the scene to fit current world bounds (toolbar "Fit").
   void fit_view();
 
+signals:
+  // Smoothed CPU cost of one paintGL pass, in milliseconds, emitted at most a
+  // few times per second. Deliberately labelled "frame time" and not "fps" by
+  // consumers: rendering is event-driven (paints only on input/dirty), so a
+  // frames-per-second figure would be a lie most of the time.
+  void frame_timed(float ms);
+
 protected:
   void initializeGL() override;
   void resizeGL(int w, int h) override;
@@ -49,6 +57,10 @@ private:
   // previous version did against the IRenderer contract.
   bool                  scene_dirty_{false};
   renderer::DisplayMode display_mode_{};
+
+  // Frame-time readout state: exponential moving average + emit throttle.
+  float         frame_ms_avg_{0.0f};
+  QElapsedTimer frame_emit_throttle_;
 };
 
 } // namespace cadly::ui

@@ -105,7 +105,21 @@ void ViewportWidget::paintGL() {
   if (scene_) {
     scene_->camera = camera_->camera();
   }
+
+  // CPU-side cost of building and submitting the frame. Not a GPU time (that
+  // would need timer queries), but it tracks the work the app actually does
+  // per paint and is what the status-bar readout wants.
+  QElapsedTimer t;
+  t.start();
   renderer_->render(display_mode_);
+  const float ms = static_cast<float>(t.nsecsElapsed()) / 1.0e6f;
+  frame_ms_avg_ = frame_ms_avg_ <= 0.0f ? ms
+                                        : frame_ms_avg_ * 0.8f + ms * 0.2f;
+  if (!frame_emit_throttle_.isValid() ||
+      frame_emit_throttle_.elapsed() > 250) {
+    frame_emit_throttle_.restart();
+    emit frame_timed(frame_ms_avg_);
+  }
 }
 
 void ViewportWidget::set_scene(std::shared_ptr<scene::Scene> scene) {
