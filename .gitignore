@@ -14,5 +14,10 @@ vcpkg_installed/
 *.swo
 *~
 .DS_Store
-test_files/
+# Local CAD models stay untracked — except the small as1 STEP sample the CI
+# import smoke checks and the packaged sample-files/ depend on. Use a
+# contents glob, not `test_files/`: git cannot re-include a file whose
+# parent directory is itself excluded.
+test_files/*
+!test_files/as1-ug-214.stp
 test_figures/
