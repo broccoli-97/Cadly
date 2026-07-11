@@ -38,12 +38,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # libtbb-dev: the OCCT dev packages hardcode absolute paths to
-      # /usr/lib/x86_64-linux-gnu/libtbb{,malloc}.so in their exported CMake
-      # targets (INTERFACE_LINK_LIBRARIES). They depend on the TBB *runtime*
-      # (libtbb12) but not on libtbb-dev, which owns those .so symlinks —
-      # without it ninja fails at link with "libtbb.so ... missing and no
-      # known rule to make it".
+      # libtbb-dev + libfontconfig-dev: OCCT's exported CMake targets
+      # (INTERFACE_LINK_LIBRARIES) reference /usr/lib/x86_64-linux-gnu/
+      # libtbb{,malloc}.so by absolute path and fontconfig by bare -l name,
+      # but the libocct-*-dev packages only depend on the *runtime* libs
+      # (libtbb12, libfontconfig1), not on the -dev packages that own the
+      # .so linker symlinks. Without them the build fails at link (ninja:
+      # "libtbb.so ... missing and no known rule", ld: "cannot find
+      # -lfontconfig"). Every other external token in those targets
+      # (freetype, freeimage, GL, X11) is covered transitively via
+      # libocct-visualization-dev.
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -53,7 +57,7 @@ jobs:
             libocct-foundation-dev libocct-modeling-data-dev \
             libocct-modeling-algorithms-dev libocct-data-exchange-dev \
             libocct-ocaf-dev \
-            libtbb-dev \
+            libtbb-dev libfontconfig-dev \
             libglm-dev libfmt-dev libspdlog-dev \
             libgl1-mesa-dev
 
@@ -129,6 +133,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+
+      # vcvars in recent VS (18/2026 on the image) exports VCPKG_ROOT pointing
+      # at the copy of vcpkg bundled inside the VS install, and msvc-dev-cmd
+      # faithfully re-exports the whole vcvars environment — which overrides
+      # the job-level `env:` value for all later steps. Re-pin our pinned-
+      # baseline checkout; a later GITHUB_ENV write wins over vcvars' value.
+      - name: Re-pin VCPKG_ROOT (vcvars exports the VS-bundled vcpkg)
+        shell: pwsh
+        run: Add-Content $env:GITHUB_ENV 'VCPKG_ROOT=${{ github.workspace }}/vcpkg'
 
       - name: Install Ninja
         run: choco install ninja -y --no-progress
