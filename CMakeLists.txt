@@ -51,6 +51,12 @@ if(MSVC)
     /wd4127 # conditional expression is constant (Qt headers)
     /wd4459 # declaration hides global
   )
+  # NOMINMAX: <GL/glcorearb.h> pulls in <windows.h> on Win32 to get APIENTRY,
+  # and windows.h defines min()/max() as function-like macros unless this is
+  # set — which then mangles every std::min/std::max call site into a C2589
+  # ("illegal token on right side of ::"). Define it for all first-party
+  # translation units, before any header is seen.
+  target_compile_definitions(cadly_warnings INTERFACE NOMINMAX)
   if(CADLY_WARNINGS_AS_ERRORS)
     target_compile_options(cadly_warnings INTERFACE /WX)
   endif()
