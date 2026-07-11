@@ -30,8 +30,11 @@ build/linux-release/bin/cad_import_cli f.step  # headless import, prints geo sta
 
 Presets: `linux-debug`, `linux-release`, `linux-qt68-{debug,release}` (Qt 6.8
 from `~/Qt/6.8.3/gcc_64`, enables the qlementine style), `linux-vcpkg-debug`,
-`windows-msvc-{debug,release}`. There is no checked-in CI; the smoke test is the
-only automated gate.
+`windows-msvc-{debug,release}` (VS solution), `windows-ninja-{debug,release}`
+(single-config Ninja; expects MSVC in the environment, i.e. a VS dev prompt —
+what CI uses, since it can't pin a VS-year generator to a rotating runner
+image). CI (`.github/workflows/ci.yml`) builds, tests, and packages on
+Linux + Windows; the smoke test and a headless STEP import are the gates.
 
 `cad_import_cli` is the fastest way to validate an import change without a GL
 context or display — prefer it when touching `src/cad`.

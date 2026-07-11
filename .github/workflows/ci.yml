@@ -5,7 +5,10 @@
 #     Pinned to ubuntu-24.04 (Qt 6.4, OCCT 7.6) so a runner-image bump can't
 #     silently change the toolchain the way `ubuntu-latest` would.
 #   - Windows: vcpkg manifest build (Qt 6.11, OCCT 8.0 at the pinned
-#     baseline), packaged self-contained with windeployqt.
+#     baseline), packaged self-contained with windeployqt. Built with Ninja
+#     against whatever MSVC toolset the runner image provides (vcvars via
+#     msvc-dev-cmd) — deliberately NOT a year-pinned Visual Studio generator,
+#     which breaks whenever the hosted image rotates VS versions.
 #
 # Packages land as workflow artifacts on every run (Actions tab -> run ->
 # Artifacts). Pushing a `v*` tag additionally attaches them to a GitHub
@@ -35,6 +38,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # libtbb-dev: the OCCT dev packages hardcode absolute paths to
+      # /usr/lib/x86_64-linux-gnu/libtbb{,malloc}.so in their exported CMake
+      # targets (INTERFACE_LINK_LIBRARIES). They depend on the TBB *runtime*
+      # (libtbb12) but not on libtbb-dev, which owns those .so symlinks —
+      # without it ninja fails at link with "libtbb.so ... missing and no
+      # known rule to make it".
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -44,6 +53,7 @@ jobs:
             libocct-foundation-dev libocct-modeling-data-dev \
             libocct-modeling-algorithms-dev libocct-data-exchange-dev \
             libocct-ocaf-dev \
+            libtbb-dev \
             libglm-dev libfmt-dev libspdlog-dev \
             libgl1-mesa-dev
 
@@ -99,7 +109,7 @@ jobs:
           if-no-files-found: error
 
   windows:
-    name: Windows (windows-msvc-release)
+    name: Windows (windows-ninja-release)
     runs-on: windows-latest
     # First run builds Qt + OCCT from source via vcpkg (a few hours); later
     # runs restore the binary cache and take minutes.
@@ -109,6 +119,19 @@ jobs:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
     steps:
       - uses: actions/checkout@v4
+
+      # Put MSVC (cl.exe) + the Windows SDK on PATH and export the associated
+      # env (INCLUDE/LIB/...). The Ninja generator picks the compiler up from
+      # this environment, sidestepping the "could not find any instance of
+      # Visual Studio" failure the Visual Studio generator hits when it can't
+      # locate an install via COM on the hosted image.
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
 
       # Check out vcpkg at exactly the manifest's builtin-baseline so the
       # dependency set is fully pinned by vcpkg.json (single source of truth).
@@ -133,7 +156,7 @@ jobs:
           restore-keys: vcpkg-bin-x64-windows-
 
       - name: Configure (builds vcpkg dependencies)
-        run: cmake --preset windows-msvc-release
+        run: cmake --preset windows-ninja-release
 
       # Save the dependency binaries immediately after configure — that's
       # when vcpkg is done — and even if the Cadly build/tests fail later,
@@ -146,22 +169,22 @@ jobs:
           key: vcpkg-bin-x64-windows-${{ hashFiles('vcpkg.json') }}
 
       - name: Build
-        run: cmake --build --preset windows-msvc-release
+        run: cmake --build --preset windows-ninja-release
 
       - name: Test
-        run: ctest --preset windows-msvc-release
+        run: ctest --preset windows-ninja-release
 
       - name: Import smoke check (STEP)
         shell: pwsh
         run: |
-          & "build/windows-msvc-release/bin/RelWithDebInfo/cad_import_cli.exe" test_files/as1-ug-214.stp
+          & "build/windows-ninja-release/bin/cad_import_cli.exe" test_files/as1-ug-214.stp
           if ($LASTEXITCODE -ne 0) { throw "cad_import_cli failed ($LASTEXITCODE)" }
 
       - name: Package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          cmake --install build/windows-msvc-release --config RelWithDebInfo --prefix package/cadly
+          cmake --install build/windows-ninja-release --prefix package/cadly
           if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
           # FetchContent'd deps (qlementine, qlementine-icons) install dev
           # files into the prefix; the viewer package only needs bin/ + share/.
@@ -170,11 +193,11 @@ jobs:
           # Non-Qt runtime DLLs (OCCT TK*, fmt, freetype, ...): vcpkg's
           # applocal post-build step already computed the exact closure next
           # to the built executables — reuse it instead of re-deriving.
-          Copy-Item "build/windows-msvc-release/bin/RelWithDebInfo/*.dll" "package/cadly/bin/" -Force
+          Copy-Item "build/windows-ninja-release/bin/*.dll" "package/cadly/bin/" -Force
 
           # Qt DLLs + runtime-loaded plugins (platforms, imageformats,
           # iconengines) via windeployqt from the vcpkg tools tree.
-          $wdq = Get-ChildItem "build/windows-msvc-release/vcpkg_installed" -Recurse -Filter "windeployqt.exe" | Select-Object -First 1
+          $wdq = Get-ChildItem "build/windows-ninja-release/vcpkg_installed" -Recurse -Filter "windeployqt.exe" | Select-Object -First 1
           if (-not $wdq) { throw "windeployqt.exe not found under vcpkg_installed (qtbase[windeployqt] feature missing?)" }
           & $wdq.FullName --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime package/cadly/bin/cadly.exe
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }
@@ -195,7 +218,8 @@ jobs:
             bin\cad_import_cli.exe sample-files\as1-ug-214.stp   (headless import stats)
 
           Requires the Microsoft Visual C++ Redistributable (x64), which most
-          systems already have: https://aka.ms/vs/17/release/vc_redist.x64.exe
+          systems already have. Latest installer:
+          https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist
           Requires a GPU/driver with OpenGL 4.1+.
           '@ | Set-Content package/cadly/README.txt
 

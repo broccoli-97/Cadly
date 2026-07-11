@@ -85,6 +85,29 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
+    },
+    {
+      "name": "windows-ninja-debug",
+      "inherits": "base",
+      "displayName": "Windows Ninja Debug (vcpkg manifest, MSVC from environment)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-ninja-release",
+      "inherits": "windows-ninja-debug",
+      "displayName": "Windows Ninja Release (vcpkg manifest, MSVC from environment)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
     }
   ],
   "buildPresets": [
@@ -94,7 +117,9 @@
     { "name": "linux-qt68-debug",   "configurePreset": "linux-qt68-debug" },
     { "name": "linux-qt68-release", "configurePreset": "linux-qt68-release" },
     { "name": "windows-msvc-debug",   "configurePreset": "windows-msvc-debug",   "configuration": "Debug" },
-    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "RelWithDebInfo" }
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "RelWithDebInfo" },
+    { "name": "windows-ninja-debug",   "configurePreset": "windows-ninja-debug" },
+    { "name": "windows-ninja-release", "configurePreset": "windows-ninja-release" }
   ],
   "testPresets": [
     { "name": "linux-debug",   "configurePreset": "linux-debug",   "output": { "outputOnFailure": true } },
@@ -102,6 +127,8 @@
     { "name": "linux-qt68-debug",   "configurePreset": "linux-qt68-debug",   "output": { "outputOnFailure": true } },
     { "name": "linux-qt68-release", "configurePreset": "linux-qt68-release", "output": { "outputOnFailure": true } },
     { "name": "windows-msvc-debug",   "configurePreset": "windows-msvc-debug",   "configuration": "Debug",          "output": { "outputOnFailure": true } },
-    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "RelWithDebInfo", "output": { "outputOnFailure": true } }
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "RelWithDebInfo", "output": { "outputOnFailure": true } },
+    { "name": "windows-ninja-debug",   "configurePreset": "windows-ninja-debug",   "output": { "outputOnFailure": true } },
+    { "name": "windows-ninja-release", "configurePreset": "windows-ninja-release", "output": { "outputOnFailure": true } }
   ]
 }
