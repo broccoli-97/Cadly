@@ -147,6 +147,9 @@ endif()
 
 if(CADLY_BUILD_TESTS)
   enable_testing()
+  if(CADLY_BUILD_GUI)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+  endif()
   add_subdirectory(tests)
 endif()
 

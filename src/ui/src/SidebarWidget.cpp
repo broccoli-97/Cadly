@@ -336,7 +336,7 @@ void SidebarWidget::show_get_info(std::uint32_t node_index,
   Popover::show_at(card, row_rect_global,
                    QString::fromStdString(
                      n.name.empty() ? std::string("(unnamed)") : n.name),
-                   /*pinnable=*/true);
+                   /*pinnable=*/true, window());
 }
 
 } // namespace cadly::ui

@@ -5,11 +5,12 @@
 // Popover is a frameless Qt::Popup window placed under (or over) an anchor
 // widget: click-outside and Esc dismiss it, matching the macOS popover
 // contract. PinnedCard is what a pinnable popover turns into when the user
-// hits its pin button — a small always-on-top tool window that survives
-// click-outside, so two "Get Info" cards can sit side by side for part
-// comparison. Private to the ui module.
+// hits its pin button — a floating child card that survives click-outside,
+// so two "Get Info" cards can sit side by side for part comparison. Private
+// to the ui module.
 
 #include <QPoint>
+#include <QPointer>
 #include <QWidget>
 
 namespace cadly::ui {
@@ -27,24 +28,27 @@ public:
 
   // Same, anchored to an arbitrary global rect (e.g. a tree row).
   static Popover* show_at(QWidget* content, const QRect& anchor_global,
-                          const QString& title = {}, bool pinnable = false);
+                          const QString& title = {}, bool pinnable = false,
+                          QWidget* owner_window = nullptr);
 
 protected:
   void paintEvent(QPaintEvent*) override;
 
 private:
-  explicit Popover(QWidget* content, const QString& title, bool pinnable);
+  explicit Popover(QWidget* content, const QString& title, bool pinnable,
+                   QWidget* owner_window);
   void pin();
 
   QWidget* content_{nullptr};
   QString  title_;
+  QPointer<QWidget> owner_window_;
 };
 
 class PinnedCard : public QWidget {
   Q_OBJECT
 public:
-  // Takes ownership of `content`. Top-level, frameless, stays on top of the
-  // main window, draggable by its header, closed by its ✕ button or Esc.
+  // Takes ownership of `content`. Floats above the main-window contents,
+  // draggable by its header, closed by its ✕ button or Esc.
   PinnedCard(QWidget* content, const QString& title, QWidget* main_window);
 
 protected:

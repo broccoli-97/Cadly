@@ -12,6 +12,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QScreen>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <cstdlib>
@@ -60,11 +61,13 @@ bool popovers_must_be_opaque() {
   return opaque;
 }
 
-Popover::Popover(QWidget* content, const QString& title, bool pinnable)
+Popover::Popover(QWidget* content, const QString& title, bool pinnable,
+                 QWidget* owner_window)
   : QWidget(nullptr, Qt::Popup | Qt::FramelessWindowHint |
                      Qt::NoDropShadowWindowHint),
     content_(content),
-    title_(title) {
+    title_(title),
+    owner_window_(owner_window) {
   setAttribute(Qt::WA_DeleteOnClose);
   if (!popovers_must_be_opaque()) {
     setAttribute(Qt::WA_TranslucentBackground);
@@ -102,23 +105,26 @@ Popover::Popover(QWidget* content, const QString& title, bool pinnable)
 void Popover::pin() {
   if (!content_) return;
   // Hand the content to a PinnedCard parked at the popover's position. The
-  // main window (any top-level non-popup ancestor of the anchor chain) keeps
-  // the card above itself without pinning it over other apps.
-  QWidget* main_window = nullptr;
-  for (QWidget* w : QApplication::topLevelWidgets()) {
-    if (w->isWindow() && w->isVisible() &&
-        !(w->windowFlags() & Qt::Popup) && w != this) {
-      main_window = w;
-      break;
-    }
-  }
+  // owning window keeps the card above itself without pinning it over other
+  // apps. In particular, do not rediscover the owner from topLevelWidgets():
+  // Qt::WindowType values are mutually exclusive values, not bit flags, and
+  // a parentless Qt::Tool can be parked off-screen by some window managers.
   QWidget* content = content_;
   content_ = nullptr;
   const QPoint at = pos();
-  auto* card = new PinnedCard(content, title_, main_window);
-  card->move(at);
-  card->show();
+  auto* card = new PinnedCard(content, title_, owner_window_);
+  if (card->parentWidget()) {
+    card->move(card->parentWidget()->mapFromGlobal(at));
+  } else {
+    card->move(at);
+  }
   close();
+  // Finish closing the Qt::Popup and release its native input grab before
+  // exposing the replacement card.
+  QTimer::singleShot(0, card, [card] {
+    card->show();
+    card->raise();
+  });
 }
 
 void Popover::paintEvent(QPaintEvent*) {
@@ -129,12 +135,14 @@ void Popover::paintEvent(QPaintEvent*) {
 Popover* Popover::show_for(QWidget* content, QWidget* anchor,
                            const QString& title, bool pinnable) {
   const QRect global(anchor->mapToGlobal(QPoint(0, 0)), anchor->size());
-  return show_at(content, global, title, pinnable);
+  return show_at(content, global, title, pinnable, anchor->window());
 }
 
 Popover* Popover::show_at(QWidget* content, const QRect& anchor_global,
-                          const QString& title, bool pinnable) {
-  auto* pop = new Popover(content, title, pinnable);
+                          const QString& title, bool pinnable,
+                          QWidget* owner_window) {
+  if (!owner_window) owner_window = QApplication::activeWindow();
+  auto* pop = new Popover(content, title, pinnable, owner_window);
   pop->adjustSize();
   const QSize sz = pop->sizeHint().expandedTo(pop->size());
 
@@ -154,7 +162,9 @@ Popover* Popover::show_at(QWidget* content, const QRect& anchor_global,
 
 PinnedCard::PinnedCard(QWidget* content, const QString& title,
                        QWidget* main_window)
-  : QWidget(main_window, Qt::Tool | Qt::FramelessWindowHint) {
+  : QWidget(main_window,
+            main_window ? Qt::Widget
+                        : Qt::Tool | Qt::FramelessWindowHint) {
   setAttribute(Qt::WA_DeleteOnClose);
   if (!popovers_must_be_opaque()) {
     setAttribute(Qt::WA_TranslucentBackground);
@@ -193,14 +203,17 @@ void PinnedCard::paintEvent(QPaintEvent*) {
 void PinnedCard::mousePressEvent(QMouseEvent* e) {
   if (e->button() == Qt::LeftButton) {
     dragging_ = true;
-    drag_offset_ = e->globalPosition().toPoint() - frameGeometry().topLeft();
+    drag_offset_ = e->position().toPoint();
   }
   QWidget::mousePressEvent(e);
 }
 
 void PinnedCard::mouseMoveEvent(QMouseEvent* e) {
   if (dragging_ && (e->buttons() & Qt::LeftButton)) {
-    move(e->globalPosition().toPoint() - drag_offset_);
+    const QPoint global_top_left =
+      e->globalPosition().toPoint() - drag_offset_;
+    move(parentWidget() ? parentWidget()->mapFromGlobal(global_top_left)
+                        : global_top_left);
   } else {
     dragging_ = false;
   }
