@@ -12,6 +12,7 @@
 #include <vector>
 
 class QVariantAnimation;
+class QMenu;
 
 namespace cadly::ui {
 
@@ -24,6 +25,12 @@ public:
   void set_current(int index);                    // no signal emitted
   int  current() const { return current_; }
   int  count() const { return static_cast<int>(segments_.size()); }
+
+  // Attaches a compact chevron menu to one segment. Clicking the chevron
+  // selects that segment first, then opens the menu below the control.
+  void set_segment_menu(int index, QMenu* menu);
+  QMenu* segment_menu(int index) const;
+  void show_segment_menu(int index);
 
   // Compact = 20px tall (strip header); default = 26px (toolbar).
   void set_compact(bool on);
@@ -44,8 +51,11 @@ protected:
 private:
   struct Segment {
     QString text;
+    QString tooltip;
+    QMenu*  menu{nullptr};
   };
   int index_at(const QPoint& pos) const;
+  bool menu_at(int index, const QPoint& pos) const;
   int segment_width(const Segment& s) const;
   QRectF segment_rect(int index) const;
   void animate_to(int index);
@@ -53,6 +63,7 @@ private:
   std::vector<Segment> segments_;
   int  current_{0};
   int  hover_{-1};
+  bool hover_menu_{false};
   bool compact_{false};
   QRectF thumb_rect_;
   QVariantAnimation* thumb_animation_{nullptr};

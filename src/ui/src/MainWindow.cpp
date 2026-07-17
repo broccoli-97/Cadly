@@ -700,8 +700,6 @@ void MainWindow::refresh_theme() {
   act_fit_->setIcon(themed_icon(QStringLiteral("action/zoom-fit")));
   act_wireframe_->setIcon(themed_icon(QStringLiteral("shape/cube")));
   act_hidden_line_->setIcon(themed_icon(QStringLiteral("shape/borders")));
-  act_edges_->setIcon(themed_icon(QStringLiteral("shape/borders")));
-  act_triangle_mesh_->setIcon(themed_icon(QStringLiteral("shape/triangle")));
   act_perspective_->setIcon(
     themed_icon(QStringLiteral("misc/function-angle")));
   act_toggle_sidebar_->setIcon(
@@ -871,6 +869,9 @@ void MainWindow::run_demo(const QString& name) {
     set_surface_mode(SurfaceMode::Wireframe);
   } else if (name == QLatin1String("hiddenline")) {
     set_surface_mode(SurfaceMode::HiddenLine);
+  } else if (name == QLatin1String("shadedmenu")) {
+    set_surface_mode(SurfaceMode::Shaded);
+    toolbar_->display_segments()->show_segment_menu(0);
   } else if (name == QLatin1String("display")) {
     act_toggle_inspector_->setChecked(true);
     inspector_->set_current_tab(InspectorWidget::DisplayTab);

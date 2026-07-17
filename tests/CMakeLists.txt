@@ -32,4 +32,22 @@ if(CADLY_BUILD_GUI)
   set_tests_properties(cadly_popover PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
   )
+
+  add_executable(cadly_toolbar_test toolbar_test.cpp)
+  target_link_libraries(cadly_toolbar_test
+    PRIVATE
+      Cadly::Ui
+      Cadly::Warnings
+      Qt6::Test
+      qlementine-icons
+  )
+  target_include_directories(cadly_toolbar_test
+    PRIVATE
+      ${CMAKE_SOURCE_DIR}/src/ui/src
+  )
+  target_compile_features(cadly_toolbar_test PRIVATE cxx_std_17)
+  add_test(NAME cadly_toolbar COMMAND cadly_toolbar_test)
+  set_tests_properties(cadly_toolbar PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+  )
 endif()

@@ -100,12 +100,11 @@ ToolbarWidget::ToolbarWidget(const Actions& a, QWidget* parent)
                          tr("Technical drawing with hidden edges removed (H)"));
   segments_->add_segment(tr("Wireframe"),
                          tr("BRep wireframe only (W)"));
+  auto* shaded_menu = new QMenu(tr("Shaded overlays"), this);
+  shaded_menu->addAction(a.edges);
+  shaded_menu->addAction(a.triangle_mesh);
+  segments_->set_segment_menu(0, shaded_menu);
   layout->addWidget(segments_);
-
-  layout->addWidget(make_button(a.edges, this, true,
-                                ToolbarButton::Emphasis::Accent));
-  layout->addWidget(make_button(a.triangle_mesh, this, true,
-                                ToolbarButton::Emphasis::Accent));
 
   layout->addWidget(new ToolbarSeparator(this));
 

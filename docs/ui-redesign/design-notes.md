@@ -28,6 +28,12 @@ the open questions to settle before migration.*
 > proposal. The current shell shows each open file in a closable tab below the
 > toolbar; import progress appears in that tab and the status bar. The display
 > control is now `Shaded | Hidden Line | Wireframe`; `H` selects Hidden Line.
+> `Edges` and `Triangle Mesh` now live in a split menu on `Shaded`: both are
+> subordinate overlays that are only legal in that surface mode, so keeping
+> them as peer-level toolbar chips advertised impossible combinations. The
+> split menu preserves their independent checked state and E/T shortcuts while
+> matching the prototype's compact, anchored-popover visual language. This
+> supersedes the historical chip references below.
 > A visual-parity pass also replaced the stock Fusion document tabs, aligned
 > stock controls to the 24–28px / 6px Graphite geometry, moved sidebar search
 > into the panel header, restored part glyphs, and added restrained 120–140ms

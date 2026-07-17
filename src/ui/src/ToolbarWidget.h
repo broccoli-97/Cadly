@@ -1,7 +1,7 @@
 #pragma once
 
 // The 52px unified toolbar: sidebar toggle · Open split-button (recents in
-// the chevron) · Shaded|Hidden Line|Wireframe segmented + Edges/Mesh chips ·
+// the chevron) · Shaded split-menu|Hidden Line|Wireframe segmented control ·
 // projection / Views / Fit · appearance · panel toggles · zero-chrome. The
 // active filename lives in the document tab bar below, not in the toolbar.
 

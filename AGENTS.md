@@ -49,6 +49,9 @@ representative STEP or IGES inputs; do not commit private CAD files.
 Follow Conventional Commits found in history: `type(scope): imperative summary`,
 for example `feat(ui): replace dock shell with graphite layout`. Use lowercase,
 no trailing period, and types such as `feat`, `fix`, `test`, `docs`, or `build`.
+Non-trivial commits must also include a body that explains the motivation,
+user-visible behavior, and validation performed; do not use a subject-only
+commit message for feature work or bug fixes.
 PRs should explain user-visible behavior and affected modules, link issues,
 report exact test commands, and include screenshots for UI or viewport changes.
 

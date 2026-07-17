@@ -168,7 +168,8 @@ int main(int argc, char** argv) {
       // one is up, so the popover demos actually show the card.
       QPixmap pm;
       const bool has_popup = demo == QLatin1String("views") ||
-                             demo == QLatin1String("getinfo");
+                             demo == QLatin1String("getinfo") ||
+                             demo == QLatin1String("shadedmenu");
       if (has_popup) {
         if (auto* popup = QApplication::activePopupWidget()) pm = popup->grab();
       }
