@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
   parser.addOption(shotOpt);
   QCommandLineOption demoOpt("demo",
     "Dev aid: drive a UI state before the screenshot "
-    "(wireframe|light|dark|views|getinfo|zerochrome).",
+    "(wireframe|hiddenline|light|dark|display|import|views|getinfo|zerochrome).",
     "state");
   parser.addOption(demoOpt);
   parser.addPositionalArgument("file", "Optional CAD file to open at startup.");

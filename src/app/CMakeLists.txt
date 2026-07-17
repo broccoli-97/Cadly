@@ -25,7 +25,7 @@ target_link_libraries(cadly
 )
 
 # The full qlementine QStyle is only built on Qt >= 6.8 (see the root
-# CMakeLists); Theme.cpp compiles its Fusion + dark palette fallback when the
+# CMakeLists); Theme.cpp compiles its Fusion Dark/Light fallback when the
 # define is absent.
 if(CADLY_HAS_QLEMENTINE)
   target_link_libraries(cadly PRIVATE qlementine)

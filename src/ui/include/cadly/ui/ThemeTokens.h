@@ -7,7 +7,7 @@ namespace cadly::ui {
 
 // Design tokens for the "Graphite" shell (docs/ui-redesign/design-notes.md).
 //
-// The custom-painted widgets (toolbar, segmented controls, capsule, sidebar
+// The custom-painted widgets (toolbar, segmented controls, sidebar
 // delegate, popovers, …) read THESE tokens at paint time, not QPalette. The
 // global QPalette / QStyle still themes the stock widgets (spin boxes, combo
 // boxes, menus) — app::apply_theme keeps the two in step — but the bespoke

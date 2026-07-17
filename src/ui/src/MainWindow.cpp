@@ -5,7 +5,6 @@
 #include "cadly/ui/ViewportWidget.h"
 
 #include "DiagnosticsStrip.h"
-#include "DocumentCapsule.h"
 #include "IconUtils.h"
 #include "ImportOptionsWidget.h"
 #include "InspectorWidget.h"
@@ -20,6 +19,7 @@
 #include "cadly/platform/Log.h"
 
 #include <QAction>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDialog>
@@ -35,22 +35,28 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QSettings>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QtConcurrent>
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 
 namespace cadly::ui {
 
-// Sink bridge shared between the worker thread and the GUI's capsule poll.
+// Sink bridge shared between the worker thread and the GUI progress poll.
 // Declared (not defined) in MainWindow.h so the shared_ptr member works;
 // defined at namespace scope here. The message is mutex-guarded — the old
 // GuiProgressSink wrote the std::string from the worker while the GUI timer
@@ -76,6 +82,17 @@ public:
 private:
   mutable std::mutex mutex_;
   std::string        latest_message_;
+};
+
+struct DocumentState {
+  QString path;
+  std::shared_ptr<scene::Scene> scene;
+  cad::ImportSummary summary;
+  bool has_summary{false};
+  bool loading{false};
+  bool failed{false};
+  bool camera_initialized{false};
+  bool close_requested{false};
 };
 
 namespace {
@@ -149,18 +166,6 @@ cad::ImportOptions load_import_options(QSettings& s) {
   return o;
 }
 
-QString brief_scene_stats(const scene::Scene& scn) {
-  std::size_t triangles = 0;
-  for (const auto& m : scn.meshes) {
-    if (m) triangles += m->triangle_count();
-  }
-  const QString tris = triangles >= 10000
-    ? QStringLiteral("%1k").arg(QString::number(
-        static_cast<double>(triangles) / 1000.0, 'f', 1))
-    : QString::number(triangles);
-  return QStringLiteral("%1 nodes · %2 tris").arg(scn.nodes.size()).arg(tris);
-}
-
 // Small floating cluster over the viewport's top-right: Views popover, Fit,
 // projection toggle. Mirrors toolbar actions so it works in zero-chrome.
 class ViewportHud final : public QWidget {
@@ -183,6 +188,123 @@ protected:
     p.setBrush(bg);
     p.drawRoundedRect(QRectF(0.5, 0.5, width() - 1.0, height() - 1.0), 8, 8);
   }
+};
+
+class TabCloseButton final : public QAbstractButton {
+public:
+  explicit TabCloseButton(QWidget* parent) : QAbstractButton(parent) {
+    setFixedSize(18, 18);
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::NoFocus);
+    connect(&ThemeManager::instance(), &ThemeManager::changed,
+            this, QOverload<>::of(&QWidget::update));
+  }
+
+protected:
+  void paintEvent(QPaintEvent*) override {
+    const auto& t = tokens();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    if (underMouse()) {
+      p.setPen(Qt::NoPen);
+      p.setBrush(t.control_active);
+      p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+    }
+    QPen pen(isEnabled() ? (underMouse() ? t.text1 : t.text3) : t.text3, 1.35);
+    pen.setCapStyle(Qt::RoundCap);
+    p.setPen(pen);
+    p.drawLine(QPointF(5.5, 5.5), QPointF(12.5, 12.5));
+    p.drawLine(QPointF(12.5, 5.5), QPointF(5.5, 12.5));
+  }
+};
+
+class DocumentTabBar final : public QTabBar {
+public:
+  explicit DocumentTabBar(QWidget* parent) : QTabBar(parent) {
+    setMouseTracking(true);
+    connect(&ThemeManager::instance(), &ThemeManager::changed,
+            this, QOverload<>::of(&QWidget::update));
+  }
+
+protected:
+  QSize tabSizeHint(int index) const override {
+    const QFontMetrics fm(ui_font(12, QFont::Medium));
+    const int text_width = fm.horizontalAdvance(tabText(index));
+    return {std::clamp(text_width + 62, 180, 240), 32};
+  }
+
+  void mouseMoveEvent(QMouseEvent* event) override {
+    const int next = tabAt(event->pos());
+    if (next != hover_index_) {
+      hover_index_ = next;
+      update();
+    }
+    QTabBar::mouseMoveEvent(event);
+  }
+
+  void leaveEvent(QEvent* event) override {
+    hover_index_ = -1;
+    update();
+    QTabBar::leaveEvent(event);
+  }
+
+  void paintEvent(QPaintEvent*) override {
+    const auto& t = tokens();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.fillRect(rect(), t.toolbar_bg);
+    p.fillRect(QRect(0, height() - 1, width(), 1), t.hairline);
+
+    auto draw_tab = [&](int index) {
+      QRectF r = tabRect(index);
+      r.adjust(1.0, 3.0, -1.0, 0.0);
+      if (!r.intersects(rect())) return;
+      const bool active = index == currentIndex();
+      const bool hovered = index == hover_index_;
+
+      QPainterPath shape;
+      shape.moveTo(r.left(), r.bottom());
+      shape.lineTo(r.left(), r.top() + 7.0);
+      shape.quadTo(r.left(), r.top(), r.left() + 7.0, r.top());
+      shape.lineTo(r.right() - 7.0, r.top());
+      shape.quadTo(r.right(), r.top(), r.right(), r.top() + 7.0);
+      shape.lineTo(r.right(), r.bottom());
+      shape.closeSubpath();
+
+      if (active || hovered) {
+        p.setPen(active ? QPen(t.hairline_soft, 1.0) : Qt::NoPen);
+        p.setBrush(active ? t.sidebar_bg : t.control_hover);
+        p.drawPath(shape);
+      }
+
+      const QString title = tabText(index);
+      const bool failed = title.contains(QStringLiteral("(failed)"));
+      const QColor icon_color = failed ? t.error : active ? t.accent : t.text3;
+      const QRect icon_rect(static_cast<int>(r.left()) + 10,
+                            static_cast<int>(r.center().y()) - 7, 14, 14);
+      themed_icon(QStringLiteral("shape/cube"), icon_color, icon_color)
+        .paint(&p, icon_rect);
+
+      const int left = icon_rect.right() + 7;
+      const int right_pad = tabButton(index, QTabBar::RightSide) ? 30 : 10;
+      const QRect text_rect(left, static_cast<int>(r.top()),
+                            static_cast<int>(r.right()) - left - right_pad,
+                            static_cast<int>(r.height()));
+      p.setFont(ui_font(12, active ? QFont::Medium : QFont::Normal));
+      p.setPen(failed ? t.error : active ? t.text1 : t.text2);
+      const QFontMetrics fm(p.font());
+      p.drawText(text_rect, Qt::AlignLeft | Qt::AlignVCenter,
+                 fm.elidedText(title, Qt::ElideMiddle, text_rect.width()));
+    };
+
+    for (int i = 0; i < count(); ++i) {
+      if (i != currentIndex()) draw_tab(i);
+    }
+    if (currentIndex() >= 0) draw_tab(currentIndex());
+  }
+
+private:
+  int hover_index_{-1};
 };
 
 } // namespace
@@ -228,6 +350,13 @@ void MainWindow::build_actions() {
   connect(act_open_with_options_, &QAction::triggered,
           this, &MainWindow::open_file_with_options);
 
+  act_close_tab_ = new QAction(tr("&Close Tab"), this);
+  act_close_tab_->setShortcut(QKeySequence::Close);
+  act_close_tab_->setEnabled(false);
+  connect(act_close_tab_, &QAction::triggered, this, [this]() {
+    if (tabs_) close_document(tabs_->currentIndex());
+  });
+
   act_quit_ = new QAction(tr("&Quit"), this);
   act_quit_->setShortcut(QKeySequence::Quit);
   connect(act_quit_, &QAction::triggered, qApp, &QApplication::quit);
@@ -243,8 +372,18 @@ void MainWindow::build_actions() {
   act_wireframe_->setShortcut(Qt::Key_W);
   act_wireframe_->setToolTip(
     tr("Show only the BRep wireframe (analytical edges, auto-refined on zoom)"));
-  connect(act_wireframe_, &QAction::toggled,
-          this, &MainWindow::on_toggle_wireframe);
+  connect(act_wireframe_, &QAction::triggered, this, [this](bool on) {
+    set_surface_mode(on ? SurfaceMode::Wireframe : SurfaceMode::Shaded);
+  });
+
+  act_hidden_line_ = new QAction(tr("&Hidden Line"), this);
+  act_hidden_line_->setCheckable(true);
+  act_hidden_line_->setShortcut(Qt::Key_H);
+  act_hidden_line_->setToolTip(
+    tr("Show flat technical-drawing faces with hidden BRep edges removed"));
+  connect(act_hidden_line_, &QAction::triggered, this, [this](bool on) {
+    set_surface_mode(on ? SurfaceMode::HiddenLine : SurfaceMode::Shaded);
+  });
 
   act_edges_ = new QAction(tr("Show &Edges"), this);
   act_edges_->setIconText(tr("Edges"));
@@ -367,6 +506,16 @@ void MainWindow::build_shell() {
   ta.theme            = act_theme_dark_;
   toolbar_ = new ToolbarWidget(ta, this);
 
+  tabs_ = new DocumentTabBar(this);
+  tabs_->setDocumentMode(true);
+  tabs_->setDrawBase(false);
+  tabs_->setMovable(true);
+  tabs_->setExpanding(false);
+  tabs_->setUsesScrollButtons(true);
+  tabs_->setElideMode(Qt::ElideMiddle);
+  tabs_->setFixedHeight(36);
+  tabs_->hide();
+
   // Center column: viewport over the (default-hidden) diagnostics strip.
   split_v_ = new QSplitter(Qt::Vertical, this);
   split_v_->addWidget(viewport_);
@@ -397,6 +546,7 @@ void MainWindow::build_shell() {
   v->setContentsMargins(0, 0, 0, 0);
   v->setSpacing(0);
   v->addWidget(toolbar_);
+  v->addWidget(tabs_);
   v->addWidget(split_h_, 1);
   setCentralWidget(central);
 
@@ -432,7 +582,9 @@ void MainWindow::build_shell() {
           [this]() { act_toggle_strip_->setChecked(false); });
 
   connect(toolbar_->display_segments(), &SegmentedControl::segment_clicked,
-          this, [this](int idx) { act_wireframe_->setChecked(idx == 1); });
+          this, [this](int idx) {
+            set_surface_mode(static_cast<SurfaceMode>(idx));
+          });
   connect(toolbar_->views_button(), &QAbstractButton::clicked, this,
           [this]() { show_views_popover(toolbar_->views_button()); });
 
@@ -448,21 +600,23 @@ void MainWindow::build_shell() {
   connect(inspector_, &InspectorWidget::import_options_changed, this,
           [this]() { save_settings(); });
   connect(inspector_, &InspectorWidget::reimport_requested, this, [this]() {
-    if (!current_path_.isEmpty() && !importing_) {
-      start_import(current_path_, inspector_->import_options());
+    auto* document = active_document();
+    if (document && !document->path.isEmpty() && !importing_) {
+      start_import(document, inspector_->import_options());
     }
   });
 
-  auto* capsule = toolbar_->capsule();
-  connect(capsule, &DocumentCapsule::cancel_requested, this, [this]() {
-    if (import_sink_) import_sink_->cancelled_flag.store(true);
-  });
-  connect(capsule, &DocumentCapsule::clicked, this, [this]() {
-    if (current_path_.isEmpty()) return;
-    auto* lbl = new QLabel(current_path_);
-    lbl->setFont(mono_font(12));
-    lbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    Popover::show_for(lbl, toolbar_->capsule(), tr("Source file"));
+  connect(tabs_, &QTabBar::currentChanged,
+          this, &MainWindow::activate_document);
+  connect(tabs_, &QTabBar::tabCloseRequested,
+          this, &MainWindow::close_document);
+  connect(tabs_, &QTabBar::tabMoved, this, [this](int from, int to) {
+    if (from < 0 || to < 0 || from >= static_cast<int>(documents_.size()) ||
+        to >= static_cast<int>(documents_.size()) || from == to) return;
+    auto moved = std::move(documents_[static_cast<std::size_t>(from)]);
+    documents_.erase(documents_.begin() + from);
+    documents_.insert(documents_.begin() + to, std::move(moved));
+    activate_document(tabs_->currentIndex());
   });
 }
 
@@ -471,6 +625,7 @@ void MainWindow::build_menus() {
   file_menu->addAction(act_open_);
   file_menu->addAction(act_open_with_options_);
   file_menu->addMenu(recents_menu_);
+  file_menu->addAction(act_close_tab_);
   file_menu->addSeparator();
   file_menu->addAction(act_quit_);
 
@@ -478,6 +633,7 @@ void MainWindow::build_menus() {
   view_menu->addAction(act_fit_);
   view_menu->addSeparator();
   view_menu->addAction(act_wireframe_);
+  view_menu->addAction(act_hidden_line_);
   view_menu->addAction(act_edges_);
   view_menu->addAction(act_triangle_mesh_);
   view_menu->addSeparator();
@@ -507,7 +663,21 @@ void MainWindow::build_status_bar() {
   status_stats_->setFont(mono_font(11));
   status_frame_ = new QLabel;
   status_frame_->setFont(mono_font(11));
+  import_progress_ = new QProgressBar;
+  import_progress_->setRange(0, 1000);
+  import_progress_->setFixedSize(180, 16);
+  import_progress_->setTextVisible(true);
+  import_progress_->hide();
+  import_cancel_ = new QToolButton;
+  import_cancel_->setAutoRaise(true);
+  import_cancel_->setToolTip(tr("Cancel import"));
+  import_cancel_->hide();
+  connect(import_cancel_, &QAbstractButton::clicked, this, [this]() {
+    if (import_sink_) import_sink_->cancelled_flag.store(true);
+  });
   statusBar()->addWidget(status_path_, 1);
+  statusBar()->addPermanentWidget(import_progress_);
+  statusBar()->addPermanentWidget(import_cancel_);
   statusBar()->addPermanentWidget(status_stats_);
   statusBar()->addPermanentWidget(status_frame_);
 }
@@ -526,8 +696,10 @@ void MainWindow::refresh_theme() {
   act_open_->setIcon(themed_icon(QStringLiteral("document/open")));
   act_open_with_options_->setIcon(
     themed_icon(QStringLiteral("navigation/settings")));
+  act_close_tab_->setIcon(themed_icon(QStringLiteral("action/close-small")));
   act_fit_->setIcon(themed_icon(QStringLiteral("action/zoom-fit")));
   act_wireframe_->setIcon(themed_icon(QStringLiteral("shape/cube")));
+  act_hidden_line_->setIcon(themed_icon(QStringLiteral("shape/borders")));
   act_edges_->setIcon(themed_icon(QStringLiteral("shape/borders")));
   act_triangle_mesh_->setIcon(themed_icon(QStringLiteral("shape/triangle")));
   act_perspective_->setIcon(
@@ -554,6 +726,10 @@ void MainWindow::refresh_theme() {
       hud_->move(viewport_->width() - hud_->width() - 12, 12);
     }
   }
+  if (import_cancel_) {
+    import_cancel_->setIcon(
+      themed_icon(QStringLiteral("action/close-small")));
+  }
   {
     const QSignalBlocker block(act_theme_dark_);
     act_theme_dark_->setChecked(dark);
@@ -566,6 +742,16 @@ void MainWindow::refresh_theme() {
                        dark ? QColor(0x1A, 0x1B, 0x1E)
                             : QColor(0xD8, 0xDA, 0xDE));
   centralWidget()->setPalette(central_pal);
+
+  if (tabs_) {
+    QPalette tab_pal = tabs_->palette();
+    tab_pal.setColor(QPalette::Window, t.toolbar_bg);
+    tab_pal.setColor(QPalette::WindowText, t.text2);
+    tab_pal.setColor(QPalette::Button, t.sidebar_bg);
+    tab_pal.setColor(QPalette::ButtonText, t.text1);
+    tabs_->setPalette(tab_pal);
+    tabs_->setAutoFillBackground(true);
+  }
 
   QPalette status_pal = statusBar()->palette();
   status_pal.setColor(QPalette::Window, t.status_bg);
@@ -585,37 +771,41 @@ void MainWindow::update_display_mode() {
   // Start from the viewport's current mode so transient renderer-fed state
   // (rotation pivot) is preserved.
   renderer::DisplayMode mode = viewport_->display_mode();
-  mode.wireframe          = act_wireframe_->isChecked();
-  mode.show_edges         = act_edges_->isChecked();
+  mode.wireframe          = surface_mode_ == SurfaceMode::Wireframe;
+  mode.hidden_line        = surface_mode_ == SurfaceMode::HiddenLine;
+  mode.show_edges         = mode.hidden_line || act_edges_->isChecked();
   mode.show_triangle_mesh = act_triangle_mesh_->isChecked();
-  if (mode.wireframe) {
-    mode.show_edges         = false;
+  if (mode.wireframe || mode.hidden_line) {
+    mode.show_edges         = mode.hidden_line;
     mode.show_triangle_mesh = false;
   }
   inspector_->apply_display(mode);
   const auto& t = tokens();
   mode.background_top    = to_vec3(t.viewport_top);
   mode.background_bottom = to_vec3(t.viewport_bottom);
+  mode.hidden_line_color = mode.background_top;
+  if (mode.hidden_line) mode.background_bottom = mode.background_top;
   viewport_->set_display_mode(mode);
   update_status_for_scene();
 }
 
-void MainWindow::on_toggle_wireframe(bool on) {
-  // Wireframe replaces the shaded surface; the Edges overlay and the
-  // triangle-mesh debug overlay both need that surface (for depth-matched
-  // polygon offset / back-face occlusion respectively). Instead of the old
-  // silent-uncheck dance, the two chips become disabled-but-remembered while
-  // Wireframe is active — the rule is the same, it is just visible now.
-  if (on) {
+void MainWindow::set_surface_mode(SurfaceMode mode) {
+  const bool was_shaded = surface_mode_ == SurfaceMode::Shaded;
+  const bool is_shaded  = mode == SurfaceMode::Shaded;
+
+  if (was_shaded && !is_shaded) {
     remembered_edges_ = act_edges_->isChecked();
     remembered_mesh_  = act_triangle_mesh_->isChecked();
+  }
+
+  if (!is_shaded) {
     const QSignalBlocker b1(act_edges_);
     const QSignalBlocker b2(act_triangle_mesh_);
     act_edges_->setChecked(false);
     act_triangle_mesh_->setChecked(false);
     act_edges_->setEnabled(false);
     act_triangle_mesh_->setEnabled(false);
-  } else {
+  } else if (!was_shaded) {
     act_edges_->setEnabled(true);
     act_triangle_mesh_->setEnabled(true);
     const QSignalBlocker b1(act_edges_);
@@ -623,7 +813,15 @@ void MainWindow::on_toggle_wireframe(bool on) {
     act_edges_->setChecked(remembered_edges_);
     act_triangle_mesh_->setChecked(remembered_mesh_);
   }
-  toolbar_->display_segments()->set_current(on ? 1 : 0);
+
+  surface_mode_ = mode;
+  {
+    const QSignalBlocker b1(act_wireframe_);
+    const QSignalBlocker b2(act_hidden_line_);
+    act_wireframe_->setChecked(mode == SurfaceMode::Wireframe);
+    act_hidden_line_->setChecked(mode == SurfaceMode::HiddenLine);
+  }
+  toolbar_->display_segments()->set_current(static_cast<int>(mode));
   update_display_mode();
 }
 
@@ -647,6 +845,7 @@ void MainWindow::on_zero_chrome(bool on) {
     act_toggle_inspector_->setEnabled(false);
     act_toggle_strip_->setEnabled(false);
     toolbar_->hide();
+    tabs_->hide();
     statusBar()->hide();
   } else {
     act_toggle_sidebar_->setEnabled(true);
@@ -656,6 +855,7 @@ void MainWindow::on_zero_chrome(bool on) {
     act_toggle_inspector_->setChecked(zc_inspector_);
     act_toggle_strip_->setChecked(zc_strip_);
     toolbar_->show();
+    tabs_->setVisible(!documents_.empty());
     statusBar()->show();
   }
 }
@@ -668,7 +868,15 @@ void MainWindow::show_views_popover(QWidget* anchor) {
 
 void MainWindow::run_demo(const QString& name) {
   if (name == QLatin1String("wireframe")) {
-    act_wireframe_->setChecked(true);
+    set_surface_mode(SurfaceMode::Wireframe);
+  } else if (name == QLatin1String("hiddenline")) {
+    set_surface_mode(SurfaceMode::HiddenLine);
+  } else if (name == QLatin1String("display")) {
+    act_toggle_inspector_->setChecked(true);
+    inspector_->set_current_tab(InspectorWidget::DisplayTab);
+  } else if (name == QLatin1String("import")) {
+    act_toggle_inspector_->setChecked(true);
+    inspector_->set_current_tab(InspectorWidget::ImportTab);
   } else if (name == QLatin1String("light")) {
     ThemeManager::instance().set_dark(false);
   } else if (name == QLatin1String("dark")) {
@@ -680,15 +888,177 @@ void MainWindow::run_demo(const QString& name) {
   } else if (name == QLatin1String("getinfo")) {
     // Pop Get Info for the first leaf node with geometry, anchored near the
     // top of the sidebar (mirrors a hover-(i) click on a tree row).
-    if (scene_) {
-      for (std::uint32_t i = 0; i < scene_->nodes.size(); ++i) {
-        if (scene_->nodes[i].mesh_index) {
+    if (const auto* document = active_document();
+        document && document->scene) {
+      for (std::uint32_t i = 0; i < document->scene->nodes.size(); ++i) {
+        if (document->scene->nodes[i].mesh_index) {
           const QRect anchor(mapToGlobal(QPoint(20, 140)), QSize(180, 26));
           sidebar_->show_get_info_for(i, anchor);
           break;
         }
       }
     }
+  }
+}
+
+DocumentState* MainWindow::active_document() const {
+  if (!tabs_) return nullptr;
+  const int index = tabs_->currentIndex();
+  if (index < 0 || index >= static_cast<int>(documents_.size())) return nullptr;
+  return documents_[static_cast<std::size_t>(index)].get();
+}
+
+DocumentState* MainWindow::find_document(const QString& path) const {
+  QString wanted = QFileInfo(path).canonicalFilePath();
+  if (wanted.isEmpty()) wanted = QFileInfo(path).absoluteFilePath();
+#if defined(Q_OS_WIN)
+  constexpr auto sensitivity = Qt::CaseInsensitive;
+#else
+  constexpr auto sensitivity = Qt::CaseSensitive;
+#endif
+  for (const auto& document : documents_) {
+    QString existing = QFileInfo(document->path).canonicalFilePath();
+    if (existing.isEmpty()) existing = QFileInfo(document->path).absoluteFilePath();
+    if (QString::compare(existing, wanted, sensitivity) == 0) {
+      return document.get();
+    }
+  }
+  return nullptr;
+}
+
+int MainWindow::document_index(const DocumentState* document) const {
+  for (std::size_t i = 0; i < documents_.size(); ++i) {
+    if (documents_[i].get() == document) return static_cast<int>(i);
+  }
+  return -1;
+}
+
+DocumentState* MainWindow::add_document(const QString& path) {
+  auto document = std::make_unique<DocumentState>();
+  document->path = QFileInfo(path).absoluteFilePath();
+  auto* raw = document.get();
+  documents_.push_back(std::move(document));
+
+  const QSignalBlocker blocker(tabs_);
+  const int index = tabs_->addTab(QFileInfo(path).fileName());
+  auto* close = new TabCloseButton(tabs_);
+  tabs_->setTabButton(index, QTabBar::RightSide, close);
+  connect(close, &QAbstractButton::clicked, this, [this, raw]() {
+    close_document(document_index(raw));
+  });
+  tabs_->setTabToolTip(index, raw->path);
+  tabs_->setCurrentIndex(index);
+  tabs_->setVisible(!act_zero_chrome_->isChecked());
+  activate_document(index);
+  return raw;
+}
+
+void MainWindow::update_document_tab(DocumentState* document) {
+  const int index = document_index(document);
+  if (index < 0) return;
+
+  const QString filename = QFileInfo(document->path).fileName();
+  QString title = filename;
+  if (document->close_requested) {
+    title = tr("%1 (canceling…)").arg(filename);
+  } else if (document->loading) {
+    const int percent = import_sink_
+      ? static_cast<int>(std::clamp(import_sink_->fraction.load(), 0.0f, 1.0f) *
+                         100.0f) : 0;
+    title = tr("%1 (%2%)").arg(filename).arg(percent);
+  } else if (document->failed) {
+    title = tr("%1 (failed)").arg(filename);
+  }
+  tabs_->setTabText(index, title);
+  tabs_->setTabToolTip(index, document->path);
+}
+
+void MainWindow::activate_document(int index) {
+  DocumentState* document = nullptr;
+  if (index >= 0 && index < static_cast<int>(documents_.size())) {
+    document = documents_[static_cast<std::size_t>(index)].get();
+  }
+
+  if (!document) {
+    viewport_->set_scene(nullptr);
+    sidebar_->clear();
+    inspector_->set_scene(nullptr);
+    inspector_->set_reimport_enabled(false);
+    strip_->clear();
+    act_close_tab_->setEnabled(false);
+    setWindowTitle(QStringLiteral("Cadly"));
+    update_status_for_scene();
+    return;
+  }
+
+  if (document->scene) {
+    viewport_->set_scene(document->scene, !document->camera_initialized);
+    document->camera_initialized = true;
+    sidebar_->set_scene(document->scene);
+    inspector_->set_scene(document->scene);
+  } else {
+    viewport_->set_scene(nullptr);
+    sidebar_->clear();
+    inspector_->set_scene(nullptr);
+  }
+
+  if (document->has_summary) {
+    strip_->show_summary(document->summary);
+    if (document->failed) strip_->show_log_tab();
+  } else {
+    strip_->clear();
+  }
+
+  const auto projection = document->scene
+    ? viewport_->camera_controller()->camera().projection_mode
+    : scene::Projection::Orthographic;
+  {
+    const QSignalBlocker blocker(act_perspective_);
+    act_perspective_->setChecked(projection == scene::Projection::Perspective);
+  }
+  inspector_->set_reimport_enabled(!importing_ && !document->path.isEmpty());
+  act_close_tab_->setEnabled(true);
+  setWindowTitle(QStringLiteral("Cadly"));
+  update_status_for_scene();
+}
+
+void MainWindow::close_document(int index) {
+  if (index < 0 || index >= static_cast<int>(documents_.size())) return;
+  auto* document = documents_[static_cast<std::size_t>(index)].get();
+  if (document == importing_document_) {
+    document->close_requested = true;
+    if (import_sink_) import_sink_->cancelled_flag.store(true);
+    update_document_tab(document);
+    statusBar()->showMessage(tr("Canceling import before closing tab"), 3000);
+    return;
+  }
+
+  DocumentState* keep_active = active_document();
+  if (keep_active == document) keep_active = nullptr;
+  {
+    const QSignalBlocker blocker(tabs_);
+    if (auto* button = tabs_->tabButton(index, QTabBar::RightSide)) {
+      button->deleteLater();
+    }
+    documents_.erase(documents_.begin() + index);
+    tabs_->removeTab(index);
+    int next = document_index(keep_active);
+    if (next < 0 && !documents_.empty()) {
+      next = std::min(index, static_cast<int>(documents_.size()) - 1);
+    }
+    tabs_->setCurrentIndex(next);
+    tabs_->setVisible(!documents_.empty() &&
+                      !act_zero_chrome_->isChecked());
+    activate_document(next);
+  }
+}
+
+void MainWindow::set_import_controls_visible(bool visible) {
+  import_progress_->setVisible(visible);
+  import_cancel_->setVisible(visible);
+  if (!visible) {
+    import_progress_->setValue(0);
+    import_progress_->setToolTip(QString());
   }
 }
 
@@ -739,11 +1109,18 @@ void MainWindow::open_file(const QString& path) {
   // would otherwise end up in recents/last-dir and break once the app is
   // launched from a different working directory.
   const QString abs = QFileInfo(path).absoluteFilePath();
+  if (auto* existing = find_document(abs); existing && !existing->failed) {
+    tabs_->setCurrentIndex(document_index(existing));
+    return;
+  }
   cad::ImportOptions opts = inspector_->import_options();
   if (inspector_->review_before_import()) {
     if (!run_preflight_dialog(opts)) return;
   }
-  start_import(abs, opts);
+  auto* document = find_document(abs);
+  if (!document) document = add_document(abs);
+  tabs_->setCurrentIndex(document_index(document));
+  start_import(document, opts);
 }
 
 void MainWindow::open_file_with_options() {
@@ -755,9 +1132,13 @@ void MainWindow::open_file_with_options() {
     this, tr("Open CAD file"), last_open_dir_,
     tr("CAD files (*.step *.stp *.iges *.igs);;All files (*)"));
   if (path.isEmpty()) return;
+  const QString abs = QFileInfo(path).absoluteFilePath();
   cad::ImportOptions opts = inspector_->import_options();
   if (!run_preflight_dialog(opts)) return;
-  start_import(path, opts);
+  auto* document = find_document(abs);
+  if (!document) document = add_document(abs);
+  tabs_->setCurrentIndex(document_index(document));
+  start_import(document, opts);
 }
 
 bool MainWindow::run_preflight_dialog(cad::ImportOptions& opts) {
@@ -781,10 +1162,14 @@ bool MainWindow::run_preflight_dialog(cad::ImportOptions& opts) {
   return true;
 }
 
-void MainWindow::start_import(const QString& path,
+void MainWindow::start_import(DocumentState* document,
                               const cad::ImportOptions& opts) {
-  if (importing_) return;
+  if (importing_ || !document) return;
   importing_ = true;
+  importing_document_ = document;
+  document->loading = true;
+  document->failed = false;
+  document->close_requested = false;
   auto sink = std::make_shared<GuiImportSink>();
   import_sink_ = sink;
 
@@ -796,20 +1181,22 @@ void MainWindow::start_import(const QString& path,
   inspector_->set_reimport_enabled(false);
   toolbar_->strip_button()->set_badge(false);
 
-  toolbar_->capsule()->begin_import(QFileInfo(path).fileName());
+  set_import_controls_visible(true);
+  update_document_tab(document);
+  update_status_for_scene();
 
-  const auto path_std = std::filesystem::path(path.toStdString());
+  const auto path_std = std::filesystem::path(document->path.toStdString());
 
   auto* watcher = new QFutureWatcher<cad::ImportResult>(this);
   import_watcher_ = watcher;
   connect(watcher, &QFutureWatcher<cad::ImportResult>::finished,
-          this, [this, watcher, path]() {
+          this, [this, watcher, document]() {
     const cad::ImportResult result = watcher->result();
     watcher->deleteLater();
-    finish_import(path, result);
+    finish_import(document, result);
   });
 
-  // Poll the sink ~30 Hz to drive the capsule. Light, no extra threads.
+  // Poll the sink ~30 Hz to drive the active tab title and status progress.
   auto* poll = new QTimer(this);
   poll->setInterval(33);
   connect(poll, &QTimer::timeout, this, [this, sink, poll]() {
@@ -818,28 +1205,22 @@ void MainWindow::start_import(const QString& path,
       poll->deleteLater();
       return;
     }
-    toolbar_->capsule()->set_progress(sink->fraction.load(), sink->message());
+    const float fraction = sink->fraction.load();
+    import_progress_->setValue(
+      static_cast<int>(std::clamp(fraction, 0.0f, 1.0f) * 1000.0f));
+    import_progress_->setToolTip(sink->message());
+    update_document_tab(importing_document_);
   });
   poll->start();
 
-  CADLY_LOG_INFO("Importing {}", path.toStdString());
+  CADLY_LOG_INFO("Importing {}", document->path.toStdString());
   auto future = QtConcurrent::run([path_std, opts, sink]() -> cad::ImportResult {
     return cad::ImporterRegistry::instance().import(path_std, opts, sink.get());
   });
   watcher->setFuture(future);
 }
 
-void MainWindow::update_capsule_document() {
-  if (scene_) {
-    toolbar_->capsule()->set_document(
-      QFileInfo(current_path_).fileName(),
-      brief_scene_stats(*scene_), current_path_);
-  } else {
-    toolbar_->capsule()->set_empty();
-  }
-}
-
-void MainWindow::finish_import(const QString& path,
+void MainWindow::finish_import(DocumentState* document,
                                const cad::ImportResult& result) {
   importing_ = false;
   act_open_->setEnabled(true);
@@ -847,65 +1228,90 @@ void MainWindow::finish_import(const QString& path,
   toolbar_->recents_button()->setEnabled(true);
   const bool was_cancelled =
     import_sink_ && import_sink_->cancelled_flag.load();
+  const bool close_requested = document && document->close_requested;
   import_sink_.reset();
+  importing_document_ = nullptr;
+  set_import_controls_visible(false);
+  inspector_->set_reimport_enabled(active_document() != nullptr);
 
-  strip_->show_summary(result.summary);
+  if (!document) return;
+  document->loading = false;
+  document->summary = result.summary;
+  document->has_summary = true;
+  update_document_tab(document);
+  if (active_document() == document) strip_->show_summary(result.summary);
 
   if (was_cancelled) {
     statusBar()->showMessage(tr("Import cancelled"), 4000);
-    update_capsule_document();
-    inspector_->set_reimport_enabled(!current_path_.isEmpty());
+    document->close_requested = false;
+    update_document_tab(document);
+    if (close_requested || !document->scene) {
+      close_document(document_index(document));
+    } else if (active_document() == document) {
+      inspector_->set_reimport_enabled(true);
+      update_status_for_scene();
+    }
     return;
   }
 
   if (!result.success || !result.scene) {
-    QString brief = tr("see the log for details");
-    for (const auto& d : result.summary.diagnostics) {
-      if (d.severity == cad::DiagnosticSeverity::Error) {
-        brief = QString::fromStdString(d.message);
-        break;
-      }
-    }
-    toolbar_->capsule()->show_failure(brief);
+    document->failed = true;
+    update_document_tab(document);
     // Failure is the one event loud enough to steal panel space: open the
     // strip on its Log tab. Success only badges the toggle.
-    strip_->show_log_tab();
-    act_toggle_strip_->setChecked(true);
+    if (active_document() == document) {
+      strip_->show_log_tab();
+      act_toggle_strip_->setChecked(true);
+      inspector_->set_reimport_enabled(true);
+      update_status_for_scene();
+    }
     statusBar()->showMessage(tr("Import failed"), 6000);
-    inspector_->set_reimport_enabled(!current_path_.isEmpty());
     return;
   }
 
-  scene_        = result.scene;
-  current_path_ = path;
-  viewport_->set_scene(scene_);
-  sidebar_->set_scene(scene_);
-  inspector_->set_scene(scene_);
-  inspector_->set_reimport_enabled(true);
-
-  update_capsule_document();
-  toolbar_->capsule()->flash_success();
-  strip_->show_summary_tab();
+  const bool had_scene = static_cast<bool>(document->scene);
+  scene::Camera previous_camera;
+  if (had_scene) {
+    previous_camera = active_document() == document
+      ? viewport_->camera_controller()->camera()
+      : document->scene->camera;
+  }
+  document->scene = result.scene;
+  if (had_scene) document->scene->camera = previous_camera;
+  document->failed = false;
+  document->camera_initialized = had_scene;
+  update_document_tab(document);
+  if (active_document() == document) {
+    activate_document(document_index(document));
+    strip_->show_summary_tab();
+  }
   if (!strip_->isVisible()) {
     toolbar_->strip_button()->set_badge(true);
   }
-  setWindowTitle(QStringLiteral("%1 — Cadly")
-                   .arg(QFileInfo(path).fileName()));
-  update_status_for_scene();
-  emit file_imported(path);
+  emit file_imported(document->path);
 }
 
 void MainWindow::update_status_for_scene() {
-  if (!scene_) {
+  const auto* document = active_document();
+  if (!document) {
     status_path_->setText(tr("No file loaded"));
     status_stats_->setText(QString());
+    status_frame_->setText(QString());
     return;
   }
-  status_path_->setText(QString::fromStdString(scene_->source_file.string()));
+  status_path_->setText(document->path);
+  if (!document->scene) {
+    status_stats_->setText(document->loading ? tr("Importing…")
+                                             : tr("No scene loaded"));
+    status_frame_->setText(QString());
+    return;
+  }
+
+  const auto& scene = *document->scene;
 
   std::size_t triangles = 0;
   std::size_t vertices  = 0;
-  for (const auto& m : scene_->meshes) {
+  for (const auto& m : scene.meshes) {
     if (!m) continue;
     triangles += m->triangle_count();
     vertices  += m->vertices.size();
@@ -915,7 +1321,7 @@ void MainWindow::update_status_for_scene() {
     msaa > 1 ? QStringLiteral("MSAA %1×").arg(msaa) : tr("MSAA off");
   status_stats_->setText(QStringLiteral("%1 · %2 nodes · %3 tris · %4 verts")
     .arg(msaa_text)
-    .arg(scene_->nodes.size())
+    .arg(scene.nodes.size())
     .arg(triangles)
     .arg(vertices));
 }

@@ -2,13 +2,16 @@
 
 // macOS-style segmented control, custom-painted from ThemeTokens so it looks
 // identical under Fusion (Qt 6.4) and qlementine (Qt 6.8). Used for
-// Shaded|Wireframe in the toolbar, Summary|Log in the diagnostics strip, and
-// the inspector's tab row. Private to the ui module.
+// Shaded|Hidden Line|Wireframe in the toolbar, Summary|Log in the diagnostics
+// strip, and the inspector's tab row. Private to the ui module.
 
 #include <QStringList>
+#include <QRectF>
 #include <QWidget>
 
 #include <vector>
+
+class QVariantAnimation;
 
 namespace cadly::ui {
 
@@ -44,11 +47,15 @@ private:
   };
   int index_at(const QPoint& pos) const;
   int segment_width(const Segment& s) const;
+  QRectF segment_rect(int index) const;
+  void animate_to(int index);
 
   std::vector<Segment> segments_;
   int  current_{0};
   int  hover_{-1};
   bool compact_{false};
+  QRectF thumb_rect_;
+  QVariantAnimation* thumb_animation_{nullptr};
 };
 
 } // namespace cadly::ui

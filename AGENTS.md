@@ -2,61 +2,57 @@
 
 ## Project Structure & Module Organization
 
-Cadly is a native C++17 CAD viewer built with CMake. Source modules live under
-`src/`, with public headers in `src/<module>/include/cadly/<module>/` and
-implementation files in `src/<module>/src/`. Key modules are `platform`,
-`scene`, `renderer`, `renderer_gl`, `cad`, `ui`, and `app`. GLSL runtime assets
-are in `shaders/glsl/`. Smoke tests are in `tests/`, and design notes are in
-`docs/`. Keep `scene` independent of Qt, OCCT, and OpenGL; keep OCCT usage in
-`cad`; keep Qt wiring out of `renderer_gl`. Qt is only the GUI/input/context
-host: do not draw viewport content, labels, HUDs, scale bars, or render
-overlays with Qt/QPainter. Viewport visuals belong in `renderer`/`renderer_gl`
-or renderer-owned assets.
+Cadly is a native C++17 CAD viewer built with CMake. Modules use public headers
+in `src/<module>/include/cadly/<module>/` and implementations in
+`src/<module>/src/`. The modules are `platform`, `scene`, `renderer`,
+`renderer_gl`, `cad`, `ui`, and `app`. Runtime GLSL and theme assets live in
+`shaders/glsl/` and `themes/`; tests and the public STEP fixture are in `tests/`
+and `test_files/`. Design records and the UI prototype are under `docs/`.
+
+Respect dependency boundaries: `scene` remains independent of Qt, OCCT, and
+graphics APIs; only `cad` links OCCT; `renderer_gl` is Qt-free. Qt owns windows,
+input, and context setup. Viewport geometry, labels, HUDs, and overlays belong
+to the renderer, never `QPainter`.
 
 ## Build, Test, and Development Commands
 
-- `cmake --preset linux-debug` configures a Debug Ninja build in
-  `build/linux-debug/`.
-- `cmake --preset linux-release` configures a RelWithDebInfo build.
-- `cmake --build --preset linux-debug` builds all enabled targets.
-- `ctest --preset linux-debug` runs the CTest smoke suite with failure output.
-- `build/linux-debug/bin/cadly [file.step]` runs the GUI viewer.
-- `build/linux-debug/bin/cad_import_cli file.step` validates CAD import paths
-  without requiring a GUI or GL context.
+- `cmake --preset linux-debug` configures Ninja in `build/linux-debug/`.
+- `cmake --build --preset linux-debug` builds the GUI, import CLI, and tests.
+- `ctest --preset linux-debug` runs CTest with failure output.
+- `build/linux-debug/bin/cadly [file.step]` launches the viewer.
+- `build/linux-debug/bin/cad_import_cli test_files/as1-ug-214.stp` exercises
+  OCCT import and tessellation without a display or GL context.
 
-Use `linux-vcpkg-debug` when building through the vcpkg manifest, with
-`VCPKG_ROOT` set.
+Use `linux-release` for RelWithDebInfo, `linux-qt68-*` with local Qt 6.8.3, and
+`linux-vcpkg-debug` with `VCPKG_ROOT`. Windows contributors use a
+`windows-ninja-*` or `windows-msvc-*` preset. CI builds, tests, imports the
+fixture, and packages on both platforms.
 
 ## Coding Style & Naming Conventions
 
-Use C++17, 2-space indentation, and existing brace/style patterns. Public APIs
-use the `cadly::<module>` namespace and module-local CMake targets exposed as
-`Cadly::<Name>`. Prefer focused comments that explain non-obvious renderer,
-Qt, or OCCT behavior. The warnings baseline is strict (`-Wall -Wextra
--Wpedantic -Wshadow` on non-MSVC); do not introduce new warnings.
+Use C++17, 2-space indentation, and the surrounding brace style. Public APIs
+use `cadly::<module>` namespaces; CMake aliases use `Cadly::<Name>`. No formatter
+is enforced, so keep diffs consistent with nearby code. Add comments only for
+non-obvious Qt, OCCT, or rendering behavior. Do not introduce warnings under
+the shared `Cadly::Warnings` baseline (`-Wall -Wextra -Wpedantic -Wshadow` and
+related checks; `/W4` on MSVC).
 
 ## Testing Guidelines
 
-Tests are CTest-based. Add focused tests under `tests/` and register them in
-`tests/CMakeLists.txt` with descriptive names such as `cadly_smoke`. Run
-`ctest --preset linux-debug` before submitting changes. For importer work,
-also run `cad_import_cli` against representative STEP or IGES files when
-available.
+Add focused CTest executables in `tests/` and register names such as
+`cadly_smoke` in `tests/CMakeLists.txt`. Run relevant debug and release presets
+before submission. Importer changes also require `cad_import_cli` checks against
+representative STEP or IGES inputs; do not commit private CAD files.
 
 ## Commit & Pull Request Guidelines
 
-Recent history follows Conventional Commits: `type(scope): summary`, for
-example `perf(cad): tessellate all parts in one parallel meshing pass` or
-`fix: stop panels from tearing off into floating windows`. Use imperative,
-lowercase summaries with no trailing period. Common types include `feat`,
-`fix`, `docs`, `refactor`, `perf`, `test`, `build`, and `chore`.
+Follow Conventional Commits found in history: `type(scope): imperative summary`,
+for example `feat(ui): replace dock shell with graphite layout`. Use lowercase,
+no trailing period, and types such as `feat`, `fix`, `test`, `docs`, or `build`.
+PRs should explain user-visible behavior and affected modules, link issues,
+report exact test commands, and include screenshots for UI or viewport changes.
 
-Pull requests should describe the user-visible change, mention affected modules,
-link related issues, and include test results. UI changes should include a short
-note or screenshot showing the affected view.
+## Configuration & Assets
 
-## Security & Configuration Tips
-
-Do not commit local build output, machine-specific paths, or sample CAD files
-that are private. Runtime shader lookup can use `CADLY_ASSET_ROOT`; keep that
-as a local environment setting rather than checked-in configuration.
+Do not commit build output or machine-specific paths. `CADLY_ASSET_ROOT` may
+override runtime shader/theme lookup locally; keep it out of checked-in config.

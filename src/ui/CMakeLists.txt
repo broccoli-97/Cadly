@@ -1,7 +1,6 @@
 add_library(cadly_ui STATIC
   src/CameraController.cpp
   src/DiagnosticsStrip.cpp
-  src/DocumentCapsule.cpp
   src/IconUtils.cpp
   src/ImportOptionsWidget.cpp
   src/InspectorWidget.cpp
@@ -22,7 +21,6 @@ add_library(cadly_ui STATIC
   include/cadly/ui/ViewportWidget.h
 
   src/DiagnosticsStrip.h
-  src/DocumentCapsule.h
   src/IconUtils.h
   src/ImportOptionsWidget.h
   src/InspectorWidget.h

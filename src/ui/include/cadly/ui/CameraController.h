@@ -59,6 +59,10 @@ public:
 
   void set_viewport(int w, int h);
   void frame_bounds(const scene::vec3& min, const scene::vec3& max);
+  // Restore a document's camera while refreshing the controller's cached
+  // bounds for zoom and clip-plane calculations.
+  void restore_camera(const scene::Camera& camera,
+                      const scene::vec3& min, const scene::vec3& max);
 
   enum class DragMode { None, Orbit, Pan, Dolly };
 

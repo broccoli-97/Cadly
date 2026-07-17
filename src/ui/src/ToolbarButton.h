@@ -9,6 +9,9 @@
 
 #include <QToolButton>
 
+class QEnterEvent;
+class QVariantAnimation;
+
 namespace cadly::ui {
 
 class ToolbarButton : public QToolButton {
@@ -33,11 +36,17 @@ public:
 
 protected:
   void paintEvent(QPaintEvent*) override;
+  void enterEvent(QEnterEvent* event) override;
+  void leaveEvent(QEvent* event) override;
 
 private:
+  void animate_hover(qreal target);
+
   Emphasis emphasis_{Emphasis::Neutral};
   bool show_text_{false};
   bool badge_{false};
+  qreal hover_progress_{0.0};
+  QVariantAnimation* hover_animation_{nullptr};
 };
 
 } // namespace cadly::ui

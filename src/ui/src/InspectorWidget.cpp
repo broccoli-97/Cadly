@@ -60,7 +60,7 @@ InspectorWidget::InspectorWidget(QWidget* parent) : QWidget(parent) {
     b->setCheckable(true);
     b->setIcon(themed_icon(QLatin1String(specs[i].icon)));
     b->setText(tr(specs[i].tip));
-    b->set_show_text(true);
+    b->set_show_text(false);
     b->setToolTip(tr(specs[i].tip));
     group->addButton(b, i);
     tabs->addWidget(b);
@@ -80,8 +80,20 @@ InspectorWidget::InspectorWidget(QWidget* parent) : QWidget(parent) {
           [this](int id) { stack_->setCurrentIndex(id); });
   tab_buttons_[0]->setChecked(true);
 
-  connect(&ThemeManager::instance(), &ThemeManager::changed,
-          this, QOverload<>::of(&QWidget::update));
+  connect(&ThemeManager::instance(), &ThemeManager::changed, this, [this]() {
+    refresh_icons();
+    update();
+  });
+  refresh_icons();
+}
+
+void InspectorWidget::refresh_icons() {
+  const QString names[3] = {
+    QStringLiteral("document/properties"),
+    QStringLiteral("navigation/sliders-horizontal"),
+    QStringLiteral("action/download"),
+  };
+  for (int i = 0; i < 3; ++i) tab_buttons_[i]->setIcon(themed_icon(names[i]));
 }
 
 void InspectorWidget::paintEvent(QPaintEvent*) {

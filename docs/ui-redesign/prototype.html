@@ -33,7 +33,6 @@
   --insp-bg: #232529;
   --strip-h: #202226; --strip-b: #17181C;
   --status-bg: #202226;
-  --capsule-bg: #1B1D21;
   --card-bg: rgba(35,37,41,0.96);
 
   --hl-strong: rgba(0,0,0,0.45);
@@ -73,7 +72,6 @@
   --insp-bg: #F6F7F9;
   --strip-h: #ECEDF0; --strip-b: #FAFBFC;
   --status-bg: #ECEDF0;
-  --capsule-bg: #FFFFFF;
   --card-bg: rgba(252,252,254,0.97);
 
   --hl-strong: rgba(0,0,0,0.16);
@@ -187,26 +185,40 @@ svg.ic.s14 { width: 14px; height: 14px; }
 .split-btn > button:disabled { color: var(--t-dis); pointer-events: none; }
 .split-btn .chev { padding: 0 5px; border-left: 1px solid var(--ctrl-border); color: var(--t2); }
 
-/* Document / activity capsule */
-.capsule {
-  width: clamp(220px, 22vw, 380px); height: 34px; border-radius: 8px;
-  background: var(--capsule-bg); box-shadow: inset 0 0 0 1px var(--hl);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  cursor: default; position: relative; overflow: hidden; flex: none;
-}
-.capsule .l1 { font-size: 12px; font-weight: 500; color: var(--t1); max-width: 92%;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.25; }
-.capsule .l2 { font-size: 10.5px; color: var(--t3); line-height: 1.25; }
-.capsule .prog { position: absolute; left: 0; bottom: 0; height: 2px; width: 0%;
-  background: var(--accent); border-radius: 1px; transition: width .12s linear; }
-.capsule.ok .prog { background: var(--ok); }
-.capsule.err .l1 { color: var(--err); }
-.capsule .cancel { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-  width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer;
-  background: var(--ctrl-hov); color: var(--t2); display: none;
-  align-items: center; justify-content: center; }
-.capsule.importing .cancel { display: inline-flex; }
-.capsule .l1 .doc-name:hover { text-decoration: underline; cursor: pointer; }
+/* Document tabs — same Graphite materials, now a real multi-document surface. */
+.doc-tabs { height: 36px; flex: none; display: flex; align-items: flex-end; gap: 5px;
+  padding: 4px 8px 0; background: var(--tb-bg); border-bottom: 1px solid var(--hl-strong);
+  box-shadow: inset 0 1px 0 var(--hl-top-glint); position: relative; z-index: 55; }
+.tab-scroll { min-width: 0; flex: 1; display: flex; align-items: flex-end; gap: 3px;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.tab-scroll::-webkit-scrollbar { display: none; }
+.doc-tab { width: clamp(148px, 17vw, 224px); height: 31px; flex: 0 1 224px;
+  position: relative; display: flex; align-items: center; gap: 7px; padding: 0 7px 0 10px;
+  border: 1px solid transparent; border-bottom: none; border-radius: 7px 7px 0 0;
+  background: transparent; color: var(--t2); cursor: default; overflow: hidden;
+  transition: color .12s ease, background .12s ease, border-color .12s ease,
+              transform .12s ease; }
+.doc-tab:hover { color: var(--t1); background: var(--ctrl-hov); transform: translateY(-1px); }
+.doc-tab.active { color: var(--t1); background: var(--sb-bg-flat);
+  border-color: var(--hl); transform: none; }
+.doc-tab .doc-glyph { color: var(--t3); flex: none; }
+.doc-tab.active .doc-glyph { color: var(--accent); }
+.doc-tab .tab-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 12px; font-weight: 500; letter-spacing: 0; }
+.doc-tab .tab-state { width: 6px; height: 6px; border-radius: 50%; flex: none; display: none; }
+.doc-tab.failed .tab-state { display: block; background: var(--err); }
+.doc-tab .tab-close { width: 18px; height: 18px; flex: none; border: none; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center; background: transparent;
+  color: var(--t3); opacity: 0; cursor: pointer; transition: opacity .12s ease, background .12s ease; }
+.doc-tab:hover .tab-close, .doc-tab.active .tab-close, .doc-tab.importing .tab-close { opacity: 1; }
+.doc-tab .tab-close:hover { color: var(--t1); background: var(--ctrl-prs); }
+.doc-tab .tab-prog { position: absolute; height: 2px; left: 0; bottom: 0; width: 0;
+  background: var(--accent); transition: width .12s linear; }
+.doc-tab.ready.flash .tab-prog { width: 100%; background: var(--ok); }
+.tab-add { width: 28px; height: 28px; margin: 0 0 2px; border: none; border-radius: 6px;
+  background: transparent; color: var(--t2); font: 400 20px/1 inherit; cursor: pointer; flex: none;
+  transition: background .12s ease, color .12s ease; }
+.tab-add:hover { background: var(--ctrl-hov); color: var(--t1); }
 
 /* Segmented control (display mode, inspector tabs, strip tabs) */
 .seg { display: inline-flex; height: 26px; background: var(--ctrl);
@@ -574,17 +586,10 @@ input[type="range"] { accent-color: var(--accent); flex: 1; height: 4px; }
       </div>
     </div>
 
-    <div class="capsule" id="capsule">
-      <div class="l1"><span class="doc-name" id="docName">No file loaded</span></div>
-      <div class="l2 num" id="docStats">drop a STEP or IGES file</div>
-      <div class="prog" id="capProg"></div>
-      <button class="cancel" id="capCancel" data-tip="Cancel Import">
-        <svg class="ic s14"><use href="#i-x"/></svg></button>
-    </div>
-
     <div class="tb-zone right">
       <div class="seg" id="segMode" role="tablist">
         <button id="segShaded" class="active" data-tip="Shaded surfaces" data-key="W">Shaded</button>
+        <button id="segHidden" data-tip="Technical drawing with hidden edges removed" data-key="H">Hidden Line</button>
         <button id="segWire" data-tip="BRep wireframe — analytical edges, refined on zoom" data-key="W">Wireframe</button>
       </div>
       <div class="chip-group">
@@ -610,6 +615,11 @@ input[type="range"] { accent-color: var(--accent); flex: 1; height: 4px; }
       <button class="icon-btn" id="btnZero" data-tip="Zero-chrome mode" data-key="⌃.">
         <svg class="ic s18"><use href="#i-zero"/></svg></button>
     </div>
+  </div>
+
+  <div class="doc-tabs" id="docTabs">
+    <div class="tab-scroll" id="tabList"></div>
+    <button class="tab-add" id="tabAdd" data-tip="Open another CAD file" data-key="⌘O" aria-label="Open another file">+</button>
   </div>
 
   <!-- ======== main row ======== -->
@@ -658,7 +668,7 @@ input[type="range"] { accent-color: var(--accent); flex: 1; height: 4px; }
         <div class="hint" id="hint">
           <span><b>Right-drag</b> orbit</span><span><b>Middle-drag</b> pan</span>
           <span><b>Scroll</b> zoom</span><span><b>1–7</b> views</span>
-          <span><b>F</b> fit&nbsp;·&nbsp;<b>W/E/T/P</b> modes</span>
+          <span><b>F</b> fit&nbsp;·&nbsp;<b>W/H/E/T/P</b> modes</span>
         </div>
       </div>
 
@@ -707,7 +717,7 @@ input[type="range"] { accent-color: var(--accent); flex: 1; height: 4px; }
             <div class="gbody">
               <div class="frow"><label>Surface</label>
                 <div class="seg" id="segMode2" style="height:24px">
-                  <button id="segShaded2" class="active">Shaded</button><button id="segWire2">Wireframe</button>
+                  <button id="segShaded2" class="active">Shaded</button><button id="segHidden2">Hidden</button><button id="segWire2">Wire</button>
                 </div></div>
               <label class="checkline indent"><input type="checkbox" id="cbEdges" checked> Show edges <span class="kbd">E</span></label>
               <label class="checkline indent"><input type="checkbox" id="cbMesh"> Show triangle mesh <span class="kbd">T</span></label>
@@ -1042,11 +1052,85 @@ function camBasis() {
 
 /* ---------------- display-mode model (single source of truth) ---------------- */
 const disp = {
-  surface: "shaded",            // 'shaded' | 'wire'
+  surface: "shaded",            // 'shaded' | 'hidden' | 'wire'
   edges: true, mesh: false,     // chips (remembered while in wireframe)
   edgeIntensity: 0.65, msaa: "4×", scaleBar: true, axes: true,
 };
-const docState = { def: null, selected: null, solo: null, recents: [], importing: false };
+const docState = {
+  def: null, selected: null, solo: null, recents: [], importing: false,
+  docs: [], activeId: null, importId: null,
+};
+let nextDocId = 1;
+
+function activeDocument() {
+  return docState.docs.find(d => d.id === docState.activeId) || null;
+}
+function snapshotActiveDocument() {
+  const d = activeDocument(); if (!d) return;
+  d.def = docState.def; d.selected = docState.selected; d.solo = docState.solo;
+  d.camera = { ...cam, target: [...cam.target] };
+}
+function createDocument(fname) {
+  const meta = FILES[fname] || {};
+  const d = { id: nextDocId++, file: fname, path: meta.path || fname,
+    def: null, selected: null, solo: null, camera: null,
+    status: "loading", progress: 0, message: "Waiting to import…", closeAfter: false };
+  docState.docs.push(d);
+  return d;
+}
+function switchDocument(doc, fit = false) {
+  if (!doc) return;
+  snapshotActiveDocument();
+  docState.activeId = doc.id;
+  docState.def = doc.def; docState.selected = doc.selected; docState.solo = doc.solo;
+  if (doc.camera) {
+    Object.assign(cam, doc.camera); cam.target = [...doc.camera.target];
+  }
+  renderDocTabs(); buildTree(); fillProps(docState.selected); updateDocChrome();
+  if (fit && doc.def) fitView(); else render();
+}
+function closeDocument(doc) {
+  if (!doc) return;
+  if (doc.status === "loading") {
+    doc.closeAfter = true;
+    if (doc.id === docState.importId) cancelFlag = true;
+    renderDocTabs();
+    return;
+  }
+  const idx = docState.docs.indexOf(doc);
+  const wasActive = doc.id === docState.activeId;
+  docState.docs.splice(idx, 1);
+  if (wasActive) {
+    const next = docState.docs[Math.min(idx, docState.docs.length - 1)] || null;
+    docState.activeId = null; docState.def = null; docState.selected = null; docState.solo = null;
+    if (next) switchDocument(next); else { renderDocTabs(); buildTree(); fillProps(null); updateDocChrome(); render(); }
+  } else renderDocTabs();
+}
+function renderDocTabs() {
+  const list = $("tabList");
+  list.innerHTML = docState.docs.map(d => {
+    const active = d.id === docState.activeId, loading = d.status === "loading";
+    const title = loading ? `${d.file} · ${Math.round(d.progress * 100)}%` : d.file;
+    return `<div class="doc-tab ${active ? "active " : ""}${d.status}" data-doc="${d.id}" data-tip="${d.path}">
+      <svg class="ic s14 doc-glyph"><use href="#i-part"/></svg>
+      <span class="tab-title">${title}</span><span class="tab-state"></span>
+      <button class="tab-close" data-close aria-label="Close ${d.file}"><svg class="ic s14"><use href="#i-x"/></svg></button>
+      <span class="tab-prog" style="width:${loading ? d.progress * 100 : 0}%"></span></div>`;
+  }).join("");
+}
+
+$("tabList").onclick = e => {
+  const tab = e.target.closest(".doc-tab"); if (!tab) return;
+  const doc = docState.docs.find(d => d.id === Number(tab.dataset.doc));
+  if (e.target.closest("[data-close]")) { e.stopPropagation(); closeDocument(doc); }
+  else switchDocument(doc);
+};
+$("tabList").ondblclick = e => {
+  const tab = e.target.closest(".doc-tab"); if (!tab) return;
+  const doc = docState.docs.find(d => d.id === Number(tab.dataset.doc));
+  if (doc?.def) openPathPopover(doc, tab);
+};
+$("tabAdd").onclick = () => openMenuFor($("tabAdd"), buildOpenMenu(), { right: true });
 
 /* ---------------- renderer ---------------- */
 const cv = $("cv"), ctx = cv.getContext("2d");
@@ -1066,9 +1150,14 @@ function render() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   // background gradient (DisplayMode.background_top/bottom — theme-pushed)
-  const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, cssVar("--vp-top")); g.addColorStop(1, cssVar("--vp-bot"));
-  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  if (disp.surface === "hidden") {
+    ctx.fillStyle = cssVar("--vp-top");
+  } else {
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, cssVar("--vp-top")); g.addColorStop(1, cssVar("--vp-bot"));
+    ctx.fillStyle = g;
+  }
+  ctx.fillRect(0, 0, w, h);
 
   const def = docState.def;
   if (def) {
@@ -1109,13 +1198,15 @@ function render() {
           let cr = base[0] * diff + rim, cg = base[1] * diff + rim, cb = base[2] * diff + rim;
           if (sel) { cr = cr * 0.72 + 0.28 * 0.31; cg = cg * 0.72 + 0.28 * 0.53; cb = cb * 0.72 + 0.28 * 1.0; }
           fillStyle = `rgb(${Math.round(clamp(cr,0,1)*255)},${Math.round(clamp(cg,0,1)*255)},${Math.round(clamp(cb,0,1)*255)})`;
+        } else if (disp.surface === "hidden") {
+          fillStyle = cssVar("--vp-top");
         }
         list.push({ depth, m, t, p0, p1, p2, fillStyle, sel });
       }
     }
     list.sort((a, b) => b.depth - a.depth);
 
-    if (disp.surface === "shaded") {
+    if (disp.surface !== "wire") {
       // assign each feature edge to its nearest-drawn adjacent triangle
       const rank = new Map();
       list.forEach((it, i) => rank.set(it.m.name + "/" + it.t, i));
@@ -1142,7 +1233,7 @@ function render() {
         if (disp.mesh) {                       // triangle-mesh debug overlay
           ctx.strokeStyle = "rgba(120,160,255,0.5)"; ctx.lineWidth = 0.6; ctx.stroke();
         }
-        if (disp.edges) {
+        if (disp.edges || disp.surface === "hidden") {
           const bucket = edgeBuckets.get(i);
           if (bucket) {
             ctx.strokeStyle = it.sel ? inkSel : ink; ctx.lineWidth = it.sel ? 1.6 : 1.1;
@@ -1311,15 +1402,19 @@ new ResizeObserver(() => render()).observe(vp);
 /* ================= display-mode model (one source of truth) ================= */
 function syncDisplayUI() {
   const wire = disp.surface === "wire";
-  $("segShaded").classList.toggle("active", !wire);
+  const hidden = disp.surface === "hidden";
+  const special = wire || hidden;
+  $("segShaded").classList.toggle("active", !special);
+  $("segHidden").classList.toggle("active", hidden);
   $("segWire").classList.toggle("active", wire);
-  $("segShaded2").classList.toggle("active", !wire);
+  $("segShaded2").classList.toggle("active", !special);
+  $("segHidden2").classList.toggle("active", hidden);
   $("segWire2").classList.toggle("active", wire);
   const ce = $("chipEdges"), cm = $("chipMesh");
   ce.classList.toggle("on", disp.edges); cm.classList.toggle("on", disp.mesh);
-  ce.disabled = wire; cm.disabled = wire;     // remembered, dimmed — no silent uncheck
+  ce.disabled = special; cm.disabled = special; // remembered, dimmed — no silent uncheck
   $("cbEdges").checked = disp.edges; $("cbMesh").checked = disp.mesh;
-  $("cbEdges").disabled = wire; $("cbMesh").disabled = wire;
+  $("cbEdges").disabled = special; $("cbMesh").disabled = special;
   $("projIcon").firstElementChild.setAttribute("href", cam.persp ? "#i-persp" : "#i-ortho");
   $("projIcon2").firstElementChild.setAttribute("href", cam.persp ? "#i-persp" : "#i-ortho");
   $("btnProj").classList.toggle("checked", cam.persp);
@@ -1330,20 +1425,22 @@ function syncDisplayUI() {
 }
 const setSurface = s => { disp.surface = s; syncDisplayUI(); };
 const toggleEdges = () => {
-  if (disp.surface === "wire") disp.surface = "shaded";   // edges-on forces wireframe off
+  if (disp.surface !== "shaded") disp.surface = "shaded";
   else disp.edges = !disp.edges;
   syncDisplayUI();
 };
 const toggleMesh = () => {
-  if (disp.surface === "wire") { disp.surface = "shaded"; disp.mesh = true; }
+  if (disp.surface !== "shaded") { disp.surface = "shaded"; disp.mesh = true; }
   else disp.mesh = !disp.mesh;
   syncDisplayUI();
 };
 const toggleProj = () => { cam.persp = !cam.persp; syncDisplayUI(); };
 
 $("segShaded").onclick = () => setSurface("shaded");
+$("segHidden").onclick = () => setSurface("hidden");
 $("segWire").onclick = () => setSurface("wire");
 $("segShaded2").onclick = () => setSurface("shaded");
+$("segHidden2").onclick = () => setSurface("hidden");
 $("segWire2").onclick = () => setSurface("wire");
 $("chipEdges").onclick = toggleEdges;
 $("chipMesh").onclick = toggleMesh;
@@ -1604,7 +1701,7 @@ $("btnResetOpts").onclick = () => {
   $("optColors").checked = true; $("optNames").checked = true; $("optHier").checked = true;
   syncOptEnable();
 };
-$("btnReimport").onclick = () => { if (docState.def) startImport(docState.def.file); };
+$("btnReimport").onclick = () => { if (docState.def) startImport(docState.def.file, true); };
 
 /* ================= diagnostics strip ================= */
 const logLines = [];
@@ -1646,23 +1743,26 @@ function fillSummary(def, times) {
 }
 
 /* ================= import flow (non-modal — graft from judges) ================= */
-const capsule = $("capsule");
 let cancelFlag = false;
-$("capCancel").onclick = () => { cancelFlag = true; };
 
 function updateDocChrome() {
+  const doc = activeDocument();
   const def = docState.def;
-  if (!def) {
-    $("docName").textContent = "No file loaded";
-    $("docStats").textContent = "drop a STEP or IGES file";
+  renderDocTabs();
+  if (!doc) {
     $("statusFile").textContent = "No file loaded"; $("statusFile").dataset.tip = "";
     $("statusCounts").textContent = "";
     $("welcome").style.display = ""; buildWelcome();
     document.title = "Cadly — Graphite concept";
+  } else if (doc.status === "loading") {
+    $("statusFile").textContent = doc.file + " — " + doc.message;
+    $("statusFile").dataset.tip = doc.path; $("statusCounts").textContent = "";
+    $("welcome").style.display = "none"; document.title = doc.file + " — importing — Cadly";
+  } else if (!def) {
+    $("statusFile").textContent = doc.file + " — import failed";
+    $("statusFile").dataset.tip = doc.path; $("statusCounts").textContent = "";
+    $("welcome").style.display = "none"; document.title = doc.file + " — Cadly";
   } else {
-    $("docName").textContent = def.file;
-    $("docStats").textContent =
-      `${def.totals.nodes} nodes · ${fmt(def.totals.tris)} tris · ${fmt(def.totals.verts)} verts`;
     $("statusFile").textContent = def.file; $("statusFile").dataset.tip = def.path;
     $("welcome").style.display = "none";
     document.title = def.file + " — Cadly";
@@ -1679,18 +1779,27 @@ function updateCounts() {
 
 function doImport(fname) {
   if (docState.importing) return;
+  const existing = docState.docs.find(d => d.file === fname && d.status === "ready");
+  if (existing) { switchDocument(existing); return; }
   if ($("optReview").checked) openPreflight(fname);
   else startImport(fname);
 }
-function startImport(fname) {
+function startImport(fname, force = false) {
   if (docState.importing) return;
   closeMenus();
+  let doc = docState.docs.find(d => d.file === fname);
+  if (doc?.status === "ready" && !force) { switchDocument(doc); return; }
+  const previousId = docState.activeId;
+  if (!doc) doc = createDocument(fname);
+  const oldDef = doc.def;
+  switchDocument(doc);
   docState.importing = true; cancelFlag = false;
+  docState.importId = doc.id;
+  doc.status = "loading"; doc.progress = 0; doc.message = "Preparing importer…";
+  doc.closeAfter = false;
   $("btnOpen").disabled = true;
-  capsule.classList.add("importing"); capsule.classList.remove("err", "ok");
   const fails = !FILES[fname].build;
-  const prevTitle = $("docName").textContent;
-  $("docName").textContent = "Importing " + fname + "…";
+  updateDocChrome();
   logAdd("info", `selected importer: ${fname.endsWith(".iges") ? "OcctIgesImporter" : "OcctStepImporter"} for '${fname}'`);
   const phases = fails
     ? [[0.18, "Reading IGES directory entry…"], [0.42, "Transferring entities…"]]
@@ -1702,11 +1811,11 @@ function startImport(fname) {
   const tick = () => {
     if (cancelFlag) {
       logAdd("warn", "import cancelled by user");
-      finishImport(null, prevTitle); return;
+      finishImport(null, { doc, previousId, oldDef }); return;
     }
     prog = Math.min(prog + 0.025 + (i * 7 % 5) * 0.004, phases[i][0]);
-    $("capProg").style.width = (prog * 100) + "%";
-    $("docStats").textContent = phases[i][1];
+    doc.progress = prog; doc.message = phases[i][1];
+    if (activeDocument() === doc) updateDocChrome(); else renderDocTabs();
     if (prog >= phases[i][0]) {
       if (phases[i][1].startsWith("Healing") && !$("optHeal").checked) logAdd("info", "healing skipped (disabled)");
       else logAdd("info", phases[i][1].toLowerCase().replace("…", " — ok"));
@@ -1716,7 +1825,7 @@ function startImport(fname) {
     else if (fails) {
       logAdd("error", "IGES line 8421: unexpected EOF in entity 412");
       logAdd("error", "transfer produced 0 shapes");
-      finishImport("fail", prevTitle, fname);
+      finishImport("fail", { doc, previousId, oldDef });
     } else {
       const defl = Math.max(0.0001, parseFloat($("optLinear").value) || 0.1);
       const def = prepScene(FILES[fname].build(defl));
@@ -1726,30 +1835,36 @@ function startImport(fname) {
         logAdd("warn", "face 31: degenerated pcurve replaced (tolerance 1e-4)");
       logAdd("info", `scene ready: ${def.totals.nodes} nodes, ${fmt(def.totals.tris)} triangles`);
       fillSummary(def, times);
-      finishImport(def, prevTitle, fname);
+      finishImport(def, { doc, previousId, oldDef });
     }
   };
   setTimeout(tick, 50);
 }
-function finishImport(result, prevTitle, fname) {
+function finishImport(result, { doc, previousId, oldDef }) {
   docState.importing = false;
+  docState.importId = null;
   $("btnOpen").disabled = false;
-  capsule.classList.remove("importing");
-  $("capProg").style.width = "0%";
   if (result === null) {                               // cancelled
-    $("docName").textContent = prevTitle; updateDocChrome(); return;
-  }
-  if (result === "fail") {
-    capsule.classList.add("err");
-    $("docName").textContent = "Import failed — " + fname;
-    $("docStats").textContent = "see Diagnostics for details";
-    setPanel("strip", true); $("segLog").click();       // failure auto-opens the log
-    addRecent(fname);
+    doc.status = oldDef ? "ready" : "cancelled"; doc.def = oldDef; doc.progress = 0;
+    if (doc.closeAfter || !oldDef) {
+      const idx = docState.docs.indexOf(doc); if (idx >= 0) docState.docs.splice(idx, 1);
+    }
+    const previous = docState.docs.find(d => d.id === previousId) || docState.docs.at(-1);
+    docState.activeId = null; docState.def = null; docState.selected = null; docState.solo = null;
+    if (previous) switchDocument(previous); else { renderDocTabs(); updateDocChrome(); render(); }
     return;
   }
-  capsule.classList.add("ok"); $("capProg").style.width = "100%";
-  setTimeout(() => { capsule.classList.remove("ok"); $("capProg").style.width = "0%"; }, 800);
+  if (result === "fail") {
+    doc.status = "failed"; doc.progress = 0; doc.message = "See Diagnostics for details";
+    doc.def = oldDef;
+    setPanel("strip", true); $("segLog").click();       // failure auto-opens the log
+    addRecent(doc.file); updateDocChrome();
+    return;
+  }
+  doc.status = "ready flash"; doc.progress = 1; doc.def = result;
+  setTimeout(() => { doc.status = "ready"; doc.progress = 0; renderDocTabs(); }, 800);
   docState.def = result; docState.selected = null; docState.solo = null;
+  doc.selected = null; doc.solo = null;
   result.tree.expanded = true;
   (result.tree.children || []).forEach(c => c.expanded = true);
   addRecent(result.file);
@@ -1761,8 +1876,7 @@ function addRecent(f) {
   docState.recents = [f, ...docState.recents.filter(x => x !== f)].slice(0, 8);
 }
 function closeFile() {
-  docState.def = null; docState.selected = null;
-  buildTree(); fillProps(null); updateDocChrome(); render();
+  closeDocument(activeDocument());
 }
 
 /* ================= menus & popovers ================= */
@@ -1800,11 +1914,12 @@ function mi(label, opts = {}) {
 const ACTIONS = {
   open: () => openMenuFor($("openSplit"), buildOpenMenu()),
   close: closeFile,
-  reimport: () => docState.def && startImport(docState.def.file),
+  reimport: () => docState.def && startImport(docState.def.file, true),
   openWithOptions: () => { setPanel("insp", true); switchTab("import");
     if (docState.def) openPreflight(docState.def.file); },
   fit: fitView,
-  shaded: () => setSurface("shaded"), wire: () => setSurface("wire"),
+  shaded: () => setSurface("shaded"), hidden: () => setSurface("hidden"),
+  wire: () => setSurface("wire"),
   edges: toggleEdges, mesh: toggleMesh, proj: toggleProj,
   v1: () => setView(0, 0), v2: () => setView(180, 0), v3: () => setView(90, 0),
   v4: () => setView(-90, 0), v5: () => setView(0, -90), v6: () => setView(0, 90),
@@ -1822,8 +1937,10 @@ document.addEventListener("click", e => {
   const item = e.target.closest("[data-act]");
   if (!item || !item.dataset.act) return;
   const fileAct = item.dataset.act.match(/^file:(.+)$/);
+  const docAct = item.dataset.act.match(/^doc:(\d+)$/);
   closeMenus();
   if (fileAct) doImport(fileAct[1]);
+  else if (docAct) switchDocument(docState.docs.find(d => d.id === Number(docAct[1])));
   else ACTIONS[item.dataset.act]?.();
 });
 
@@ -1862,6 +1979,7 @@ function buildViewMenu() {
     mi("Fit to Model", { act: "fit", key: "F" }) +
     `<div class="msep"></div>` +
     mi("Shaded", { act: "shaded", chk: disp.surface === "shaded" }) +
+    mi("Hidden Line", { act: "hidden", chk: disp.surface === "hidden", key: "H" }) +
     mi("Wireframe", { act: "wire", chk: disp.surface === "wire", key: "W" }) +
     mi("Show Edges", { act: "edges", chk: disp.edges, key: "E" }) +
     mi("Show Triangle Mesh", { act: "mesh", chk: disp.mesh, key: "T" }) +
@@ -1885,8 +2003,11 @@ function buildViewMenu() {
 function buildWindowMenu() {
   $("menuWindow").innerHTML =
     mi("Minimize", { key: "⌘M", disabled: true }) + mi("Zoom", { disabled: true }) +
-    `<div class="msep"></div>` +
-    mi(document.title, { chk: true });
+    `<div class="msep"></div><div class="mhead">Open Documents</div>` +
+    (docState.docs.length
+      ? docState.docs.map(d => mi(d.file, { chk: d.id === docState.activeId,
+          act: "doc:" + d.id, sub: d.status === "loading" ? Math.round(d.progress * 100) + "%" : "" })).join("")
+      : mi("No open documents", { disabled: true }));
   return $("menuWindow");
 }
 function buildHelpMenu() {
@@ -1936,17 +2057,17 @@ function buildViewsPop() {
 $("btnViews").onclick = () => openMenuFor($("btnViews"), buildViewsPop(), { right: true });
 $("hudViews").onclick = () => openMenuFor($("hudViews"), buildViewsPop(), { right: true });
 
-/* document path popover */
-$("docName").onclick = () => {
-  if (!docState.def || docState.importing) return;
+/* document path popover — double-click an active tab */
+function openPathPopover(doc, anchor) {
+  if (!doc?.def || doc.status === "loading") return;
   const m = $("popPath");
-  m.innerHTML = `<h3>${docState.def.file}</h3>
-    <p class="mono" style="font-size:11px">${docState.def.path}</p>
-    <p style="color:var(--t3);font-size:11px">${docState.def.kind} · imported with linear deflection ${$("optLinear").value} mm</p>
+  m.innerHTML = `<h3>${doc.def.file}</h3>
+    <p class="mono" style="font-size:11px">${doc.def.path}</p>
+    <p style="color:var(--t3);font-size:11px">${doc.def.kind} · imported with linear deflection ${$("optLinear").value} mm</p>
     <button class="btn" id="copyPath" style="margin-top:4px"><svg class="ic s14" style="vertical-align:-3px;margin-right:5px"><use href="#i-copy"/></svg>Copy Path</button>`;
-  openMenuFor(capsule, m);
-  $("copyPath").onclick = () => { navigator.clipboard?.writeText(docState.def.path); closeMenus(); };
-};
+  openMenuFor(anchor, m);
+  $("copyPath").onclick = () => { navigator.clipboard?.writeText(doc.def.path); closeMenus(); };
+}
 
 /* get-info popover (pinnable — graft from Preview-calm concept) */
 function infoBody(n) {
@@ -1994,7 +2115,7 @@ function openPreflight(fname) {
       <span style="display:flex;gap:8px">
         <button class="btn" id="pfCancel">Cancel</button>
         <button class="btn primary" id="pfGo">Import</button></span></div>`;
-  openMenuFor(capsule, m);
+  openMenuFor(activeDocument() ? $("tabList").querySelector(".doc-tab.active") : $("openSplit"), m);
   $("pfEdit").onclick = () => { closeMenus(); setPanel("insp", true); switchTab("import"); };
   $("pfCancel").onclick = closeMenus;
   $("pfGo").onclick = () => { closeMenus(); startImport(fname); };
@@ -2010,7 +2131,7 @@ function buildAbout() {
     <p style="font-size:11px;color:var(--t3)">This HTML page is a design prototype — backdrop blur and the merged title bar are aspirational; the Qt build ships flat panels and a native title bar.</p>`;
 }
 function buildShortcuts() {
-  const rows = [["F","Fit to model"],["W","Shaded ↔ Wireframe"],["E","Toggle edges"],
+  const rows = [["F","Fit to model"],["W","Shaded ↔ Wireframe"],["H","Hidden line"],["E","Toggle edges"],
     ["T","Toggle triangle mesh"],["P","Ortho ↔ Perspective"],["1–7","Standard views"],
     ["⌘O","Open"],["⌘R","Re-import"],["⌃.","Zero chrome"],["Space","Get Info on selection"],
     ["Right-drag","Orbit (pivot marker)"],["Middle-drag","Pan"],["Scroll","Zoom to cursor"]];
@@ -2080,6 +2201,7 @@ document.addEventListener("keydown", e => {
   switch (k) {
     case "f": fitView(); break;
     case "w": setSurface(disp.surface === "wire" ? "shaded" : "wire"); break;
+    case "h": setSurface(disp.surface === "hidden" ? "shaded" : "hidden"); break;
     case "e": toggleEdges(); break;
     case "t": toggleMesh(); break;
     case "p": toggleProj(); break;
@@ -2107,11 +2229,17 @@ const syncCompact = () =>
 syncCompact(); window.addEventListener("resize", syncCompact);
 syncOptEnable();
 fillProps(null);
-updateDocChrome();
-render();
+// Seed one ready document, then import another into a second tab. The initial
+// composition demonstrates the multi-document shell immediately while keeping
+// the non-modal import animation visible.
+const seed = createDocument("gear_housing.step");
+seed.def = prepScene(FILES[seed.file].build(0.1)); seed.status = "ready";
+seed.def.tree.expanded = true; (seed.def.tree.children || []).forEach(c => c.expanded = true);
+switchDocument(seed, true);
+addRecent(seed.file);
 setTimeout(() => $("hint").classList.add("gone"), 9000);
 cv.addEventListener("pointerdown", () => $("hint").classList.add("gone"), { once: true });
-setTimeout(() => startImport("flange_bracket.step"), 600);   // show the import flow on load
+setTimeout(() => startImport("flange_bracket.step"), 600);   // second document tab
 })();
 </script>
 </body>

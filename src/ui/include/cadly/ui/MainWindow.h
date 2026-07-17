@@ -9,6 +9,7 @@
 #include <QStringList>
 
 #include <memory>
+#include <vector>
 
 class QAction;
 class QCloseEvent;
@@ -16,7 +17,10 @@ class QDragEnterEvent;
 class QDropEvent;
 class QLabel;
 class QMenu;
+class QProgressBar;
 class QSplitter;
+class QTabBar;
+class QToolButton;
 
 namespace cadly::ui {
 
@@ -26,14 +30,15 @@ class SidebarWidget;
 class ToolbarButton;
 class ToolbarWidget;
 class ViewportWidget;
+struct DocumentState;
 
 // The "Graphite" shell (docs/ui-redesign/design-notes.md): a 52px unified
-// toolbar over QSplitter{sidebar | (viewport / diagnostics strip) |
-// inspector} and a 26px status bar. Panels are fixed-position and toggle
-// visibility only — the QDockWidget era (drag-docking, saveState blobs, the
-// un-float hack) is gone; explicit QSettings keys persist the layout
-// instead. Import is non-modal: progress lives in the toolbar's document
-// capsule and the previous scene stays interactive throughout.
+// toolbar and document tabs over QSplitter{sidebar | (viewport / diagnostics
+// strip) | inspector} and a 26px status bar. Panels are fixed-position and
+// toggle visibility only — the QDockWidget era (drag-docking, saveState blobs,
+// the un-float hack) is gone; explicit QSettings keys persist the layout. Each
+// open file owns a document tab; the OpenGL viewport is shared and re-attached
+// to the active document's scene.
 class MainWindow : public QMainWindow {
   Q_OBJECT
 public:
@@ -46,9 +51,9 @@ public:
   void set_last_open_directory(const QString& dir);
 
   // Dev/test aid (paired with the app's --demo flag): drive a named UI state
-  // — "wireframe", "light", "views", "getinfo", "zerochrome" — without a
-  // human or an input-injection tool, so headless screenshot checks can
-  // exercise the real action/popover code paths. No-op on unknown names.
+  // — "wireframe", "hiddenline", "light", "display", "import", "views",
+  // "getinfo", "zerochrome" — without a human or an input-injection tool,
+  // so headless screenshot checks can exercise real action/popover code paths.
   void run_demo(const QString& name);
 
 signals:
@@ -68,26 +73,36 @@ protected:
   bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
-  void on_toggle_wireframe(bool on);
   void on_toggle_perspective(bool on);
   void on_zero_chrome(bool on);
   void on_about();
 
 private:
+  enum class SurfaceMode { Shaded = 0, HiddenLine = 1, Wireframe = 2 };
+
   void build_actions();
   void build_menus();
   void build_shell();
   void build_status_bar();
   void refresh_theme();
+  void set_surface_mode(SurfaceMode mode);
   void update_display_mode();
   void update_status_for_scene();
   void rebuild_recents_menu();
   void show_views_popover(QWidget* anchor);
 
-  // Non-modal import: QtConcurrent worker + 33ms poll into the capsule.
-  void start_import(const QString& path, const cad::ImportOptions& opts);
-  void finish_import(const QString& path, const cad::ImportResult& result);
-  void update_capsule_document();
+  DocumentState* active_document() const;
+  DocumentState* find_document(const QString& path) const;
+  DocumentState* add_document(const QString& path);
+  int document_index(const DocumentState* document) const;
+  void activate_document(int index);
+  void close_document(int index);
+  void update_document_tab(DocumentState* document);
+  void set_import_controls_visible(bool visible);
+
+  // Non-modal import: QtConcurrent worker + 33ms progress polling.
+  void start_import(DocumentState* document, const cad::ImportOptions& opts);
+  void finish_import(DocumentState* document, const cad::ImportResult& result);
   bool run_preflight_dialog(cad::ImportOptions& opts);
 
   void load_settings();
@@ -95,6 +110,7 @@ private:
 
   // --- widgets ---------------------------------------------------------
   ToolbarWidget*    toolbar_{nullptr};
+  QTabBar*          tabs_{nullptr};
   SidebarWidget*    sidebar_{nullptr};
   ViewportWidget*   viewport_{nullptr};
   DiagnosticsStrip* strip_{nullptr};
@@ -107,13 +123,17 @@ private:
   QLabel* status_path_{nullptr};
   QLabel* status_stats_{nullptr};
   QLabel* status_frame_{nullptr};
+  QProgressBar* import_progress_{nullptr};
+  QToolButton*  import_cancel_{nullptr};
 
   // --- actions -----------------------------------------------------------
   QAction* act_open_{nullptr};
   QAction* act_open_with_options_{nullptr};
+  QAction* act_close_tab_{nullptr};
   QAction* act_quit_{nullptr};
   QAction* act_fit_{nullptr};
   QAction* act_wireframe_{nullptr};
+  QAction* act_hidden_line_{nullptr};
   QAction* act_edges_{nullptr};
   QAction* act_triangle_mesh_{nullptr};
   QAction* act_perspective_{nullptr};
@@ -127,16 +147,17 @@ private:
   QMenu* recents_menu_{nullptr};
 
   // --- state -------------------------------------------------------------
-  std::shared_ptr<scene::Scene> scene_;
-  QString     current_path_;
+  std::vector<std::unique_ptr<DocumentState>> documents_;
   QString     last_open_dir_;
   QStringList recent_files_;
 
   bool importing_{false};
+  DocumentState* importing_document_{nullptr};
   std::shared_ptr<class GuiImportSink> import_sink_;  // defined in the .cpp
   QPointer<QFutureWatcher<cad::ImportResult>> import_watcher_;
 
-  // Edges/Mesh are disabled-but-remembered while Wireframe is active.
+  // Edges/Mesh are disabled-but-remembered in non-shaded surface modes.
+  SurfaceMode surface_mode_{SurfaceMode::Shaded};
   bool remembered_edges_{true};
   bool remembered_mesh_{false};
 

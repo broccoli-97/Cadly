@@ -44,6 +44,18 @@ void CameraController::frame_bounds(const scene::vec3& min,
   emit changed();
 }
 
+void CameraController::restore_camera(const scene::Camera& camera,
+                                      const scene::vec3& min,
+                                      const scene::vec3& max) {
+  scene_center_ = 0.5f * (min + max);
+  scene_radius_ = std::max(0.5f * glm::length(max - min), 1e-4f);
+  camera_ = camera;
+  camera_.aspect = static_cast<float>(viewport_w_) /
+                   static_cast<float>(viewport_h_);
+  update_clip_planes();
+  emit changed();
+}
+
 float CameraController::clamp_distance(float requested) const {
   // Only enforce the absolute epsilon floor; CAD inspection requires the
   // user to be able to zoom into individual features, which means the

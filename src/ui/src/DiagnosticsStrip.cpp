@@ -78,8 +78,12 @@ DiagnosticsStrip::DiagnosticsStrip(QWidget* parent) : QWidget(parent) {
   });
   connect(close_btn, &QAbstractButton::clicked, this,
           [this]() { emit close_requested(); });
-  connect(&ThemeManager::instance(), &ThemeManager::changed,
-          this, QOverload<>::of(&QWidget::update));
+  connect(&ThemeManager::instance(), &ThemeManager::changed, this,
+          [this, close_btn]() {
+            close_btn->setIcon(
+              themed_icon(QStringLiteral("action/close-small")));
+            update();
+          });
 }
 
 void DiagnosticsStrip::add_summary_cell(QGridLayout* grid, int row, int col,

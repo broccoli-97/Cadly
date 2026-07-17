@@ -30,6 +30,8 @@ uniform float u_roughness;
 uniform float u_reflectance;         // dielectric F0 control (0..1)
 uniform vec3  u_emissive_color;
 uniform float u_emissive;
+uniform int   u_hidden_line;
+uniform vec3  u_hidden_line_color;
 
 uniform samplerCube u_irradiance_cube;  // diffuse IBL
 uniform samplerCube u_prefilter_cube;   // specular IBL (mip chain by roughness)
@@ -92,6 +94,16 @@ vec3 fresnel_schlick_roughness(float HoV, vec3 F0, float roughness) {
 }
 
 void main() {
+  // Hidden-line mode still draws the complete filled surface so it writes
+  // depth and occludes edges on the far side. Lighting and material colour
+  // are deliberately bypassed to produce a clean technical-drawing field.
+  if (u_hidden_line != 0) {
+    vec3 paper = pow(clamp(u_hidden_line_color, 0.0, 1.0),
+                     vec3(1.0 / 2.2));
+    frag_color = vec4(paper, 1.0);
+    return;
+  }
+
   // Build a "shading normal" that never points below the visible horizon.
   //
   // On a curved surface, smooth interpolated per-vertex normals can dip

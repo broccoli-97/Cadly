@@ -7,6 +7,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QVariantAnimation>
 
 namespace cadly::ui {
 
@@ -18,6 +19,16 @@ constexpr int kInset   = 2;   // thumb inset from the track
 SegmentedControl::SegmentedControl(QWidget* parent) : QWidget(parent) {
   setMouseTracking(true);
   setCursor(Qt::PointingHandCursor);
+  setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+  setFixedHeight(26);
+  thumb_animation_ = new QVariantAnimation(this);
+  thumb_animation_->setDuration(140);
+  thumb_animation_->setEasingCurve(QEasingCurve::OutCubic);
+  connect(thumb_animation_, &QVariantAnimation::valueChanged,
+          this, [this](const QVariant& value) {
+            thumb_rect_ = value.toRectF();
+            update();
+          });
   connect(&ThemeManager::instance(), &ThemeManager::changed,
           this, QOverload<>::of(&QWidget::update));
 }
@@ -32,12 +43,13 @@ int SegmentedControl::add_segment(const QString& text, const QString& tooltip) {
 
 void SegmentedControl::set_current(int index) {
   if (index < 0 || index >= count() || index == current_) return;
-  current_ = index;
-  update();
+  animate_to(index);
 }
 
 void SegmentedControl::set_compact(bool on) {
   compact_ = on;
+  setFixedHeight(compact_ ? 20 : 26);
+  thumb_rect_ = {};
   updateGeometry();
   update();
 }
@@ -45,6 +57,26 @@ void SegmentedControl::set_compact(bool on) {
 int SegmentedControl::segment_width(const Segment& s) const {
   const QFontMetrics fm(ui_font(compact_ ? 11 : 12, QFont::Medium));
   return fm.horizontalAdvance(s.text) + 2 * kPadH;
+}
+
+QRectF SegmentedControl::segment_rect(int index) const {
+  int x = kInset;
+  for (int i = 0; i < index; ++i) {
+    x += segment_width(segments_[static_cast<std::size_t>(i)]);
+  }
+  const int w = segment_width(segments_[static_cast<std::size_t>(index)]);
+  return {static_cast<qreal>(x), static_cast<qreal>(kInset),
+          static_cast<qreal>(w), static_cast<qreal>(height() - 2 * kInset)};
+}
+
+void SegmentedControl::animate_to(int index) {
+  const QRectF start = thumb_rect_.isValid() ? thumb_rect_
+                                              : segment_rect(current_);
+  current_ = index;
+  thumb_animation_->stop();
+  thumb_animation_->setStartValue(start);
+  thumb_animation_->setEndValue(segment_rect(current_));
+  thumb_animation_->start();
 }
 
 QSize SegmentedControl::sizeHint() const {
@@ -67,8 +99,7 @@ void SegmentedControl::mousePressEvent(QMouseEvent* e) {
   if (e->button() != Qt::LeftButton) return;
   const int idx = index_at(e->pos());
   if (idx >= 0 && idx != current_) {
-    current_ = idx;
-    update();
+    animate_to(idx);
     emit segment_clicked(idx);
   }
 }
@@ -97,19 +128,20 @@ void SegmentedControl::paintEvent(QPaintEvent*) {
   p.setBrush(t.control_bg);
   p.drawRoundedRect(track, r, r);
 
+  const QRectF thumb = thumb_rect_.isValid() ? thumb_rect_
+                                              : segment_rect(current_);
+  p.setPen(QPen(t.hairline_soft, 1.0));
+  p.setBrush(t.control_active);
+  p.drawRoundedRect(thumb.adjusted(0.5, 0.5, -0.5, -0.5),
+                    r - 1.5, r - 1.5);
+
   p.setFont(ui_font(compact_ ? 11 : 12, QFont::Medium));
   int x = kInset;
   for (int i = 0; i < count(); ++i) {
     const auto& s = segments_[static_cast<std::size_t>(i)];
     const int w = segment_width(s);
     const QRectF cell(x, kInset, w, height() - 2 * kInset);
-    if (i == current_) {
-      // The raised "thumb": neutral fill + a soft hairline so it reads as a
-      // physical segment rather than a text highlight.
-      p.setPen(QPen(t.hairline_soft, 1.0));
-      p.setBrush(t.control_active);
-      p.drawRoundedRect(cell.adjusted(0.5, 0.5, -0.5, -0.5), r - 1.5, r - 1.5);
-    } else if (i == hover_) {
+    if (i != current_ && i == hover_) {
       p.setPen(Qt::NoPen);
       p.setBrush(t.control_hover);
       p.drawRoundedRect(cell.adjusted(0.5, 0.5, -0.5, -0.5), r - 1.5, r - 1.5);

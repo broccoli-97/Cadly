@@ -122,11 +122,21 @@ void ViewportWidget::paintGL() {
   }
 }
 
-void ViewportWidget::set_scene(std::shared_ptr<scene::Scene> scene) {
+void ViewportWidget::set_scene(std::shared_ptr<scene::Scene> scene, bool fit) {
+  // Camera changes normally reach Scene in paintGL. A tab switch may happen
+  // before that queued paint, so persist the controller state explicitly.
+  if (scene_) scene_->camera = camera_->camera();
   scene_ = std::move(scene);
   scene_dirty_ = true;
   if (scene_ && scene_->world_bounds.valid()) {
-    camera_->frame_bounds(scene_->world_bounds.min, scene_->world_bounds.max);
+    if (fit) {
+      camera_->restore_camera(scene_->camera, scene_->world_bounds.min,
+                              scene_->world_bounds.max);
+      camera_->frame_bounds(scene_->world_bounds.min, scene_->world_bounds.max);
+    } else {
+      camera_->restore_camera(scene_->camera, scene_->world_bounds.min,
+                              scene_->world_bounds.max);
+    }
   }
   update();
 }

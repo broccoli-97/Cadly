@@ -6,6 +6,7 @@
 #include <QFontMetrics>
 #include <QPainter>
 #include <QStyleOptionToolButton>
+#include <QVariantAnimation>
 
 #include <algorithm>
 
@@ -22,8 +23,33 @@ constexpr int kChevron = 9;   // width reserved for the menu chevron
 ToolbarButton::ToolbarButton(QWidget* parent) : QToolButton(parent) {
   setCursor(Qt::PointingHandCursor);
   setFocusPolicy(Qt::NoFocus);
+  hover_animation_ = new QVariantAnimation(this);
+  hover_animation_->setDuration(120);
+  hover_animation_->setEasingCurve(QEasingCurve::OutCubic);
+  connect(hover_animation_, &QVariantAnimation::valueChanged,
+          this, [this](const QVariant& value) {
+            hover_progress_ = value.toReal();
+            update();
+          });
   connect(&ThemeManager::instance(), &ThemeManager::changed,
           this, QOverload<>::of(&QWidget::update));
+}
+
+void ToolbarButton::animate_hover(qreal target) {
+  hover_animation_->stop();
+  hover_animation_->setStartValue(hover_progress_);
+  hover_animation_->setEndValue(target);
+  hover_animation_->start();
+}
+
+void ToolbarButton::enterEvent(QEnterEvent* event) {
+  animate_hover(1.0);
+  QToolButton::enterEvent(event);
+}
+
+void ToolbarButton::leaveEvent(QEvent* event) {
+  animate_hover(0.0);
+  QToolButton::leaveEvent(event);
 }
 
 void ToolbarButton::set_show_text(bool on) {
@@ -60,7 +86,7 @@ void ToolbarButton::paintEvent(QPaintEvent*) {
   // QToolButton keeps isDown()/underMouse()/isChecked() current; we only
   // repaint the shell. Note `defaultAction()` drives checked + enabled.
   const bool down    = isDown();
-  const bool hover   = underMouse() && isEnabled();
+  const bool hover   = hover_progress_ > 0.0 && isEnabled();
   const bool checked = isChecked();
 
   const QRectF r(0.5, 0.5, width() - 1.0, height() - 1.0);
@@ -73,6 +99,7 @@ void ToolbarButton::paintEvent(QPaintEvent*) {
     fill = t.control_active;
   } else if (hover) {
     fill = t.control_hover;
+    fill.setAlphaF(fill.alphaF() * hover_progress_);
   }
   if (fill.alpha() > 0) {
     p.setPen(checked ? QPen(emphasis_ == Emphasis::Accent

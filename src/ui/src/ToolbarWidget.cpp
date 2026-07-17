@@ -1,6 +1,5 @@
 #include "ToolbarWidget.h"
 
-#include "DocumentCapsule.h"
 #include "SegmentedControl.h"
 #include "ToolbarButton.h"
 #include "cadly/ui/ThemeTokens.h"
@@ -29,6 +28,31 @@ protected:
   }
 };
 
+class SplitButtonFrame final : public QWidget {
+public:
+  explicit SplitButtonFrame(QWidget* parent) : QWidget(parent) {
+    setFixedHeight(28);
+  }
+  void set_right_widget(QWidget* widget) { right_ = widget; }
+
+protected:
+  void paintEvent(QPaintEvent*) override {
+    const auto& t = tokens();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(t.hairline_soft, 1.0));
+    p.setBrush(t.control_bg);
+    p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
+    if (right_) {
+      const int x = right_->geometry().left();
+      p.drawLine(QPointF(x, 5), QPointF(x, height() - 5));
+    }
+  }
+
+private:
+  QWidget* right_{nullptr};
+};
+
 ToolbarButton* make_button(QAction* action, QWidget* parent,
                            bool show_text = false,
                            ToolbarButton::Emphasis emphasis =
@@ -54,24 +78,26 @@ ToolbarWidget::ToolbarWidget(const Actions& a, QWidget* parent)
 
   // Open split-button: the main button opens the file dialog, the joined
   // chevron pops the recent-files menu.
-  auto* open_group = new QHBoxLayout();
+  auto* open_frame = new SplitButtonFrame(this);
+  auto* open_group = new QHBoxLayout(open_frame);
+  open_group->setContentsMargins(0, 0, 0, 0);
   open_group->setSpacing(1);
-  open_group->addWidget(make_button(a.open, this, /*show_text=*/true));
-  recents_btn_ = new ToolbarButton(this);
+  open_group->addWidget(make_button(a.open, open_frame, /*show_text=*/true));
+  recents_btn_ = new ToolbarButton(open_frame);
   recents_btn_->setMenu(a.recents_menu);
   recents_btn_->setPopupMode(QToolButton::InstantPopup);
   recents_btn_->setToolTip(tr("Recent files"));
   open_group->addWidget(recents_btn_);
-  layout->addLayout(open_group);
+  open_frame->set_right_widget(recents_btn_);
+  layout->addWidget(open_frame);
 
-  layout->addStretch(1);
-  capsule_ = new DocumentCapsule(this);
-  layout->addWidget(capsule_, 4);
   layout->addStretch(1);
 
   segments_ = new SegmentedControl(this);
   segments_->add_segment(tr("Shaded"),
                          tr("Shaded surfaces (W toggles wireframe)"));
+  segments_->add_segment(tr("Hidden Line"),
+                         tr("Technical drawing with hidden edges removed (H)"));
   segments_->add_segment(tr("Wireframe"),
                          tr("BRep wireframe only (W)"));
   layout->addWidget(segments_);

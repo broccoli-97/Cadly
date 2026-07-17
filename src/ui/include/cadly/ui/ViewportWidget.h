@@ -22,7 +22,9 @@ public:
   explicit ViewportWidget(QWidget* parent = nullptr);
   ~ViewportWidget() override;
 
-  void set_scene(std::shared_ptr<scene::Scene> scene);
+  // `fit` is true for a newly imported document and false when returning to a
+  // tab whose camera should be restored.
+  void set_scene(std::shared_ptr<scene::Scene> scene, bool fit = true);
   void set_display_mode(const renderer::DisplayMode& mode);
   renderer::DisplayMode& display_mode() { return display_mode_; }
 

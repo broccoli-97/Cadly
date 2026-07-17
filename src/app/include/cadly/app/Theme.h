@@ -9,15 +9,14 @@ namespace cadly::app {
 // custom-painted chrome reads (ui::ThemeTokens); this function keeps the
 // stock-widget side (QStyle + QPalette) in step with it:
 //
-//   dark  + Qt >= 6.8  -> full qlementine QStyle with themes/dark.json
-//   dark  + older Qt   -> Fusion + hand-tuned dark palette
-//   light (any Qt)     -> Fusion + light palette (no light qlementine theme
-//                         is vendored, and mixing the qlementine light
-//                         default into the Graphite tokens looks wrong)
+//   Qt >= 6.8 -> one persistent qlementine QStyle, switching its official
+//                Light and Cadly Dark themes in place
+//   older Qt  -> Fusion + hand-tuned Graphite palette
+//   qlementine/theme initialization failure -> Fusion fallback
 //
 // Call once right after QApplication is constructed, and again whenever the
-// user flips the appearance toggle (ui::ThemeManager::changed) — Qt supports
-// runtime style/palette swaps, existing widgets repolish automatically.
+// user flips the appearance toggle (ui::ThemeManager::changed). Existing
+// widgets repolish automatically; the QStyle itself is not replaced.
 void apply_theme(QApplication& app, bool dark = true);
 
 } // namespace cadly::app

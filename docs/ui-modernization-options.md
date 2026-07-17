@@ -1,10 +1,11 @@
 # UI modernization options for Cadly
 
 *Research notes, 2026-06-10. Both recommendation steps are now implemented:
-`apply_theme()` in `src/app/src/Theme.cpp` installs the qlementine QStyle (with
-the vendored `themes/dark.json`) when built against Qt >= 6.8 — the
+`apply_theme()` in `src/app/src/Theme.cpp` installs one persistent qlementine
+QStyle (with vendored Dark and official showcase Light themes) when built
+against Qt >= 6.8 — the
 `linux-qt68-*` presets point at a user-local Qt 6.8.3 from aqtinstall — and
-falls back to Fusion + dark palette + tinted qlementine-icons on older Qt.*
+falls back to Fusion Dark/Light palettes + tinted qlementine-icons on older Qt.*
 
 ## Current state
 

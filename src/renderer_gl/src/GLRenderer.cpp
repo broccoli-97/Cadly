@@ -1261,7 +1261,7 @@ void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
 }
 
 void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
-  // Two display modes feed this pass:
+  // Three display modes feed this pass:
   //   - mode.show_edges : overlay BRep edges on the shaded surface using
   //                       the mesh-coupled strip (depth-matched, no
   //                       LOD selection needed).
@@ -1269,9 +1269,11 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
   //                       LOD ladder, refined per frame from the
   //                       camera's world-per-pixel, since there is no
   //                       triangulated face to anchor against.
-  // The two modes are mutually exclusive at the UI level.
+  //   - mode.hidden_line: draw mesh-coupled BRep edges over flat faces; the
+  //                       filled depth buffer removes back-side lines.
+  // The three surface modes are mutually exclusive at the UI level.
   if (!prog_edges_.valid() || !scene_) return;
-  if (!mode.show_edges && !mode.wireframe) return;
+  if (!mode.show_edges && !mode.wireframe && !mode.hidden_line) return;
 
   gl_.glUseProgram(prog_edges_.id());
   const GLint loc_model = prog_edges_.uniform(gl_, "u_model");
@@ -1291,7 +1293,8 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
 
   // Dark line over warm surfaces reads as ink; intensity slider in
   // DisplayMode controls overall strength.
-  const float a = std::clamp(mode.edge_intensity, 0.0f, 1.0f);
+  const float a = mode.hidden_line
+    ? 1.0f : std::clamp(mode.edge_intensity, 0.0f, 1.0f);
   const scene::vec4 ec{0.05f, 0.06f, 0.08f, a};
   gl_.glUniform4fv(loc_color, 1, &ec.x);
 
@@ -1372,9 +1375,9 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
       vao   = lod->vao;
       count = lod->index_count;
     } else {
-      // Shaded-with-edges overlay: mesh-coupled strip indices into the
-      // surface VBO. Polygon offset on the surface (see render()) keeps
-      // these edges in front of their faces without geometric divergence.
+      // Shaded-with-edges and hidden-line modes use mesh-coupled strip
+      // indices into the surface VBO. Polygon offset on the surface (see
+      // render()) keeps these edges in front without geometric divergence.
       if (g.strip_vao == 0 || g.strip_index_count == 0) continue;
       vao   = g.strip_vao;
       count = g.strip_index_count;
@@ -1559,7 +1562,8 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   //   - lines on the BACK of the part still fail the depth test against
   //     the front-facing surface — i.e. hidden lines stay hidden.
   // This is the classic CAD "shaded with edges" recipe.
-  const bool line_overlay = mode.show_edges || mode.show_triangle_mesh;
+  const bool line_overlay = mode.show_edges || mode.show_triangle_mesh ||
+                            mode.hidden_line;
   if (line_overlay) {
     gl_.glEnable(GL_POLYGON_OFFSET_FILL);
     // Mesh-coupled BRep edges and triangle-mesh lines both index the
@@ -1592,6 +1596,10 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   const GLint loc_refl      = prog_pbr_.uniform(gl_, "u_reflectance");
   const GLint loc_emi_col   = prog_pbr_.uniform(gl_, "u_emissive_color");
   const GLint loc_emi       = prog_pbr_.uniform(gl_, "u_emissive");
+  gl_.glUniform1i(prog_pbr_.uniform(gl_, "u_hidden_line"),
+                  mode.hidden_line ? 1 : 0);
+  gl_.glUniform3fv(prog_pbr_.uniform(gl_, "u_hidden_line_color"), 1,
+                   &mode.hidden_line_color.x);
 
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;

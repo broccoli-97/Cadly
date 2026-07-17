@@ -22,6 +22,9 @@ struct MaterialHandle : ResourceHandle {};
 // scene itself doesn't need to know what's on.
 struct DisplayMode {
   bool wireframe        {false};
+  // Technical-drawing view: render flat, unlit faces into colour + depth,
+  // then draw only the BRep edges that pass the depth test.
+  bool hidden_line      {false};
   bool show_edges       {true};    // outline at sharp creases
   bool show_axes        {true};    // world-axes triad overlay (corner)
   bool show_scale_bar   {true};    // fixed-length scale bar overlay (corner)
@@ -31,6 +34,7 @@ struct DisplayMode {
   // wireframe (BRep-only line view); orthogonal to both.
   bool show_triangle_mesh {false};
   float edge_intensity  {0.65f};
+  scene::vec3 hidden_line_color{0.82f, 0.84f, 0.88f};
   scene::vec3 background_top   {0.42f, 0.44f, 0.48f};
   scene::vec3 background_bottom{0.22f, 0.23f, 0.26f};
 

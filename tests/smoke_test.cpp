@@ -4,6 +4,7 @@
 
 #include "cadly/cad/ImporterRegistry.h"
 #include "cadly/cad/TessellationPolicy.h"
+#include "cadly/renderer/RenderTypes.h"
 #include "cadly/scene/Aabb.h"
 #include "cadly/scene/Camera.h"
 #include "cadly/scene/Scene.h"
@@ -16,6 +17,7 @@
 
 namespace s = cadly::scene;
 namespace c = cadly::cad;
+namespace r = cadly::renderer;
 
 static int g_failures = 0;
 #define CHECK(cond) do {                                          \
@@ -76,6 +78,14 @@ static void test_camera_fit() {
   c.frame_bounds({-2.0f, -2.0f, -2.0f}, {2.0f, 2.0f, 2.0f});
   CHECK(c.distance > 0.0f);
   CHECK(c.far_z > c.near_z);
+}
+
+static void test_display_mode_defaults() {
+  r::DisplayMode mode;
+  CHECK(!mode.wireframe);
+  CHECK(!mode.hidden_line);
+  CHECK(mode.show_edges);
+  CHECK(!mode.show_triangle_mesh);
 }
 
 static void test_importer_registry() {
@@ -145,6 +155,7 @@ int main() {
   test_transform_roundtrip();
   test_scene_hierarchy();
   test_camera_fit();
+  test_display_mode_defaults();
   test_importer_registry();
   test_tessellation_policy();
   test_hammer_iges_visual_relative_import();

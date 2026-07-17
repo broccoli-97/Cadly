@@ -93,8 +93,8 @@ if(CADLY_BUILD_GUI)
   # qlementine — a full modern QStyle (smooth animations, automatic icon
   # colorization, coherent restyling of every widget). It hard-requires
   # Qt 6.8+, while the Linux system-Qt path may still be on 6.4 — so it is
-  # gated on the Qt actually found, and Theme.cpp falls back to Fusion + dark
-  # palette when it's absent. Use the linux-qt68-* presets (Qt in ~/Qt) to get
+  # gated on the Qt actually found, and Theme.cpp falls back to Fusion when it
+  # is absent. Use the linux-qt68-* presets (Qt in ~/Qt) to get
   # the real style; see docs/ui-modernization-options.md for the trade-offs.
   if(Qt6_VERSION VERSION_GREATER_EQUAL "6.8.0")
     set(CADLY_HAS_QLEMENTINE ON)
@@ -167,8 +167,8 @@ message(STATUS "  CLI:    ${CADLY_BUILD_CLI}")
 message(STATUS "  Tests:  ${CADLY_BUILD_TESTS}")
 if(CADLY_BUILD_GUI)
   if(CADLY_HAS_QLEMENTINE)
-    message(STATUS "  Style:  qlementine (Qt >= 6.8)")
+    message(STATUS "  Style:  qlementine Dark/Light (Qt >= 6.8)")
   else()
-    message(STATUS "  Style:  Fusion + dark palette (qlementine needs Qt >= 6.8)")
+    message(STATUS "  Style:  Fusion Dark/Light (qlementine needs Qt >= 6.8)")
   endif()
 endif()

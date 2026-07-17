@@ -76,7 +76,7 @@ plain readers as geometry-only fallback) → `BRepMesh_IncrementalMesh` →
 `IRenderer::attach_scene()` → `render()`.
 
 Import runs on a worker thread (`QtConcurrent`/`std::thread`); it is **non-modal**
-— progress and cancel live in the toolbar's document capsule (`DocumentCapsule`)
+— progress and cancel live in the document tab and status bar,
 and the previous scene stays interactive throughout (`MainWindow::importing_`
 disables only the Open entry points, not the whole UI). Importers MUST poll
 `IProgressSink::cancelled()` between heavy steps. `ImportOptions` (in
@@ -97,18 +97,21 @@ a `shared_ptr<Mesh>` (the strong ref guards against `Mesh*` address reuse).
 `DisplayMode` (`RenderTypes.h`) is how the UI talks to the renderer — the scene
 itself doesn't know what overlays are on.
 
-### Edge / wireframe overlays are three orthogonal things
+### Surface and edge modes
 
 Easy to conflate; they are deliberately separate (see `scene::Mesh` doc comments):
 
 1. **Show edges** (`show_edges`) — the default "shaded with edges" overlay. Uses
    `Mesh::edge_strip_indices`, BRep edges sampled *exactly* on the face
    triangulation nodes, so polygon offset alone keeps them in front (no Z-fight).
-2. **Wireframe** (`wireframe`) — BRep edges *without* surfaces. Uses
+2. **Hidden line** (`hidden_line`) — flat, unlit faces write colour and depth,
+   then mesh-coupled BRep edges draw over them. The filled depth buffer removes
+   far-side edges; do not replace this with plain wireframe rendering.
+3. **Wireframe** (`wireframe`) — BRep edges *without* surfaces. Uses
    `Mesh::edge_lods`, an analytical LOD ladder selected per frame by
    world-per-pixel scale (refines on zoom). Mutually exclusive with the triangle
    mesh overlay.
-3. **Triangle mesh** (`show_triangle_mesh`) — debug overlay drawing every
+4. **Triangle mesh** (`show_triangle_mesh`) — debug overlay drawing every
    triangle edge of the tessellation.
 
 Edge polylines are `GL_LINE_STRIP` runs terminated by the `0xFFFFFFFF`
@@ -129,34 +132,41 @@ primitive-restart sentinel, one drawcall per tier.
 
 ## UI conventions
 
-The shell is the "Graphite" layout (a 52px custom-painted `ToolbarWidget` over
-`QSplitter{SidebarWidget | (ViewportWidget / DiagnosticsStrip) | InspectorWidget}`
-and a 26px status bar) — see `docs/ui-redesign/`. Panels are fixed-position and
-toggle visibility only; the old `QDockWidget` shell (drag-docking, `saveState`
-blobs, the un-float hack) is gone. Layout persists as explicit `QSettings` keys
-written by `MainWindow::save_settings`, not an opaque state blob.
+The shell is the "Graphite" layout (a 52px custom-painted `ToolbarWidget` and
+document `QTabBar` over `QSplitter{SidebarWidget | (ViewportWidget /
+DiagnosticsStrip) | InspectorWidget}` and a 26px status bar) — see
+`docs/ui-redesign/`. Each tab owns a file path, scene, camera, visibility state,
+and import summary; the OpenGL viewport is shared and re-attached on tab
+switches. Panels are fixed-position and toggle visibility only; the old
+`QDockWidget` shell is gone. Layout persists as explicit `QSettings` keys.
 
 - Mouse: **right-drag orbits, middle-drag pans**, left is reserved for picking
   (not yet implemented, passed through). Wheel zoom anchors on the point under
   the cursor. Orbit uses a quaternion camera around a pluggable
   `RotationPivotResolver` (default: camera target).
-- Shortcuts: `F` fit, `W` wireframe, `E` edges, `T` triangle mesh, `P`
+- Shortcuts: `F` fit, `W` wireframe, `H` hidden line, `E` edges, `T` triangle mesh, `P`
   perspective toggle (ortho is default for CAD). Standard views `1`-`7`
   (Front/Back/Right/Left/Top/Bottom/Iso, Blender-style numbering). `⌃.` toggles
   zero-chrome (all panels hidden; Esc restores); `⌥⌘O` opens with the import
-  pre-flight.
-- The display modes are exclusive at the UI layer the same way as before, but
-  now *visibly*: the toolbar `Shaded|Wireframe` `SegmentedControl` plus
-  Edges/Mesh chips that are **disabled-but-remembered** while Wireframe is
-  active (replacing the old `QSignalBlocker` silent-uncheck dance).
-- Custom-painted widgets (`ToolbarButton`, `SegmentedControl`, `DocumentCapsule`,
+  pre-flight; `Ctrl+W` closes the active document tab.
+- Surface modes are visibly exclusive in the toolbar
+  `Shaded|Hidden Line|Wireframe` `SegmentedControl`. Edges/Mesh chips apply to
+  Shaded and are **disabled-but-remembered** in the other two modes.
+- Custom-painted widgets (`ToolbarButton`, `SegmentedControl`,
   the sidebar delegate, `Popover`, …) read `ui::ThemeTokens` (a struct, **not**
   `QPalette`) so they render identically under Fusion (Qt 6.4) and qlementine
   (Qt 6.8). `ThemeManager::changed` drives a live dark/light swap;
   `app::apply_theme(app, dark)` keeps `QStyle`/`QPalette` in step and is safe to
   re-call at runtime. Build the panels *before* the menus (the View menu wires
   their toggle actions).
-- Dev aid: `cadly --screenshot <png> [--demo wireframe|light|views|getinfo|zerochrome]`
+- On Qt >= 6.8, Dark and Light both use one persistent qlementine QStyle;
+  appearance changes switch its loaded JSON theme without replacing QStyle.
+- On Qt < 6.8, `app::apply_theme` layers a narrowly scoped Graphite QSS over
+  Fusion for stock menus, fields, spin boxes, group boxes, sliders, and
+  scrollbars. Do not install a second app-wide stylesheet from the UI module.
+  Reuse the existing Fusion style instance on theme changes: replacing it can
+  recreate `QOpenGLWidget`'s backing surface and invalidate renderer resources.
+- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|zerochrome]`
   drives a UI state and grabs it headlessly (used to verify the shell without an
   input-injection tool).
 

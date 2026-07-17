@@ -23,6 +23,16 @@ the open questions to settle before migration.*
 > struct read by the custom widgets, exactly as the "honest Qt mapping" below
 > proposed.
 
+> **Update (2026-07-17): multi-document tabs supersede the document capsule.**
+> The historical capsule references below describe the original Graphite
+> proposal. The current shell shows each open file in a closable tab below the
+> toolbar; import progress appears in that tab and the status bar. The display
+> control is now `Shaded | Hidden Line | Wireframe`; `H` selects Hidden Line.
+> A visual-parity pass also replaced the stock Fusion document tabs, aligned
+> stock controls to the 24–28px / 6px Graphite geometry, moved sidebar search
+> into the panel header, restored part glyphs, and added restrained 120–140ms
+> hover/segment transitions. The native title bar remains intentionally native.
+
 ## How this direction was chosen
 
 Three competing macOS-inspired concepts were drafted against a full inventory

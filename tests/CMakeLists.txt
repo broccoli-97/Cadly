@@ -2,6 +2,7 @@ add_executable(cadly_smoke_test smoke_test.cpp)
 target_link_libraries(cadly_smoke_test
   PRIVATE
     Cadly::Scene
+    Cadly::Renderer
     Cadly::Cad
     Cadly::Platform
     Cadly::Warnings

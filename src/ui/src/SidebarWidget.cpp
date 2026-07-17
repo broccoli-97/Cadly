@@ -26,7 +26,7 @@ constexpr int kRoleNodeIndex = Qt::UserRole + 1;
 constexpr int kRoleTriCount  = Qt::UserRole + 2;
 constexpr int kRoleVisible   = Qt::UserRole + 3;
 
-constexpr int kRowHeight   = 26;
+constexpr int kRowHeight   = 28;
 constexpr int kGlyphSize   = 16;   // eye / info hit targets
 constexpr int kGlyphPad    = 4;
 } // namespace
@@ -95,13 +95,21 @@ public:
       right = eye.left() - 6;
     }
 
+    // A stable part glyph gives dense assemblies a second scan channel beyond
+    // indentation alone (matching the prototype's source-list rows).
+    const QRect part_icon(opt.rect.left() + 3,
+                          opt.rect.top() + (opt.rect.height() - 14) / 2,
+                          14, 14);
+    const QColor part_color = selected ? t.accent : t.text3;
+    draw_glyph_icon(p, part_icon, QStringLiteral("shape/cube"), part_color);
+
     // Name, elided to whatever space is left.
     const QString name = index.data(Qt::DisplayRole).toString();
     p->setFont(ui_font(12, selected ? QFont::DemiBold : QFont::Normal));
     p->setPen(visible ? t.text1 : t.text3);
     const QFontMetrics fm(p->font());
-    const QRect name_rect(opt.rect.left() + 4, opt.rect.top(),
-                          right - opt.rect.left() - 8, opt.rect.height());
+    const QRect name_rect(part_icon.right() + 5, opt.rect.top(),
+                          right - part_icon.right() - 9, opt.rect.height());
     p->drawText(name_rect, Qt::AlignLeft | Qt::AlignVCenter,
                 fm.elidedText(name, Qt::ElideRight, name_rect.width()));
     p->restore();
@@ -155,20 +163,23 @@ private:
 SidebarWidget::SidebarWidget(QWidget* parent) : QWidget(parent) {
   setAutoFillBackground(false);
   auto* outer = new QVBoxLayout(this);
-  outer->setContentsMargins(8, 8, 8, 8);
-  outer->setSpacing(6);
+  outer->setContentsMargins(8, 4, 8, 8);
+  outer->setSpacing(2);
 
   auto* header = new QHBoxLayout();
+  header->setContentsMargins(4, 0, 0, 0);
   auto* title = new QLabel(tr("MODEL"), this);
-  title->setFont(ui_font(10, QFont::DemiBold));
+  title->setFont(ui_font(11, QFont::DemiBold));
   header->addWidget(title);
   header->addStretch();
-  outer->addLayout(header);
 
   filter_ = new QLineEdit(this);
   filter_->setPlaceholderText(tr("Filter parts"));
   filter_->setClearButtonEnabled(true);
-  outer->addWidget(filter_);
+  filter_->setFixedWidth(130);
+  filter_->setFixedHeight(24);
+  header->addWidget(filter_);
+  outer->addLayout(header);
 
   tree_  = new QTreeView(this);
   model_ = new QStandardItemModel(tree_);

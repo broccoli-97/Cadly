@@ -63,6 +63,7 @@ protected:
   void paintEvent(QPaintEvent*) override;
 
 private:
+  void refresh_icons();
   QWidget* build_display_pane();
   QWidget* build_import_pane();
 
