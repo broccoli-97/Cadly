@@ -129,8 +129,6 @@ void save_import_options(QSettings& s, const cad::ImportOptions& o) {
   s.setValue("max_relative_deflection", o.max_relative_deflection);
   s.setValue("relative_deflection",     o.relative_deflection);
   s.setValue("parallel_meshing",        o.parallel_meshing);
-  s.setValue("run_shape_healing",       o.run_shape_healing);
-  s.setValue("weld_duplicate_vertices", o.weld_duplicate_vertices);
   s.setValue("load_colors",             o.load_colors);
   s.setValue("load_names",              o.load_names);
   s.setValue("load_hierarchy",          o.load_hierarchy);
@@ -156,9 +154,6 @@ cad::ImportOptions load_import_options(QSettings& s) {
     s.value("max_relative_deflection", o.max_relative_deflection).toDouble();
   o.relative_deflection = s.value("relative_deflection", o.relative_deflection).toBool();
   o.parallel_meshing    = s.value("parallel_meshing",    o.parallel_meshing).toBool();
-  o.run_shape_healing   = s.value("run_shape_healing",   o.run_shape_healing).toBool();
-  o.weld_duplicate_vertices =
-    s.value("weld_duplicate_vertices", o.weld_duplicate_vertices).toBool();
   o.load_colors    = s.value("load_colors",    o.load_colors).toBool();
   o.load_names     = s.value("load_names",     o.load_names).toBool();
   o.load_hierarchy = s.value("load_hierarchy", o.load_hierarchy).toBool();

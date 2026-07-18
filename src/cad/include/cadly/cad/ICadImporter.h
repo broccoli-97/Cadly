@@ -41,11 +41,6 @@ struct ImportOptions {
 
   // Vertex output options.
   bool   compute_missing_normals{true};
-  bool   weld_duplicate_vertices{false}; // per-face only; preserves seams
-
-  // Shape healing — kept conservative; importer reports diagnostics.
-  bool   run_shape_healing{true};
-  double precision        {0.01};
 
   // Drop tiny faces below this surface area to avoid degenerate triangulation.
   double min_face_area{1e-8};

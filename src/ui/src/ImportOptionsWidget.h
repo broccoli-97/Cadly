@@ -2,9 +2,7 @@
 
 // The import options form, lifted out of the old every-open modal dialog so
 // it can live persistently in the inspector's Import tab AND inside the
-// opt-in pre-flight dialog without duplication. Also surfaces the shape
-// healing / vertex welding knobs that exist in cad::ImportOptions but were
-// never exposed by the old dialog. Private to the ui module.
+// opt-in pre-flight dialog without duplication. Private to the ui module.
 
 #include "cadly/cad/ICadImporter.h"
 
@@ -40,8 +38,6 @@ private:
   QDoubleSpinBox* max_relative_{nullptr};
   QCheckBox*      relative_{nullptr};
   QCheckBox*      parallel_{nullptr};
-  QCheckBox*      healing_{nullptr};
-  QCheckBox*      weld_{nullptr};
   QCheckBox*      load_colors_{nullptr};
   QCheckBox*      load_names_{nullptr};
   QCheckBox*      load_hierarchy_{nullptr};

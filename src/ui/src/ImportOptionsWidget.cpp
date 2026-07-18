@@ -67,19 +67,6 @@ ImportOptionsWidget::ImportOptionsWidget(QWidget* parent) : QWidget(parent) {
   mesh_form->addRow(relative_);
   mesh_form->addRow(parallel_);
 
-  auto* geo_box = new QGroupBox(tr("Geometry"), this);
-  auto* geo_form = new QFormLayout(geo_box);
-  healing_ = new QCheckBox(tr("Shape healing"), this);
-  healing_->setToolTip(
-    tr("Run conservative OCCT shape healing before meshing; the importer "
-       "reports what it fixed in the diagnostics."));
-  weld_ = new QCheckBox(tr("Weld duplicate vertices"), this);
-  weld_->setToolTip(
-    tr("Merge coincident vertices within each face. Off by default: welding "
-       "is per-face only and preserves seams, but costs import time."));
-  geo_form->addRow(healing_);
-  geo_form->addRow(weld_);
-
   auto* meta_box = new QGroupBox(tr("Metadata"), this);
   auto* meta_form = new QFormLayout(meta_box);
   load_colors_    = new QCheckBox(tr("Load colours"), this);
@@ -90,7 +77,6 @@ ImportOptionsWidget::ImportOptionsWidget(QWidget* parent) : QWidget(parent) {
   meta_form->addRow(load_hierarchy_);
 
   outer->addWidget(mesh_box);
-  outer->addWidget(geo_box);
   outer->addWidget(meta_box);
 
   const auto edited = [this]() {
@@ -105,7 +91,7 @@ ImportOptionsWidget::ImportOptionsWidget(QWidget* parent) : QWidget(parent) {
     connect(spin, &QDoubleSpinBox::valueChanged, this,
             [edited](double) { edited(); });
   }
-  for (auto* cb : {relative_, parallel_, healing_, weld_,
+  for (auto* cb : {relative_, parallel_,
                    load_colors_, load_names_, load_hierarchy_}) {
     connect(cb, &QCheckBox::toggled, this, [edited](bool) { edited(); });
   }
@@ -136,8 +122,6 @@ cad::ImportOptions ImportOptionsWidget::options() const {
   o.max_relative_deflection = max_relative_->value();
   o.relative_deflection     = relative_->isChecked();
   o.parallel_meshing        = parallel_->isChecked();
-  o.run_shape_healing       = healing_->isChecked();
-  o.weld_duplicate_vertices = weld_->isChecked();
   o.load_colors             = load_colors_->isChecked();
   o.load_names              = load_names_->isChecked();
   o.load_hierarchy          = load_hierarchy_->isChecked();
@@ -156,8 +140,6 @@ void ImportOptionsWidget::set_options(const cad::ImportOptions& o) {
   max_relative_->setValue(o.max_relative_deflection);
   relative_->setChecked(o.relative_deflection);
   parallel_->setChecked(o.parallel_meshing);
-  healing_->setChecked(o.run_shape_healing);
-  weld_->setChecked(o.weld_duplicate_vertices);
   load_colors_->setChecked(o.load_colors);
   load_names_->setChecked(o.load_names);
   load_hierarchy_->setChecked(o.load_hierarchy);
