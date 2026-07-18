@@ -1,6 +1,7 @@
 #include "cadly/cad/OcctStepImporter.h"
 
 #include "OcctShapeToMesh.h"
+#include "OcctProgressBridge.h"
 #include "XcafDocumentLease.h"
 
 #include "cadly/platform/Log.h"
@@ -95,11 +96,26 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
     return result;
   }
 
-  if (progress.cancelled()) return result;
+  if (progress.cancelled()) {
+    result.cancelled = true;
+    return result;
+  }
   progress.update(0.25f, "Transferring shapes to OCAF document...");
 
+  // The bridge makes Transfer cancellable from inside OCCT (it is the
+  // single longest stage on big assemblies) and maps its internal progress
+  // onto the 25–40 % slice of the import.
+  Handle(occt::OcctProgressBridge) transfer_bridge =
+    new occt::OcctProgressBridge(progress, 0.25f, 0.40f,
+                                 "Transferring shapes to OCAF document...");
   phase_start = clock::now();
-  if (!reader.Transfer(doc_lease.doc())) {
+  const bool transferred = reader.Transfer(doc_lease.doc(),
+                                           transfer_bridge->Start());
+  if (progress.cancelled()) {
+    result.cancelled = true;
+    return result;
+  }
+  if (!transferred) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Error,
       "STEPCAFControl_Reader::Transfer() returned false"});
     return result;
@@ -125,6 +141,13 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
     result.summary.timings.push_back({"document_to_scene",
       std::chrono::duration_cast<std::chrono::milliseconds>(
         clock::now() - phase_start)});
+  }
+
+  // A cancel during the document walk leaves a partial (often empty) scene;
+  // bail before the geometry-only fallback re-parses the whole file.
+  if (progress.cancelled()) {
+    result.cancelled = true;
+    return result;
   }
 
   // Geometry-only fallback, evaluated lazily. document_to_scene consults the
@@ -172,6 +195,10 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   for (auto& d : stats.diagnostics)
     result.summary.diagnostics.push_back(std::move(d));
 
+  if (progress.cancelled()) {
+    result.cancelled = true;
+    return result;
+  }
   if (!result.scene || result.scene->nodes.empty()) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Warning,
       "Document produced no scene nodes."});

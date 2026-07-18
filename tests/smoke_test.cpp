@@ -207,6 +207,31 @@ static void test_xcaf_documents_closed_after_import() {
   std::filesystem::remove(garbage);
 }
 
+// Importers must surface cancellation explicitly: a cancelled import may
+// carry a partial scene, and callers must never mistake it for a completed
+// load (success) or a parse error (plain failure). The always-cancelled sink
+// trips the earliest poll; deeper OCCT-stage cancellation (Transfer, batch
+// meshing) rides the same IProgressSink::cancelled() via OcctProgressBridge.
+static void test_import_cancellation_flagged() {
+#ifdef CADLY_TEST_SOURCE_ROOT
+  class CancelledSink final : public c::IProgressSink {
+  public:
+    void update(float, const std::string&) override {}
+    bool cancelled() const override { return true; }
+  };
+
+  const std::filesystem::path hammer =
+    std::filesystem::path(CADLY_TEST_SOURCE_ROOT) / "test_files" / "hammer.iges";
+  if (!std::filesystem::exists(hammer)) return;
+
+  CancelledSink sink;
+  auto result = c::ImporterRegistry::instance().import(hammer, {}, &sink);
+  CHECK(result.cancelled);
+  CHECK(!result.success);
+  CHECK(c::open_xcaf_document_count() == 0);
+#endif
+}
+
 int main() {
   test_aabb();
   test_transform_roundtrip();
@@ -218,6 +243,7 @@ int main() {
   test_tessellation_policy_unbounded();
   test_hammer_iges_visual_relative_import();
   test_xcaf_documents_closed_after_import();
+  test_import_cancellation_flagged();
   if (g_failures == 0) {
     std::printf("OK: scene + cad smoke tests passed.\n");
     return 0;

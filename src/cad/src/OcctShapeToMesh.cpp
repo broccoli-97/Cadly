@@ -1,5 +1,7 @@
 #include "OcctShapeToMesh.h"
 
+#include "OcctProgressBridge.h"
+
 #include "cadly/cad/TessellationPolicy.h"
 #include "cadly/platform/Log.h"
 #include "cadly/scene/Aabb.h"
@@ -14,6 +16,8 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
+#include <IMeshTools_Parameters.hxx>
+#include <Message_ProgressRange.hxx>
 #include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
@@ -63,13 +67,19 @@ std::uint32_t pack_color(const Quantity_Color& c, float alpha = 1.0f) {
 // The parameter constructor runs the mesh algorithm itself ("Automatically
 // calls method Perform" per the OCCT header) — do not call Perform() again;
 // the second call re-walks the whole shape only to discover there is nothing
-// left to do.
-void tessellate(const TopoDS_Shape& shape, const ImportOptions& opts) {
-  BRepMesh_IncrementalMesh mesher(shape,
-                                  opts.linear_deflection,
-                                  opts.relative_deflection,
-                                  opts.angular_deflection,
-                                  opts.parallel_meshing);
+// left to do. The explicit IMeshTools_Parameters form (rather than the
+// 4-scalar convenience constructor, which fills the same four fields) is the
+// only overload that also accepts a progress range, which is how the batch
+// document pass stays cancellable.
+void tessellate(const TopoDS_Shape& shape,
+                const ImportOptions& opts,
+                const Message_ProgressRange& range = Message_ProgressRange()) {
+  IMeshTools_Parameters params;
+  params.Deflection = opts.linear_deflection;
+  params.Angle      = opts.angular_deflection;
+  params.Relative   = opts.relative_deflection;
+  params.InParallel = opts.parallel_meshing;
+  BRepMesh_IncrementalMesh mesher(shape, params, range);
 }
 
 // True when every face of the shape already carries a triangulation. Used to
@@ -727,7 +737,12 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     note_unbounded_faces(stats, unbounded_faces);
     resolved_opts = resolved.options;
     progress.update(0.45f, "Tessellating geometry...");
-    tessellate(all, resolved_opts);
+    // Bridge the sink into the mesher so the (potentially tens of seconds)
+    // batch pass honours cancellation and advances the progress bar.
+    Handle(OcctProgressBridge) mesh_bridge =
+      new OcctProgressBridge(progress, 0.45f, 0.70f,
+                             "Tessellating geometry...");
+    tessellate(all, resolved_opts, mesh_bridge->Start());
     if (opts.profile_timings) {
       add_timing(stats, "batch document tessellation",
                  std::chrono::steady_clock::now() - phase_start);

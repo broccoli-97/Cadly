@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -31,9 +32,26 @@ void print_usage(const char* argv0) {
     "  --max-relative <r>        visual-relative upper clamp (default 0.0005)\n"
     "  --no-colors\n"
     "  --no-names\n"
+    "  --cancel-after-ms <ms>    request cancellation after this delay; used\n"
+    "                            to measure how quickly importers honour it\n"
     "  --profile                 print detailed import stage timings\n"
     "  --verbose\n";
 }
+
+// Sink that flips to cancelled once a wall-clock deadline passes. Exists to
+// measure real cancellation latency: how long after the deadline the importer
+// (including the OCCT-internal Transfer/meshing stages) actually returns.
+class DeadlineCancelSink final : public cadly::cad::IProgressSink {
+public:
+  explicit DeadlineCancelSink(std::chrono::milliseconds delay)
+      : deadline_(std::chrono::steady_clock::now() + delay) {}
+  void update(float, const std::string&) override {}
+  bool cancelled() const override {
+    return std::chrono::steady_clock::now() >= deadline_;
+  }
+private:
+  std::chrono::steady_clock::time_point deadline_;
+};
 
 bool is_cad_file(const std::filesystem::path& path) {
   std::string ext = path.extension().string();
@@ -67,6 +85,9 @@ void print_result(const std::filesystem::path& path,
   std::cout << "------------------------------------------------------------\n";
   std::cout << "  source       : " << path.string() << "\n";
   std::cout << "  success      : " << (result.success ? "yes" : "no") << "\n";
+  if (result.cancelled) {
+    std::cout << "  cancelled    : yes\n";
+  }
   std::cout << fmt::format("  parse time   : {} ms\n", result.summary.parse_time.count());
   std::cout << fmt::format("  mesh time    : {} ms\n", result.summary.mesh_time.count());
   std::cout << fmt::format("  total time   : {} ms\n", result.summary.total_time.count());
@@ -146,6 +167,7 @@ int main(int argc, char** argv) {
   cad::ImportOptions opts;
   bool profile = false;
   bool tessellation_mode_explicit = false;
+  long cancel_after_ms = -1;
   std::vector<std::filesystem::path> inputs;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -154,6 +176,9 @@ int main(int argc, char** argv) {
     if (a == "--profile") { opts.profile_timings = true; profile = true; continue; }
     if (a == "--no-colors") { opts.load_colors = false; continue; }
     if (a == "--no-names")  { opts.load_names  = false; continue; }
+    if (a == "--cancel-after-ms" && i + 1 < argc) {
+      cancel_after_ms = std::stol(argv[++i]); continue;
+    }
     if (a == "--tessellation-mode" && i + 1 < argc) {
       std::string mode = argv[++i];
       if (mode == "absolute") {
@@ -210,9 +235,24 @@ int main(int argc, char** argv) {
 
   bool all_ok = true;
   for (const auto& file : files) {
-    auto result = cad::ImporterRegistry::instance().import(file, opts);
+    cad::ImportResult result;
+    if (cancel_after_ms >= 0) {
+      DeadlineCancelSink sink{std::chrono::milliseconds(cancel_after_ms)};
+      const auto t0 = std::chrono::steady_clock::now();
+      result = cad::ImporterRegistry::instance().import(file, opts, &sink);
+      const auto returned_after =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - t0);
+      std::cout << fmt::format(
+        "  cancel requested at {} ms, importer returned at {} ms "
+        "(latency {} ms)\n",
+        cancel_after_ms, returned_after.count(),
+        returned_after.count() - cancel_after_ms);
+    } else {
+      result = cad::ImporterRegistry::instance().import(file, opts);
+    }
     print_result(file, result, profile);
-    all_ok = all_ok && result.success;
+    all_ok = all_ok && (result.success || result.cancelled);
   }
 
   return all_ok ? 0 : 1;

@@ -87,6 +87,10 @@ struct ImportSummary {
 
 struct ImportResult {
   bool success{false};
+  // True when the import ended because the caller's IProgressSink reported
+  // cancellation. Never combined with success: a cancelled import may carry
+  // a partial scene, but callers must not present it as a completed load.
+  bool cancelled{false};
   std::shared_ptr<scene::Scene> scene;
   ImportSummary summary{};
 };
