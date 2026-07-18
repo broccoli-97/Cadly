@@ -232,6 +232,58 @@ static void test_import_cancellation_flagged() {
 #endif
 }
 
+// Colour must have exactly one source: the per-submesh materials. The old
+// pipeline baked the shape colour into the vertices AND assigned it to the
+// submesh material; the shader multiplies both, so every imported colour was
+// squared (darkened), and face colours were cross-tinted by the shape
+// colour. Vertices must now stay neutral white, and each submesh must point
+// at a valid material with source_face_id preserving explorer order (the
+// contract the face->material pairing relies on when faces are skipped).
+static void test_step_colors_single_source() {
+#ifdef CADLY_TEST_SOURCE_ROOT
+  // KR600 is the smallest sample whose colours OCCT's XCAF reader actually
+  // maps (as1-ug-214 styles predate what it translates). Coarse absolute
+  // deflection keeps the meshing share of the test cheap; colour handling
+  // is independent of tessellation density.
+  const std::filesystem::path colored =
+    std::filesystem::path(CADLY_TEST_SOURCE_ROOT) / "test_files" /
+    "KR600_R2830-4.stp";
+  if (!std::filesystem::exists(colored)) return;
+
+  c::ImportOptions opts;
+  opts.tessellation_mode  = c::TessellationMode::Absolute;
+  opts.linear_deflection  = 2.0;
+  auto result = c::ImporterRegistry::instance().import(colored, opts);
+  CHECK(result.success);
+  if (!result.scene) return;
+  const auto& scn = *result.scene;
+
+  // The sample carries part/face colours; they must arrive as materials.
+  CHECK(scn.materials.size() > 1);
+
+  std::size_t tinted_vertices  = 0;
+  std::size_t bad_material_ref = 0;
+  std::size_t unordered_faces  = 0;
+  for (const auto& mesh : scn.meshes) {
+    if (!mesh) continue;
+    for (const auto& v : mesh->vertices) {
+      if (v.color_rgba8 != 0xFFFFFFFFu) ++tinted_vertices;
+    }
+    bool first = true;
+    std::uint32_t prev_face = 0;
+    for (const auto& sub : mesh->submeshes) {
+      if (sub.material_index >= scn.materials.size()) ++bad_material_ref;
+      if (!first && sub.source_face_id <= prev_face) ++unordered_faces;
+      prev_face = sub.source_face_id;
+      first = false;
+    }
+  }
+  CHECK(tinted_vertices == 0);
+  CHECK(bad_material_ref == 0);
+  CHECK(unordered_faces == 0);
+#endif
+}
+
 int main() {
   test_aabb();
   test_transform_roundtrip();
@@ -244,6 +296,7 @@ int main() {
   test_hammer_iges_visual_relative_import();
   test_xcaf_documents_closed_after_import();
   test_import_cancellation_flagged();
+  test_step_colors_single_source();
   if (g_failures == 0) {
     std::printf("OK: scene + cad smoke tests passed.\n");
     return 0;

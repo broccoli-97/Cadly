@@ -235,7 +235,6 @@ double triangulation_area(const Handle(Poly_Triangulation)& tri,
 // twice from each face's own copy of the boundary nodes.
 std::size_t append_face(scene::Mesh& mesh,
                         const TopoDS_Face& face,
-                        const std::optional<Quantity_Color>& face_color,
                         const ImportOptions& opts,
                         ConversionStats& stats,
                         std::uint32_t source_face_id,
@@ -265,9 +264,9 @@ std::size_t append_face(scene::Mesh& mesh,
   sub.bounds           = scene::Aabb::empty();
 
   const std::uint32_t base_vertex = static_cast<std::uint32_t>(mesh.vertices.size());
-  const std::uint32_t color_packed = face_color
-    ? pack_color(*face_color)
-    : 0xFFFFFFFFu;
+  // White — a neutral multiplier. Colour comes from the submesh material
+  // only; see shape_to_mesh's doc comment.
+  const std::uint32_t color_packed = 0xFFFFFFFFu;
 
 #if OCC_VERSION_HEX >= 0x070600
   const Standard_Integer node_count = tri->NbNodes();
@@ -453,6 +452,20 @@ resolve_shape_color(const Handle(XCAFDoc_ColorTool)& color_tool,
   return std::nullopt;
 }
 
+// Colour attached to the label itself, ignoring the underlying shape. This
+// is how XCAF represents occurrence styling: a colour on a reference label
+// applies to that one instance, while prototype/shape colours are shared by
+// every occurrence of the part.
+std::optional<Quantity_Color>
+resolve_label_color(const Handle(XCAFDoc_ColorTool)& color_tool,
+                    const TDF_Label& label) {
+  if (color_tool.IsNull() || label.IsNull()) return std::nullopt;
+  Quantity_Color c;
+  if (color_tool->GetColor(label, XCAFDoc_ColorGen,  c)) return c;
+  if (color_tool->GetColor(label, XCAFDoc_ColorSurf, c)) return c;
+  return std::nullopt;
+}
+
 std::string read_label_name(const TDF_Label& label) {
   if (label.IsNull()) return {};
   Handle(TDataStd_Name) name_attr;
@@ -605,7 +618,6 @@ bool is_cull_safe(const TopoDS_Shape& shape) {
 std::shared_ptr<scene::Mesh>
 shape_to_mesh(const TopoDS_Shape& shape,
               const ImportOptions& opts,
-              const std::optional<Quantity_Color>& vertex_color_default,
               ConversionStats& stats) {
   using clock = std::chrono::steady_clock;
   if (shape.IsNull()) return nullptr;
@@ -627,8 +639,7 @@ shape_to_mesh(const TopoDS_Shape& shape,
   std::unordered_set<const void*> seen_strip_edges;
   for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
     const TopoDS_Face& face = TopoDS::Face(ex.Current());
-    append_face(*mesh, face, vertex_color_default, opts, stats, face_id++,
-                seen_strip_edges);
+    append_face(*mesh, face, opts, stats, face_id++, seen_strip_edges);
   }
   if (opts.profile_timings) {
     add_timing(stats, "face topology walk", clock::now() - phase_start);
@@ -669,8 +680,7 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     apply_resolved_tessellation(stats, resolved);
     note_unbounded_faces(stats, unbounded_faces);
     auto phase_start = std::chrono::steady_clock::now();
-    auto mesh = shape_to_mesh(fallback_shape, resolved.options, std::nullopt,
-                              stats);
+    auto mesh = shape_to_mesh(fallback_shape, resolved.options, stats);
     if (opts.profile_timings) {
       add_timing(stats, "fallback shape conversion",
                  std::chrono::steady_clock::now() - phase_start);
@@ -792,18 +802,21 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
   // need to place each occurrence in world space without manually
   // accumulating transforms during traversal.
   auto build_mesh_for = [&](const TopoDS_Shape& shape,
-                            const TDF_Label& proto_label,
-                            const std::optional<Quantity_Color>& fallback_color) -> std::uint32_t {
+                            const TDF_Label& proto_label) -> std::uint32_t {
     const void* key = shape.TShape().get();
     auto cache_it = mesh_cache.find(key);
     if (cache_it != mesh_cache.end()) return cache_it->second;
 
-    auto default_color = fallback_color;
-    if (!default_color) {
-      default_color = resolve_shape_color(color_tool, proto_label, shape);
-    }
+    // Prototype-level colour only. The mesh — including its per-face
+    // materials — is shared by every occurrence of the part, so occurrence
+    // styling must not leak into it; the walk applies instance colours as
+    // Node::material_override instead. (The first caller's instance colour
+    // used to be baked into the cached mesh, painting every later
+    // occurrence with it.)
+    const auto default_color =
+      resolve_shape_color(color_tool, proto_label, shape);
     const auto phase_start = std::chrono::steady_clock::now();
-    auto mesh = shape_to_mesh(shape, resolved_opts, default_color, stats);
+    auto mesh = shape_to_mesh(shape, resolved_opts, stats);
     if (opts.profile_timings) {
       add_timing(stats, "shape conversion total",
                  std::chrono::steady_clock::now() - phase_start);
@@ -812,14 +825,22 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     mesh->name = read_label_name(proto_label);
     if (mesh->name.empty()) mesh->name = "mesh";
 
-    std::uint32_t sub_index = 0;
+    // Pair faces with submeshes through the recorded source_face_id:
+    // append_face emits no submesh for faces without triangulation or below
+    // the tiny-face threshold, so the submesh list is a subsequence of the
+    // explored faces. The old positional pairing shifted every material
+    // after the first skipped face onto the wrong submesh.
+    std::size_t sub_i = 0;
+    std::uint32_t face_id = 0;
     for (TopExp_Explorer ex(shape, TopAbs_FACE);
-         ex.More() && sub_index < mesh->submeshes.size();
-         ex.Next(), ++sub_index) {
+         ex.More() && sub_i < mesh->submeshes.size();
+         ex.Next(), ++face_id) {
+      if (mesh->submeshes[sub_i].source_face_id != face_id) continue;
       auto fc = resolve_face_color(color_tool, ex.Current());
-      mesh->submeshes[sub_index].material_index = fc
+      mesh->submeshes[sub_i].material_index = fc
         ? material_for_color(fc)
         : material_for_color(default_color);
+      ++sub_i;
     }
     const auto idx = scn->add_mesh(mesh);
     mesh_cache.emplace(key, idx);
@@ -878,18 +899,21 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
       } else if (shape_tool->IsSimpleShape(proto)) {
         TopoDS_Shape shape;
         shape_tool->GetShape(proto, shape);
-        auto color = resolve_shape_color(color_tool, label, shape);
-        if (!color) color = resolve_shape_color(color_tool, proto, shape);
-        const auto mesh_idx = build_mesh_for(shape, proto, color);
+        const auto mesh_idx = build_mesh_for(shape, proto);
         if (mesh_idx != scene::Scene::kInvalid) {
           scn->nodes[node_idx].mesh_index = mesh_idx;
+          // Occurrence colour styled on the reference label applies to this
+          // instance only; the shared prototype mesh must not absorb it.
+          if (auto inst_color = resolve_label_color(color_tool, label)) {
+            scn->nodes[node_idx].material_override =
+              material_for_color(inst_color);
+          }
         }
       }
     } else if (shape_tool->IsSimpleShape(label)) {
       TopoDS_Shape shape;
       shape_tool->GetShape(label, shape);
-      auto color = resolve_shape_color(color_tool, label, shape);
-      const auto mesh_idx = build_mesh_for(shape, label, color);
+      const auto mesh_idx = build_mesh_for(shape, label);
       if (mesh_idx != scene::Scene::kInvalid) {
         scn->nodes[node_idx].mesh_index = mesh_idx;
       }

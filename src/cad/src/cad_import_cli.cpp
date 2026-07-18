@@ -125,6 +125,22 @@ void print_result(const std::filesystem::path& path,
     }
     std::cout << fmt::format("  meshes       : {} ({} double-sided / non-solid)\n",
                              mesh_count, double_sided);
+    std::size_t overrides = 0;
+    for (const auto& n : result.scene->nodes) {
+      if (n.material_override) ++overrides;
+    }
+    std::cout << fmt::format("  materials    : {} ({} instance overrides)\n",
+                             result.scene->materials.size(), overrides);
+    // Colour-pipeline invariant: vertex colours are a neutral multiplier;
+    // any non-white vertex means a colour got baked in twice.
+    std::size_t tinted = 0;
+    for (const auto& m : result.scene->meshes) {
+      if (!m) continue;
+      for (const auto& v : m->vertices) {
+        if (v.color_rgba8 != 0xFFFFFFFFu) ++tinted;
+      }
+    }
+    std::cout << fmt::format("  tinted verts : {}\n", tinted);
   }
   if (profile && !result.summary.timings.empty()) {
     std::cout << "  timings:\n";

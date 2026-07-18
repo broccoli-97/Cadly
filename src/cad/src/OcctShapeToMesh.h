@@ -32,14 +32,16 @@ struct ConversionStats {
 // "shape" means: a face, a solid, or the full assembly aggregated. The mesh
 // is already triangulated (BRepMesh_IncrementalMesh runs inside).
 //
-// `vertex_color_default` is applied to every vertex when the XCAF colour
-// tools can't resolve a per-face colour. Pass `std::nullopt` for white.
+// Colour is expressed exclusively through per-submesh materials assigned by
+// the caller; vertex colours are written as white (a neutral multiplier for
+// the shader's u_base_color * v_vertex_color composition). Baking a colour
+// into the vertices AND assigning it to the submesh material used to square
+// the colour on screen.
 //
 // Returns an empty pointer if the shape has no usable triangulation.
 std::shared_ptr<scene::Mesh>
 shape_to_mesh(const TopoDS_Shape& shape,
               const ImportOptions& options,
-              const std::optional<Quantity_Color>& vertex_color_default,
               ConversionStats& stats);
 
 // Walk an XDE document and emit one Mesh per shape entry, plus a flat scene
