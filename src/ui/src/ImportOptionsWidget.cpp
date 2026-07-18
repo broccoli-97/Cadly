@@ -71,10 +71,8 @@ ImportOptionsWidget::ImportOptionsWidget(QWidget* parent) : QWidget(parent) {
   auto* meta_form = new QFormLayout(meta_box);
   load_colors_    = new QCheckBox(tr("Load colours"), this);
   load_names_     = new QCheckBox(tr("Load names"), this);
-  load_hierarchy_ = new QCheckBox(tr("Load assembly hierarchy"), this);
   meta_form->addRow(load_colors_);
   meta_form->addRow(load_names_);
-  meta_form->addRow(load_hierarchy_);
 
   outer->addWidget(mesh_box);
   outer->addWidget(meta_box);
@@ -91,8 +89,7 @@ ImportOptionsWidget::ImportOptionsWidget(QWidget* parent) : QWidget(parent) {
     connect(spin, &QDoubleSpinBox::valueChanged, this,
             [edited](double) { edited(); });
   }
-  for (auto* cb : {relative_, parallel_,
-                   load_colors_, load_names_, load_hierarchy_}) {
+  for (auto* cb : {relative_, parallel_, load_colors_, load_names_}) {
     connect(cb, &QCheckBox::toggled, this, [edited](bool) { edited(); });
   }
 
@@ -124,7 +121,6 @@ cad::ImportOptions ImportOptionsWidget::options() const {
   o.parallel_meshing        = parallel_->isChecked();
   o.load_colors             = load_colors_->isChecked();
   o.load_names              = load_names_->isChecked();
-  o.load_hierarchy          = load_hierarchy_->isChecked();
   return o;
 }
 
@@ -142,7 +138,6 @@ void ImportOptionsWidget::set_options(const cad::ImportOptions& o) {
   parallel_->setChecked(o.parallel_meshing);
   load_colors_->setChecked(o.load_colors);
   load_names_->setChecked(o.load_names);
-  load_hierarchy_->setChecked(o.load_hierarchy);
   update_enablement();
   applying_ = false;
 }

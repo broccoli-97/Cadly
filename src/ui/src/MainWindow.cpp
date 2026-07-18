@@ -132,7 +132,6 @@ void save_import_options(QSettings& s, const cad::ImportOptions& o) {
   s.setValue("parallel_meshing",        o.parallel_meshing);
   s.setValue("load_colors",             o.load_colors);
   s.setValue("load_names",              o.load_names);
-  s.setValue("load_hierarchy",          o.load_hierarchy);
   s.endGroup();
 }
 
@@ -157,7 +156,6 @@ cad::ImportOptions load_import_options(QSettings& s) {
   o.parallel_meshing    = s.value("parallel_meshing",    o.parallel_meshing).toBool();
   o.load_colors    = s.value("load_colors",    o.load_colors).toBool();
   o.load_names     = s.value("load_names",     o.load_names).toBool();
-  o.load_hierarchy = s.value("load_hierarchy", o.load_hierarchy).toBool();
   s.endGroup();
   return o;
 }

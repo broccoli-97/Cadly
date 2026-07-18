@@ -40,7 +40,6 @@ private:
   QCheckBox*      parallel_{nullptr};
   QCheckBox*      load_colors_{nullptr};
   QCheckBox*      load_names_{nullptr};
-  QCheckBox*      load_hierarchy_{nullptr};
   bool            applying_{false};
 };
 

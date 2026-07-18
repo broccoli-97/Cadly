@@ -47,7 +47,6 @@ struct ImportOptions {
 
   bool   load_colors    {true};
   bool   load_names     {true};
-  bool   load_hierarchy {true};
 
   // Developer profiling hook. Normal imports leave this off to avoid adding
   // timer overhead inside the topology walk.
