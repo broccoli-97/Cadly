@@ -693,7 +693,7 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     root.mesh_index = mesh_idx;
     root.source_label = "/root";
     scn->add_node(std::move(root));
-    scn->add_material(scene::Material::brushed_metal());
+    scn->add_material(scene::Material::neutral_clay());
     phase_start = std::chrono::steady_clock::now();
     scn->update_transforms();
     if (opts.profile_timings) {
@@ -709,7 +709,7 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     XCAFDoc_DocumentTool::ColorTool(doc->Main());
 
   // Allocate the default material slot so face submeshes can index it.
-  scn->add_material(scene::Material::brushed_metal());
+  scn->add_material(scene::Material::neutral_clay());
 
   TDF_LabelSequence labels;
   shape_tool->GetFreeShapes(labels);

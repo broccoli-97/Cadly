@@ -11,24 +11,38 @@ namespace cadly::scene {
 struct Material {
   std::string name;
 
-  // Default: a brushed-aluminum-like finish — fully metallic, mid roughness
-  // so the highlights read as soft "frosted" reflections rather than a
-  // mirror. Matches Material::brushed_metal() so default-constructing a
-  // Material in the renderer's fallback path produces the same look as
-  // explicitly asking for the default preset.
-  vec4  base_color{0.910f, 0.920f, 0.925f, 1.0f}; // linear RGBA
-  float metallic   {1.0f};
-  float roughness  {0.35f};
-  float reflectance{0.5f};                        // unused when metallic = 1
+  // Default: a neutral matte clay — mid-grey dielectric. This is the
+  // industry-standard "unknown material" for CAD inspection: with no
+  // metalness the base colour survives as diffuse under any environment, so
+  // silhouettes, fillets and grooves stay readable instead of dissolving
+  // into whatever the IBL probe reflects (a fully-metallic default has no
+  // diffuse term at all and reads as a flat grey mirror in a low-frequency
+  // studio environment). Matches Material::neutral_clay() so
+  // default-constructing a Material in the renderer's fallback path
+  // produces the same look as explicitly asking for the default preset.
+  vec4  base_color{0.62f, 0.62f, 0.62f, 1.0f};    // linear RGBA
+  float metallic   {0.0f};
+  float roughness  {0.45f};
+  float reflectance{0.5f};                        // dielectric F0 ~0.04
   float emissive   {0.0f};
   vec3  emissive_color{0.0f};
 
   bool double_sided{false};
 
-  // Default-style preset: aluminum tint, fully metallic, mid roughness.
-  // "Slightly frosted" — broadens specular highlights without going matte,
-  // so machined-part facetting reads as a soft reflection instead of a
-  // mirror that magnifies tessellation error.
+  // Default preset: neutral matte clay for parts with no colour/material
+  // information. See the field defaults above for the reasoning; keep both
+  // in sync.
+  static Material neutral_clay() {
+    Material m; m.name = "neutral_clay";
+    m.base_color = vec4(0.62f, 0.62f, 0.62f, 1.0f);
+    m.metallic   = 0.0f;
+    m.roughness  = 0.45f;
+    return m;
+  }
+  // Brushed-aluminum-like finish — fully metallic, mid roughness so the
+  // highlights read as soft "frosted" reflections rather than a mirror.
+  // An explicit preset for parts known to be machined metal; NOT the
+  // default, because metallic=1 kills the diffuse term entirely.
   static Material brushed_metal() {
     Material m; m.name = "brushed_metal";
     m.base_color = vec4(0.910f, 0.920f, 0.925f, 1.0f);
