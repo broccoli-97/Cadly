@@ -1,6 +1,7 @@
 #include "cadly/cad/OcctStepImporter.h"
 
 #include "OcctShapeToMesh.h"
+#include "XcafDocumentLease.h"
 
 #include "cadly/platform/Log.h"
 
@@ -8,9 +9,6 @@
 #include <Interface_Static.hxx>
 #include <STEPCAFControl_Reader.hxx>
 #include <STEPControl_Reader.hxx>
-#include <TDocStd_Application.hxx>
-#include <TDocStd_Document.hxx>
-#include <XCAFApp_Application.hxx>
 
 #include <algorithm>
 #include <cctype>
@@ -71,10 +69,9 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
 
   progress.update(0.05f, "Reading STEP file...");
 
-  // The CAF reader needs an application/document host.
-  Handle(TDocStd_Application) app = XCAFApp_Application::GetApplication();
-  Handle(TDocStd_Document) doc;
-  app->NewDocument("MDTV-XCAF", doc);
+  // The CAF reader needs an application/document host. The lease closes the
+  // document on every return path — see XcafDocumentLease.
+  occt::XcafDocumentLease doc_lease;
 
   STEPCAFControl_Reader reader;
   reader.SetColorMode(req.options.load_colors);
@@ -102,7 +99,7 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   progress.update(0.25f, "Transferring shapes to OCAF document...");
 
   phase_start = clock::now();
-  if (!reader.Transfer(doc)) {
+  if (!reader.Transfer(doc_lease.doc())) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Error,
       "STEPCAFControl_Reader::Transfer() returned false"});
     return result;
@@ -122,8 +119,8 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   progress.update(0.40f, "Tessellating geometry...");
   occt::ConversionStats stats;
   phase_start = clock::now();
-  auto scn = occt::document_to_scene(doc, TopoDS_Shape{}, req.options, unit_to_m,
-                                     stats, progress);
+  auto scn = occt::document_to_scene(doc_lease.doc(), TopoDS_Shape{},
+                                     req.options, unit_to_m, stats, progress);
   if (req.options.profile_timings) {
     result.summary.timings.push_back({"document_to_scene",
       std::chrono::duration_cast<std::chrono::milliseconds>(

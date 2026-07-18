@@ -39,6 +39,7 @@ add_library(cadly_cad STATIC
   src/OcctShapeToMesh.cpp
   src/OcctStepImporter.cpp
   src/TessellationPolicy.cpp
+  src/XcafSession.cpp
 )
 add_library(Cadly::Cad ALIAS cadly_cad)
 

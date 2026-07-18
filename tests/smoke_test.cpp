@@ -4,6 +4,7 @@
 
 #include "cadly/cad/ImporterRegistry.h"
 #include "cadly/cad/TessellationPolicy.h"
+#include "cadly/cad/XcafSession.h"
 #include "cadly/renderer/RenderTypes.h"
 #include "cadly/scene/Aabb.h"
 #include "cadly/scene/Camera.h"
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 
 namespace s = cadly::scene;
@@ -169,6 +171,42 @@ static void test_hammer_iges_visual_relative_import() {
 #endif
 }
 
+// Importers must close their XCAF document on every return path; a document
+// left open keeps the whole OCAF graph alive in the process-wide application
+// session, so repeated imports ratchet memory upward. Exercise both the
+// success path and the ReadFile-failure path and assert the session is empty
+// afterwards.
+static void test_xcaf_documents_closed_after_import() {
+  CHECK(c::open_xcaf_document_count() == 0);
+
+#ifdef CADLY_TEST_SOURCE_ROOT
+  const std::filesystem::path hammer =
+    std::filesystem::path(CADLY_TEST_SOURCE_ROOT) / "test_files" / "hammer.iges";
+  if (std::filesystem::exists(hammer)) {
+    c::ImportOptions opts;
+    for (int i = 0; i < 3; ++i) {
+      auto result = c::ImporterRegistry::instance().import(hammer, opts);
+      CHECK(result.success);
+      CHECK(c::open_xcaf_document_count() == 0);
+    }
+  }
+#endif
+
+  // Failure path: a file with a STEP extension but garbage contents makes
+  // ReadFile fail after the document has been created.
+  const auto garbage = std::filesystem::temp_directory_path() /
+    "cadly_smoke_garbage.step";
+  {
+    std::ofstream out(garbage);
+    out << "this is not a STEP file\n";
+  }
+  c::ImportOptions opts;
+  auto result = c::ImporterRegistry::instance().import(garbage, opts);
+  CHECK(!result.success);
+  CHECK(c::open_xcaf_document_count() == 0);
+  std::filesystem::remove(garbage);
+}
+
 int main() {
   test_aabb();
   test_transform_roundtrip();
@@ -179,6 +217,7 @@ int main() {
   test_tessellation_policy();
   test_tessellation_policy_unbounded();
   test_hammer_iges_visual_relative_import();
+  test_xcaf_documents_closed_after_import();
   if (g_failures == 0) {
     std::printf("OK: scene + cad smoke tests passed.\n");
     return 0;

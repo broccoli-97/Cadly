@@ -1,15 +1,13 @@
 #include "cadly/cad/OcctIgesImporter.h"
 
 #include "OcctShapeToMesh.h"
+#include "XcafDocumentLease.h"
 
 #include "cadly/platform/Log.h"
 
 #include <IFSelect_ReturnStatus.hxx>
 #include <IGESCAFControl_Reader.hxx>
 #include <IGESControl_Reader.hxx>
-#include <TDocStd_Application.hxx>
-#include <TDocStd_Document.hxx>
-#include <XCAFApp_Application.hxx>
 
 #include <algorithm>
 #include <cctype>
@@ -51,9 +49,9 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
 
   progress.update(0.05f, "Reading IGES file...");
 
-  Handle(TDocStd_Application) app = XCAFApp_Application::GetApplication();
-  Handle(TDocStd_Document) doc;
-  app->NewDocument("MDTV-XCAF", doc);
+  // The CAF reader needs an application/document host. The lease closes the
+  // document on every return path — see XcafDocumentLease.
+  occt::XcafDocumentLease doc_lease;
 
   IGESCAFControl_Reader reader;
   reader.SetColorMode(req.options.load_colors);
@@ -80,7 +78,7 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
   progress.update(0.25f, "Transferring shapes to OCAF document...");
 
   phase_start = clock::now();
-  if (!reader.Transfer(doc)) {
+  if (!reader.Transfer(doc_lease.doc())) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Error,
       "IGESCAFControl_Reader::Transfer() returned false"});
     return result;
@@ -97,7 +95,8 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
   progress.update(0.40f, "Tessellating geometry...");
   occt::ConversionStats stats;
   phase_start = clock::now();
-  auto scn = occt::document_to_scene(doc, TopoDS_Shape{}, req.options,
+  auto scn = occt::document_to_scene(doc_lease.doc(), TopoDS_Shape{},
+                                     req.options,
                                      /*unit_to_m=*/0.001f, stats, progress);
   if (req.options.profile_timings) {
     result.summary.timings.push_back({"document_to_scene",
