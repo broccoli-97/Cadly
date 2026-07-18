@@ -8,7 +8,14 @@ namespace cadly::cad {
 double model_extent_for_tessellation(const scene::Aabb& bounds) {
   if (!bounds.valid()) return 0.0;
   const auto e = bounds.extent();
-  return static_cast<double>(std::max({e.x, e.y, e.z}));
+  const double extent = static_cast<double>(std::max({e.x, e.y, e.z}));
+  // Unbounded geometry can leak ±inf into a box (OCCT reports "open" boxes
+  // for e.g. conical faces whose STEP trim failed to translate). An infinite
+  // extent would propagate straight into the visual-relative deflection and
+  // mesh the whole model at garbage tolerance; report "no usable extent"
+  // instead, which sends resolve_tessellation_policy down its absolute-
+  // deflection fallback.
+  return std::isfinite(extent) ? extent : 0.0;
 }
 
 ResolvedTessellation resolve_tessellation_policy(

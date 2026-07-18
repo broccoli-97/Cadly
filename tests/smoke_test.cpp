@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <limits>
 
 namespace s = cadly::scene;
 namespace c = cadly::cad;
@@ -132,6 +133,24 @@ static void test_tessellation_policy() {
   CHECK(std::fabs(resolved.options.linear_deflection - 0.123) < 1e-9);
 }
 
+// A box poisoned by unbounded geometry (±inf once cast to float — OCCT
+// reports "open" boxes for e.g. untrimmed conical faces) must not leak an
+// infinite deflection; the policy has to fall back to absolute mode.
+static void test_tessellation_policy_unbounded() {
+  c::ImportOptions opts;
+  opts.tessellation_mode = c::TessellationMode::VisualRelative;
+  opts.linear_deflection = 0.1;
+
+  s::Aabb bad = s::Aabb::empty();
+  bad.expand({0.0f, 0.0f, 0.0f});
+  bad.expand({std::numeric_limits<float>::infinity(), 10.0f, 10.0f});
+  const auto resolved = c::resolve_tessellation_policy(opts, bad);
+  CHECK(resolved.model_extent == 0.0);
+  CHECK(resolved.options.tessellation_mode == c::TessellationMode::Absolute);
+  CHECK(std::isfinite(resolved.options.linear_deflection));
+  CHECK(std::fabs(resolved.options.linear_deflection - 0.1) < 1e-9);
+}
+
 static void test_hammer_iges_visual_relative_import() {
 #ifdef CADLY_TEST_SOURCE_ROOT
   const std::filesystem::path path =
@@ -158,6 +177,7 @@ int main() {
   test_display_mode_defaults();
   test_importer_registry();
   test_tessellation_policy();
+  test_tessellation_policy_unbounded();
   test_hammer_iges_visual_relative_import();
   if (g_failures == 0) {
     std::printf("OK: scene + cad smoke tests passed.\n");

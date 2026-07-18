@@ -41,6 +41,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -84,22 +85,75 @@ void add_timing(ConversionStats& stats,
   stats.timings.push_back({stage, elapsed});
 }
 
-scene::Aabb shape_bounds(const TopoDS_Shape& shape) {
-  if (shape.IsNull()) return scene::Aabb::empty();
-  Bnd_Box box;
-  BRepBndLib::Add(shape, box);
-  if (box.IsVoid()) return scene::Aabb::empty();
+// Convert an OCCT bounding box into a finite scene Aabb. Returns false for
+// boxes that must not contribute to model sizing: void boxes, boxes flagged
+// "open" on any side, and boxes whose corners sit beyond any plausible model
+// coordinate. OCCT models unbounded geometry as an open box whose Get()
+// corners are ±1e100 sentinels — seen in the wild on conical faces whose
+// STEP trim failed to translate, leaving the surface's natural infinite
+// parameter range in charge. Cast to float those sentinels become ±inf and
+// poison every extent/deflection computation downstream.
+bool box_to_finite_aabb(const Bnd_Box& box, scene::Aabb& out) {
+  if (box.IsVoid()) return false;
+  if (box.IsOpenXmin() || box.IsOpenXmax() ||
+      box.IsOpenYmin() || box.IsOpenYmax() ||
+      box.IsOpenZmin() || box.IsOpenZmax()) {
+    return false;
+  }
   Standard_Real xmin = 0.0, ymin = 0.0, zmin = 0.0;
   Standard_Real xmax = 0.0, ymax = 0.0, zmax = 0.0;
   box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
-  scene::Aabb out = scene::Aabb::empty();
+  // 1e30 is far beyond any sane model in mm yet comfortably inside float
+  // range, so the casts below can never overflow to inf.
+  constexpr Standard_Real kMaxCoord = 1e30;
+  for (const Standard_Real v : {xmin, ymin, zmin, xmax, ymax, zmax}) {
+    if (!std::isfinite(v) || std::abs(v) > kMaxCoord) return false;
+  }
+  out = scene::Aabb::empty();
   out.expand({static_cast<float>(xmin),
               static_cast<float>(ymin),
               static_cast<float>(zmin)});
   out.expand({static_cast<float>(xmax),
               static_cast<float>(ymax),
               static_cast<float>(zmax)});
+  return true;
+}
+
+// Whole-shape bounds for tessellation sizing. When the aggregate box is
+// unusable (some face carries unbounded geometry) fall back to accumulating
+// per-face boxes, skipping the unbounded offenders, so sizing still sees the
+// real extent of the healthy geometry. `unbounded_faces` is incremented by
+// the number of faces dropped so callers can surface a diagnostic. A shape
+// with no usable box at all yields an empty Aabb, which the tessellation
+// policy treats as "fall back to absolute deflection".
+scene::Aabb shape_bounds(const TopoDS_Shape& shape,
+                         std::size_t* unbounded_faces = nullptr) {
+  if (shape.IsNull()) return scene::Aabb::empty();
+  Bnd_Box box;
+  BRepBndLib::Add(shape, box);
+  scene::Aabb out = scene::Aabb::empty();
+  if (box_to_finite_aabb(box, out)) return out;
+
+  std::size_t skipped = 0;
+  for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
+    Bnd_Box face_box;
+    BRepBndLib::Add(ex.Current(), face_box);
+    scene::Aabb face_aabb;
+    if (box_to_finite_aabb(face_box, face_aabb)) {
+      out.expand(face_aabb);
+    } else {
+      ++skipped;
+    }
+  }
+  if (unbounded_faces) *unbounded_faces += skipped;
   return out;
+}
+
+void note_unbounded_faces(ConversionStats& stats, std::size_t count) {
+  if (!count) return;
+  stats.diagnostics.push_back({DiagnosticSeverity::Warning,
+    std::to_string(count) + " face(s) have unbounded geometry; they were "
+    "excluded from tessellation sizing."});
 }
 
 void apply_resolved_tessellation(ConversionStats& stats,
@@ -540,9 +594,11 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
   // No-XDE fallback path — treat the whole shape as a single node.
   if (doc.IsNull()) {
     if (fallback_shape.IsNull()) return scn;
-    const auto resolved =
-      resolve_tessellation_policy(opts, shape_bounds(fallback_shape));
+    std::size_t unbounded_faces = 0;
+    const auto resolved = resolve_tessellation_policy(
+      opts, shape_bounds(fallback_shape, &unbounded_faces));
     apply_resolved_tessellation(stats, resolved);
+    note_unbounded_faces(stats, unbounded_faces);
     auto phase_start = std::chrono::steady_clock::now();
     auto mesh = shape_to_mesh(fallback_shape, resolved.options, std::nullopt,
                               stats);
@@ -606,8 +662,11 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
         builder.Add(all, s);
       }
     }
-    const auto resolved = resolve_tessellation_policy(opts, shape_bounds(all));
+    std::size_t unbounded_faces = 0;
+    const auto resolved =
+      resolve_tessellation_policy(opts, shape_bounds(all, &unbounded_faces));
     apply_resolved_tessellation(stats, resolved);
+    note_unbounded_faces(stats, unbounded_faces);
     resolved_opts = resolved.options;
     progress.update(0.45f, "Tessellating geometry...");
     tessellate(all, resolved_opts);
