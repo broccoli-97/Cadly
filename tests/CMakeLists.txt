@@ -50,4 +50,22 @@ if(CADLY_BUILD_GUI)
   set_tests_properties(cadly_toolbar PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
   )
+
+  add_executable(cadly_inspector_test inspector_test.cpp)
+  target_link_libraries(cadly_inspector_test
+    PRIVATE
+      Cadly::Ui
+      Cadly::Warnings
+      Qt6::Test
+      qlementine-icons
+  )
+  target_include_directories(cadly_inspector_test
+    PRIVATE
+      ${CMAKE_SOURCE_DIR}/src/ui/src
+  )
+  target_compile_features(cadly_inspector_test PRIVATE cxx_std_17)
+  add_test(NAME cadly_inspector COMMAND cadly_inspector_test)
+  set_tests_properties(cadly_inspector PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+  )
 endif()

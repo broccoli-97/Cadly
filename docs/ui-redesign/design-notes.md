@@ -111,7 +111,10 @@ coexistence).
   **Display** (edge intensity, MSAA, scale bar, axes, projection — exposes
   the previously code-only `DisplayMode` knobs), **Import** (the entire
   ImportOptionsDialog relocated as a persistent panel + “Review options
-  before each import” + Re-import).
+  before each import” + Re-import). Display and Import each carry a
+  right-aligned “Reset to Defaults” text button (accent `.txtbtn`) that
+  restores the struct/backend defaults in one click; the review-before-import
+  checkbox is a workflow preference and survives the reset.
 
 ### Display-mode model
 

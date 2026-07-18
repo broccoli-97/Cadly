@@ -712,6 +712,9 @@ input[type="range"] { accent-color: var(--accent); flex: 1; height: 4px; }
         <div class="insp-page active" id="pageProps"></div>
 
         <div class="insp-page" id="pageDisplay">
+          <div style="display:flex;justify-content:flex-end;margin-bottom:2px">
+            <button class="txtbtn" id="btnResetDisplay" data-tip="Restore the default display settings">Reset to Defaults</button>
+          </div>
           <div class="group">
             <div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Mode</div>
             <div class="gbody">
@@ -747,7 +750,7 @@ input[type="range"] { accent-color: var(--accent); flex: 1; height: 4px; }
 
         <div class="insp-page" id="pageImport">
           <div style="display:flex;justify-content:flex-end;margin-bottom:2px">
-            <button class="txtbtn" id="btnResetOpts">Reset to Defaults</button>
+            <button class="txtbtn" id="btnResetOpts" data-tip="Restore the default import options">Reset to Defaults</button>
           </div>
           <div class="group">
             <div class="ghead"><span class="twirl"><svg class="ic s14"><use href="#i-chev-d"/></svg></span>Tessellation</div>
@@ -1456,6 +1459,15 @@ $("slEdge").oninput = e => {
 $("selMsaa").onchange = e => { disp.msaa = e.target.value; syncDisplayUI(); };
 $("cbScaleBar").onchange = e => { disp.scaleBar = e.target.checked; render(); };
 $("cbAxes").onchange = e => { disp.axes = e.target.checked; render(); };
+$("btnResetDisplay").onclick = () => {
+  disp.surface = "shaded"; disp.edges = true; disp.mesh = false;
+  disp.edgeIntensity = 0.65; disp.msaa = "4×"; disp.scaleBar = true; disp.axes = true;
+  cam.persp = false;
+  $("slEdge").value = 65; $("slEdgeVal").textContent = "65%";
+  $("selMsaa").value = "4×";
+  $("cbScaleBar").checked = true; $("cbAxes").checked = true;
+  syncDisplayUI();                                    // repaints toolbar + canvas
+};
 $("btnFit").onclick = fitView; $("hudFit").onclick = fitView;
 
 /* ================= panels, splitters, zero-chrome ================= */

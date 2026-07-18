@@ -6,9 +6,11 @@
 #include "ToolbarButton.h"
 #include "cadly/ui/ThemeTokens.h"
 
+#include <QAbstractButton>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -32,6 +34,56 @@ QScrollArea* make_scroller(QWidget* pane) {
   scroll->viewport()->setAutoFillBackground(false);
   pane->setAutoFillBackground(false);
   return scroll;
+}
+
+// Small accent text button for pane-header actions ("Reset to Defaults") —
+// the Qt twin of the prototype's .txtbtn: bare accent text, soft accent pill
+// on hover. Painted from ThemeTokens rather than using a flat QPushButton so
+// it renders identically under Fusion (Qt 6.4) and qlementine (Qt 6.8).
+class TextButton final : public QAbstractButton {
+public:
+  explicit TextButton(const QString& text, QWidget* parent = nullptr)
+      : QAbstractButton(parent) {
+    setText(text);
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::NoFocus);
+    connect(&ThemeManager::instance(), &ThemeManager::changed,
+            this, QOverload<>::of(&QWidget::update));
+  }
+
+  QSize sizeHint() const override {
+    const QFontMetrics fm(ui_font(11, QFont::Medium));
+    return {fm.horizontalAdvance(text()) + 12, 20};
+  }
+
+protected:
+  void paintEvent(QPaintEvent*) override {
+    const auto& t = tokens();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    if (isEnabled() && (underMouse() || isDown())) {
+      // The prototype's --chk-bg hover fill: accent at ~22% (dark) / ~16%
+      // (light), nudged stronger while pressed.
+      QColor pill = t.accent;
+      pill.setAlpha(t.dark ? (isDown() ? 74 : 56) : (isDown() ? 56 : 41));
+      p.setPen(Qt::NoPen);
+      p.setBrush(pill);
+      p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+    }
+    p.setFont(ui_font(11, QFont::Medium));
+    p.setPen(isEnabled() ? t.accent : t.text3);
+    p.drawText(rect(), Qt::AlignCenter, text());
+  }
+};
+
+// Right-aligned pane-header row holding a TextButton, mirroring the
+// prototype's reset placement above each settings page.
+QHBoxLayout* make_header_row(QAbstractButton* button) {
+  auto* row = new QHBoxLayout();
+  row->setContentsMargins(0, 0, 0, 0);
+  row->addStretch();
+  row->addWidget(button);
+  return row;
 }
 } // namespace
 
@@ -108,6 +160,11 @@ QWidget* InspectorWidget::build_display_pane() {
   auto* outer = new QVBoxLayout(pane);
   outer->setContentsMargins(12, 10, 12, 10);
 
+  auto* reset = new TextButton(tr("Reset to Defaults"), pane);
+  reset->setObjectName(QStringLiteral("inspector_display_reset"));
+  reset->setToolTip(tr("Restore the default display settings"));
+  outer->addLayout(make_header_row(reset));
+
   auto* form = new QFormLayout();
   form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
   form->setHorizontalSpacing(10);
@@ -146,6 +203,12 @@ QWidget* InspectorWidget::build_display_pane() {
           [this](bool) { emit display_changed(); });
   connect(axes_, &QCheckBox::toggled, this,
           [this](bool) { emit display_changed(); });
+  connect(reset, &QAbstractButton::clicked, this, [this]() {
+    // Struct defaults are the single source of truth; load_display blocks
+    // the per-control signals, so announce the change once here.
+    load_display(renderer::DisplayMode{});
+    emit display_changed();
+  });
   return pane;
 }
 
@@ -154,6 +217,11 @@ QWidget* InspectorWidget::build_import_pane() {
   auto* outer = new QVBoxLayout(pane);
   outer->setContentsMargins(12, 10, 12, 10);
   outer->setSpacing(10);
+
+  auto* reset = new TextButton(tr("Reset to Defaults"), pane);
+  reset->setObjectName(QStringLiteral("inspector_import_reset"));
+  reset->setToolTip(tr("Restore the default import options"));
+  outer->addLayout(make_header_row(reset));
 
   import_options_ = new ImportOptionsWidget(pane);
   outer->addWidget(import_options_);
@@ -174,6 +242,14 @@ QWidget* InspectorWidget::build_import_pane() {
           [this](bool) { emit import_options_changed(); });
   connect(reimport_, &QPushButton::clicked, this,
           [this]() { emit reimport_requested(); });
+  connect(reset, &QAbstractButton::clicked, this, [this]() {
+    // Backend defaults from ImportOptions{}. set_options is deliberately
+    // silent (options_edited is user-edit-only), so announce it here — the
+    // owner persists the values. The "review before import" checkbox is a
+    // workflow preference, not an import option; the reset leaves it alone.
+    import_options_->set_options(cad::ImportOptions{});
+    emit import_options_changed();
+  });
   return pane;
 }
 
