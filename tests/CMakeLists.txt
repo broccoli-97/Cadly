@@ -14,7 +14,17 @@ target_compile_definitions(cadly_smoke_test
 )
 add_test(NAME cadly_smoke COMMAND cadly_smoke_test)
 
-if(CADLY_BUILD_GUI)
+# The widget tests need Qt6::Test, which the vcpkg-built Qt deliberately
+# omits (qtbase is built without "testlib" to keep the Windows from-source
+# build down; see vcpkg.json). They also exercise pure widget logic, nothing
+# platform-specific, so running them on the system-Qt Linux configs is the
+# real gate — on vcpkg configs they are skipped rather than failing configure.
+if(CADLY_BUILD_GUI AND NOT TARGET Qt6::Test)
+  message(STATUS "Qt6Test not available - skipping GUI widget tests "
+    "(vcpkg builds qtbase without the testlib feature)")
+endif()
+
+if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
   add_executable(cadly_popover_test popover_test.cpp)
   target_link_libraries(cadly_popover_test
     PRIVATE

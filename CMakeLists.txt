@@ -148,7 +148,13 @@ endif()
 if(CADLY_BUILD_TESTS)
   enable_testing()
   if(CADLY_BUILD_GUI)
-    find_package(Qt6 REQUIRED COMPONENTS Test)
+    # Optional on purpose: the vcpkg manifest builds qtbase without the
+    # "testlib" feature to hold down the hours-long from-source Windows build
+    # (see vcpkg.json), so Qt6Test only exists on the system-Qt configs. When
+    # it is absent, tests/CMakeLists.txt skips the GUI widget tests (loudly)
+    # and the Qt-free smoke test remains the cross-platform gate. Don't make
+    # this REQUIRED again — it turns every vcpkg configure into a hard error.
+    find_package(Qt6 QUIET COMPONENTS Test)
   endif()
   add_subdirectory(tests)
 endif()
