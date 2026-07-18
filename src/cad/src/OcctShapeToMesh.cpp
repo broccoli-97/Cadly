@@ -60,13 +60,35 @@ std::uint32_t pack_color(const Quantity_Color& c, float alpha = 1.0f) {
 }
 
 // Tessellate a shape in place. OCCT mutates the BRep with per-face Poly_*.
+// The parameter constructor runs the mesh algorithm itself ("Automatically
+// calls method Perform" per the OCCT header) — do not call Perform() again;
+// the second call re-walks the whole shape only to discover there is nothing
+// left to do.
 void tessellate(const TopoDS_Shape& shape, const ImportOptions& opts) {
   BRepMesh_IncrementalMesh mesher(shape,
                                   opts.linear_deflection,
                                   opts.relative_deflection,
                                   opts.angular_deflection,
                                   opts.parallel_meshing);
-  mesher.Perform();
+}
+
+// True when every face of the shape already carries a triangulation. Used to
+// skip the per-shape safety mesher after the whole-document batch pass: the
+// batch ran with the same resolved deflections, so existing triangulations
+// are adequate by construction and re-running the mesher would only pay a
+// full topology walk to conclude there is nothing to do (~4.5 s across the
+// 60k faces of a 231 MB assembly). Faces the batch failed to mesh return
+// false and the safety net still runs for their shape.
+bool fully_triangulated(const TopoDS_Shape& shape) {
+  TopExp_Explorer ex(shape, TopAbs_FACE);
+  if (!ex.More()) return false;   // no faces -> nothing meshable anyway
+  for (; ex.More(); ex.Next()) {
+    TopLoc_Location loc;
+    if (BRep_Tool::Triangulation(TopoDS::Face(ex.Current()), loc).IsNull()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void add_timing(ConversionStats& stats,
@@ -577,15 +599,21 @@ shape_to_mesh(const TopoDS_Shape& shape,
               ConversionStats& stats) {
   using clock = std::chrono::steady_clock;
   if (shape.IsNull()) return nullptr;
-  auto phase_start = clock::now();
-  tessellate(shape, opts);
-  if (opts.profile_timings) {
-    add_timing(stats, "shape safety tessellation", clock::now() - phase_start);
+  // Safety net for faces the whole-document batch pass missed (or the
+  // fallback path, which has no batch pass at all). Skipped entirely when
+  // every face is already triangulated — see fully_triangulated().
+  if (!fully_triangulated(shape)) {
+    auto phase_start = clock::now();
+    tessellate(shape, opts);
+    if (opts.profile_timings) {
+      add_timing(stats, "shape safety tessellation",
+                 clock::now() - phase_start);
+    }
   }
 
   auto mesh = std::make_shared<scene::Mesh>();
   std::uint32_t face_id = 0;
-  phase_start = clock::now();
+  auto phase_start = clock::now();
   std::unordered_set<const void*> seen_strip_edges;
   for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
     const TopoDS_Face& face = TopoDS::Face(ex.Current());
@@ -677,10 +705,9 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
   // still does below) serializes many small jobs, each with too few faces to
   // fill the thread pool — the slow path on large assemblies. Located instances
   // of a part share the same face TShapes, and a triangulation is stored in the
-  // face's local frame, so one mesher covers every occurrence; afterwards the
-  // per-part tessellate() calls find an adequate triangulation already attached
-  // to each face and skip the heavy work (it stays as a correctness safety net
-  // for any face this batch somehow missed).
+  // face's local frame, so one mesher covers every occurrence; afterwards
+  // shape_to_mesh sees every face already triangulated and skips its safety
+  // mesher (which only runs for shapes this batch somehow missed).
   ImportOptions resolved_opts = opts;
   {
     const auto phase_start = std::chrono::steady_clock::now();
