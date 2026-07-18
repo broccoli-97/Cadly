@@ -556,8 +556,10 @@ void MainWindow::build_shell() {
   setCentralWidget(central);
 
   // Floating HUD over the viewport's top-right; mirrors Views/Fit/projection
-  // so they survive zero-chrome. Child widgets composite fine over
-  // QOpenGLWidget (Qt renders the GL surface into an FBO first).
+  // and the zero-chrome toggle so they survive zero-chrome — the toolbar
+  // hides in that mode, and the HUD copy of the toggle is the visible way
+  // back (Esc/^. still work, but need to be known). Child widgets composite
+  // fine over QOpenGLWidget (Qt renders the GL surface into an FBO first).
   auto* hud = new ViewportHud(viewport_);
   hud_views_ = new ToolbarButton(hud);
   hud_views_->setToolTip(tr("Standard views (1–7)"));
@@ -571,6 +573,10 @@ void MainWindow::build_shell() {
   hud_persp->setDefaultAction(act_perspective_);
   hud_persp->set_emphasis(ToolbarButton::Emphasis::Accent);
   hud->add(hud_persp);
+  auto* hud_zero = new ToolbarButton(hud);
+  hud_zero->setDefaultAction(act_zero_chrome_);
+  hud_zero->set_emphasis(ToolbarButton::Emphasis::Accent);
+  hud->add(hud_zero);
   hud->adjustSize();
   hud_ = hud;
 
@@ -713,7 +719,7 @@ void MainWindow::refresh_theme() {
     themed_icon(QStringLiteral("navigation/ui-panel-right")));
   act_toggle_strip_->setIcon(
     themed_icon(QStringLiteral("navigation/ui-panel-bottom")));
-  act_zero_chrome_->setIcon(themed_icon(QStringLiteral("action/fullscreen")));
+  act_zero_chrome_->setIcon(themed_icon(zero_chrome_icon_name()));
   act_about_->setIcon(themed_icon(QStringLiteral("misc/info")));
   act_theme_dark_->setIcon(themed_icon(
     dark ? QStringLiteral("misc/moon") : QStringLiteral("misc/sun")));
@@ -836,6 +842,12 @@ void MainWindow::on_toggle_perspective(bool on) {
   viewport_->update();
 }
 
+QString MainWindow::zero_chrome_icon_name() const {
+  return act_zero_chrome_->isChecked()
+    ? QStringLiteral("action/fullscreen-exit")
+    : QStringLiteral("action/fullscreen");
+}
+
 void MainWindow::on_zero_chrome(bool on) {
   if (on) {
     zc_sidebar_   = act_toggle_sidebar_->isChecked();
@@ -861,6 +873,13 @@ void MainWindow::on_zero_chrome(bool on) {
     tabs_->setVisible(!documents_.empty());
     statusBar()->show();
   }
+  // The toolbar copy of this toggle disappears in zero-chrome, so the only
+  // visible affordance is the HUD copy — flip its glyph to the "exit"
+  // variant and update the tooltip so it reads as the way back out.
+  act_zero_chrome_->setIcon(themed_icon(zero_chrome_icon_name()));
+  act_zero_chrome_->setToolTip(
+    on ? tr("Exit zero-chrome (Esc)")
+       : tr("Hide all panels; press Esc to restore them"));
 }
 
 void MainWindow::show_views_popover(QWidget* anchor) {

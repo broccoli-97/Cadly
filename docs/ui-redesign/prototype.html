@@ -433,6 +433,14 @@ input[type="range"] { accent-color: var(--accent); flex: 1; height: 4px; }
 .frame-ms.idle { opacity: .45; }
 .lvl-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 
+/* ---------- zero-chrome ---------- */
+/* Matches the Qt build: toolbar, document tabs and status bar hide with the
+   panels; the in-viewport HUD (with the zero-chrome toggle) is the way back,
+   alongside Esc / ⌃. */
+.window.zero-chrome .toolbar,
+.window.zero-chrome .doc-tabs,
+.window.zero-chrome .statusbar { display: none; }
+
 /* ---------- menus & popovers ---------- */
 .menu { position: fixed; min-width: 200px; background: var(--glass);
   backdrop-filter: blur(20px) saturate(140%); border: 1px solid var(--glass-border);
@@ -651,6 +659,8 @@ input[type="range"] { accent-color: var(--accent); flex: 1; height: 4px; }
             <svg class="ic s18"><use href="#i-fit"/></svg></button>
           <button class="icon-btn" id="hudProj" data-tip="Orthographic ↔ Perspective" data-key="P">
             <svg class="ic s18" id="projIcon2"><use href="#i-ortho"/></svg></button>
+          <button class="icon-btn" id="hudZero" data-tip="Zero-chrome mode" data-key="⌃.">
+            <svg class="ic s18"><use href="#i-zero"/></svg></button>
         </div>
 
         <div class="drop-ring"><span class="lbl">Drop to import</span></div>
@@ -1538,14 +1548,22 @@ function toggleZeroChrome(force) {
   if (on && !zeroChrome) {
     zeroChrome = { sidebar: PANELS.sidebar.open, insp: PANELS.insp.open, strip: PANELS.strip.open };
     setPanel("sidebar", false); setPanel("insp", false); setPanel("strip", false);
+    $("appwin").classList.add("zero-chrome");
     $("btnZero").classList.add("checked");
+    $("hudZero").classList.add("checked");
+    $("hudZero").dataset.tip = "Exit zero-chrome";
   } else if (!on && zeroChrome) {
     setPanel("sidebar", zeroChrome.sidebar); setPanel("insp", zeroChrome.insp);
     setPanel("strip", zeroChrome.strip);
-    zeroChrome = null; $("btnZero").classList.remove("checked");
+    zeroChrome = null;
+    $("appwin").classList.remove("zero-chrome");
+    $("btnZero").classList.remove("checked");
+    $("hudZero").classList.remove("checked");
+    $("hudZero").dataset.tip = "Zero-chrome mode";
   }
 }
 $("btnZero").onclick = () => toggleZeroChrome();
+$("hudZero").onclick = () => toggleZeroChrome();
 
 /* ================= theme ================= */
 function setTheme(t) {

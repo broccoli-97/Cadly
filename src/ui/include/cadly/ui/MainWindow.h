@@ -85,6 +85,8 @@ private:
   void build_shell();
   void build_status_bar();
   void refresh_theme();
+  // "action/fullscreen" or its -exit variant, per the zero-chrome state.
+  QString zero_chrome_icon_name() const;
   void set_surface_mode(SurfaceMode mode);
   void update_display_mode();
   void update_status_for_scene();

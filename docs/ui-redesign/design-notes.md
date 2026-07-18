@@ -58,6 +58,8 @@ honest Qt feasibility. Its weakness — answering “too rigid” with another f
 grid — is patched by grafting the best de-rigidifying elements of the losers:
 
 - **Zero-chrome mode** (`⌃.`) — all panels collapse with layout memory (Floating Canvas).
+  The toggle is mirrored in the in-viewport HUD (swapping to a “fullscreen-exit”
+  glyph) so there is always a visible way back; Esc restores too.
 - **Non-modal import** — previous scene stays orbit-able during import; only
   Open/drop are disabled (the old app-modal QProgressDialog dies).
 - **Light theme** as a first-class token table, viewport gradient pushed
@@ -233,7 +235,9 @@ renderer_gl overlays.
 2. **Light theme scope** — ship dark-only first (gradient re-tune gate), or
    both from day one as the prototype shows?
 3. **In-viewport HUD cluster** — keep (Views/Fit/Ortho mirrors in the canvas,
-   top-right), or toolbar-only for zero occlusion? The prototype keeps it.
+   top-right), or toolbar-only for zero occlusion? The prototype keeps it, and
+   it now also hosts the zero-chrome toggle — the only chrome left on screen in
+   that mode — which settles it toward keep.
 4. **Per-node visibility eyes** — in scope for the UI milestone (it touches
    scene/renderer), or deferred behind a flag?
 5. **Pinned Get Info card** — enough for compare workflows, or should the
