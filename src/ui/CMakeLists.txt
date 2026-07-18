@@ -10,6 +10,7 @@ add_library(cadly_ui STATIC
   src/SegmentedControl.cpp
   src/SidebarWidget.cpp
   src/ThemeTokens.cpp
+  src/ToolTip.cpp
   src/ToolbarButton.cpp
   src/ToolbarWidget.cpp
   src/ViewportWidget.cpp
@@ -28,6 +29,7 @@ add_library(cadly_ui STATIC
   src/PropertiesPanel.h
   src/SegmentedControl.h
   src/SidebarWidget.h
+  src/ToolTip.h
   src/ToolbarButton.h
   src/ToolbarWidget.h
   src/ViewsGrid.h

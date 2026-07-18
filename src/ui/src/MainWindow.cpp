@@ -11,6 +11,7 @@
 #include "Popover.h"
 #include "SegmentedControl.h"
 #include "SidebarWidget.h"
+#include "ToolTip.h"
 #include "ToolbarButton.h"
 #include "ToolbarWidget.h"
 #include "ViewsGrid.h"
@@ -309,6 +310,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   resize(1480, 920);
   setAcceptDrops(true);
 
+  // One app-level filter bounds every widget tooltip at show time; call
+  // sites keep plain strings (see ToolTip.h).
+  install_bounded_tooltips();
+
   build_actions();
   build_shell();
   build_menus();
@@ -341,7 +346,7 @@ void MainWindow::build_actions() {
   act_open_with_options_->setShortcut(
     QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_O));
   act_open_with_options_->setToolTip(
-    tr("Choose a file and review the import options before importing"));
+    tr("Choose a file and review the import options"));
   connect(act_open_with_options_, &QAction::triggered,
           this, &MainWindow::open_file_with_options);
 
@@ -366,7 +371,7 @@ void MainWindow::build_actions() {
   act_wireframe_->setCheckable(true);
   act_wireframe_->setShortcut(Qt::Key_W);
   act_wireframe_->setToolTip(
-    tr("Show only the BRep wireframe (analytical edges, auto-refined on zoom)"));
+    tr("Show BRep edges only; detail refines as you zoom"));
   connect(act_wireframe_, &QAction::triggered, this, [this](bool on) {
     set_surface_mode(on ? SurfaceMode::Wireframe : SurfaceMode::Shaded);
   });
@@ -375,7 +380,7 @@ void MainWindow::build_actions() {
   act_hidden_line_->setCheckable(true);
   act_hidden_line_->setShortcut(Qt::Key_H);
   act_hidden_line_->setToolTip(
-    tr("Show flat technical-drawing faces with hidden BRep edges removed"));
+    tr("Show flat faces with hidden edges removed"));
   connect(act_hidden_line_, &QAction::triggered, this, [this](bool on) {
     set_surface_mode(on ? SurfaceMode::HiddenLine : SurfaceMode::Shaded);
   });
@@ -385,7 +390,7 @@ void MainWindow::build_actions() {
   act_edges_->setCheckable(true);
   act_edges_->setChecked(true);
   act_edges_->setShortcut(Qt::Key_E);
-  act_edges_->setToolTip(tr("Overlay the BRep edges of the model"));
+  act_edges_->setToolTip(tr("Overlay BRep edges on shaded faces"));
   connect(act_edges_, &QAction::toggled,
           this, [this](bool) { update_display_mode(); });
 
@@ -394,7 +399,7 @@ void MainWindow::build_actions() {
   act_triangle_mesh_->setCheckable(true);
   act_triangle_mesh_->setShortcut(Qt::Key_T);
   act_triangle_mesh_->setToolTip(
-    tr("Debug overlay: draw every triangle edge of the face triangulation"));
+    tr("Show every face-triangulation edge for debugging"));
   connect(act_triangle_mesh_, &QAction::toggled,
           this, [this](bool) { update_display_mode(); });
 
@@ -404,7 +409,7 @@ void MainWindow::build_actions() {
   act_perspective_->setChecked(false);  // default is orthographic
   act_perspective_->setShortcut(Qt::Key_P);
   act_perspective_->setToolTip(
-    tr("Toggle between orthographic (default) and perspective projection"));
+    tr("Switch between orthographic and perspective projection"));
   connect(act_perspective_, &QAction::toggled,
           this, &MainWindow::on_toggle_perspective);
 
@@ -450,7 +455,7 @@ void MainWindow::build_actions() {
   act_zero_chrome_->setShortcut(
     QKeySequence(Qt::CTRL | Qt::Key_Period));
   act_zero_chrome_->setToolTip(
-    tr("Hide every panel for an unobstructed viewport (Esc restores)"));
+    tr("Hide all panels; press Esc to restore them"));
   connect(act_zero_chrome_, &QAction::toggled,
           this, &MainWindow::on_zero_chrome);
 
@@ -485,6 +490,11 @@ void MainWindow::build_shell() {
   strip_->hide();
 
   recents_menu_ = new QMenu(tr("Open &Recent"), this);
+  // QMenu suppresses per-action tooltips by default; the full-path tooltip
+  // is the only way to tell two same-named recent files apart. One call
+  // covers both entry points (File menu and the toolbar chevron pop the
+  // same QMenu instance) and survives rebuild_recents_menu()'s clear().
+  recents_menu_->setToolTipsVisible(true);
   rebuild_recents_menu();
 
   ToolbarWidget::Actions ta;
@@ -942,7 +952,7 @@ DocumentState* MainWindow::add_document(const QString& path) {
   connect(close, &QAbstractButton::clicked, this, [this, raw]() {
     close_document(document_index(raw));
   });
-  tabs_->setTabToolTip(index, raw->path);
+  tabs_->setTabToolTip(index, bounded_tooltip(raw->path));
   tabs_->setCurrentIndex(index);
   tabs_->setVisible(!act_zero_chrome_->isChecked());
   activate_document(index);
@@ -966,7 +976,6 @@ void MainWindow::update_document_tab(DocumentState* document) {
     title = tr("%1 (failed)").arg(filename);
   }
   tabs_->setTabText(index, title);
-  tabs_->setTabToolTip(index, document->path);
 }
 
 void MainWindow::activate_document(int index) {
@@ -1077,7 +1086,7 @@ void MainWindow::rebuild_recents_menu() {
   }
   for (const auto& path : recent_files_) {
     auto* a = recents_menu_->addAction(QFileInfo(path).fileName());
-    a->setToolTip(path);
+    a->setToolTip(bounded_tooltip(path));
     connect(a, &QAction::triggered, this,
             [this, path]() { open_file(path); });
   }

@@ -149,6 +149,10 @@ void SegmentedControl::mouseMoveEvent(QMouseEvent* e) {
     hover_menu_ = over_menu;
     if (idx >= 0) {
       setToolTip(segments_[static_cast<std::size_t>(idx)].tooltip);
+    } else {
+      // Off the segments (track inset): clear, or the last segment's
+      // tooltip keeps popping up while pointing at nothing.
+      setToolTip(QString());
     }
     update();
   }

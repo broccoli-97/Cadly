@@ -116,7 +116,7 @@ QWidget* InspectorWidget::build_display_pane() {
   edge_intensity_ = new QSlider(Qt::Horizontal, pane);
   edge_intensity_->setRange(0, 100);
   edge_intensity_->setValue(65);
-  edge_intensity_->setToolTip(tr("Ink strength of the BRep edge overlay"));
+  edge_intensity_->setToolTip(tr("BRep edge overlay strength"));
 
   msaa_ = new QComboBox(pane);
   msaa_->addItem(tr("Off"), 0);
@@ -124,8 +124,7 @@ QWidget* InspectorWidget::build_display_pane() {
   msaa_->addItem(QStringLiteral("4×"), 4);
   msaa_->addItem(QStringLiteral("8×"), 8);
   msaa_->setCurrentIndex(2);
-  msaa_->setToolTip(
-    tr("Renderer-owned multisampling; clamped to the GPU's maximum"));
+  msaa_->setToolTip(tr("GPU multisampling, limited by hardware"));
 
   scale_bar_ = new QCheckBox(tr("Scale bar"), pane);
   scale_bar_->setChecked(true);
@@ -161,8 +160,7 @@ QWidget* InspectorWidget::build_import_pane() {
 
   review_each_ = new QCheckBox(tr("Review options before each import"), pane);
   review_each_->setToolTip(
-    tr("Opens these options for confirmation whenever a file is opened "
-       "(the old always-on dialog, now opt-in)."));
+    tr("Opens these options for review before each import."));
   outer->addWidget(review_each_);
 
   reimport_ = new QPushButton(tr("Re-import with these options"), pane);
