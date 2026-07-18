@@ -12,10 +12,8 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Curve.hxx>
-#include <BRepGProp.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
-#include <GProp_GProps.hxx>
 #include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
@@ -36,6 +34,7 @@
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 #include <algorithm>
 #include <chrono>
@@ -164,6 +163,39 @@ void apply_resolved_tessellation(ConversionStats& stats,
   stats.tessellation_mode = resolved.options.tessellation_mode;
 }
 
+// Area of a face's existing triangulation. The tiny-face filter only needs
+// a coarse magnitude to reject degenerate slivers, but it used to get one
+// from BRepGProp::SurfaceProperties — exact surface integration that cost
+// ~26 s (22 % of the whole import) across the 60k faces of a 231 MB
+// assembly. The triangulation the mesher just produced is an adequate
+// estimate and costs milliseconds in total. Triangle areas are invariant
+// under the location's rigid part; only a scale factor (rare, but gp_Trsf
+// allows one) affects them.
+double triangulation_area(const Handle(Poly_Triangulation)& tri,
+                          const gp_Trsf& trsf) {
+  double twice_area = 0.0;
+  const Standard_Integer tri_count = tri->NbTriangles();
+  for (Standard_Integer i = 1; i <= tri_count; ++i) {
+    Standard_Integer a = 0, b = 0, c = 0;
+#if OCC_VERSION_HEX >= 0x070600
+    tri->Triangle(i).Get(a, b, c);
+    const gp_Pnt pa = tri->Node(a);
+    const gp_Pnt pb = tri->Node(b);
+    const gp_Pnt pc = tri->Node(c);
+#else
+    tri->Triangles().Value(i).Get(a, b, c);
+    const gp_Pnt pa = tri->Nodes().Value(a);
+    const gp_Pnt pb = tri->Nodes().Value(b);
+    const gp_Pnt pc = tri->Nodes().Value(c);
+#endif
+    const gp_Vec ab(pa, pb);
+    const gp_Vec ac(pa, pc);
+    twice_area += ab.Crossed(ac).Magnitude();
+  }
+  const double scale = trsf.ScaleFactor();
+  return 0.5 * twice_area * scale * scale;
+}
+
 // Push one face's triangulation into the running Mesh buffers. Returns the
 // number of triangles emitted. `seen_edges` is shared across all faces of a
 // shape and tracks which TopoDS_Edges have already had their mesh-coupled
@@ -183,12 +215,11 @@ std::size_t append_face(scene::Mesh& mesh,
 
   if (opts.min_face_area > 0.0) {
     const auto phase_start = clock::now();
-    GProp_GProps props;
-    BRepGProp::SurfaceProperties(face, props);
+    const double area = triangulation_area(tri, loc.Transformation());
     if (opts.profile_timings) {
       add_timing(stats, "face area checks", clock::now() - phase_start);
     }
-    if (props.Mass() < opts.min_face_area) return 0;
+    if (area < opts.min_face_area) return 0;
   }
 
   const gp_Trsf& trsf = loc.Transformation();
