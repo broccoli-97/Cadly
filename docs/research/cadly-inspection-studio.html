@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cadly Inspection Studio</title>
+  <style>
+    :root {
+      --chrome: #24272d;
+      --chrome-2: #1d2025;
+      --panel: #202329;
+      --panel-2: #292c33;
+      --line: rgba(255,255,255,.09);
+      --line-strong: rgba(255,255,255,.16);
+      --text: #e9ecf2;
+      --muted: #969eaa;
+      --quiet: #6e7682;
+      --accent: #6c9bff;
+      --accent-soft: rgba(108,155,255,.18);
+      --ok: #35c09d;
+      --warn: #f0bd67;
+      --danger: #ec7780;
+      --viewport: #c7cbd2;
+      --viewport-deep: #aeb3bc;
+      --shadow: rgba(22,26,33,.28);
+      color-scheme: dark;
+    }
+    :root.light {
+      --chrome: #f0f2f5;
+      --chrome-2: #e4e7ec;
+      --panel: #f7f8fa;
+      --panel-2: #e9ecf1;
+      --line: rgba(18,24,32,.12);
+      --line-strong: rgba(18,24,32,.2);
+      --text: #1f242b;
+      --muted: #626b77;
+      --quiet: #8b939e;
+      --accent: #3d6fe0;
+      --accent-soft: rgba(61,111,224,.14);
+      --ok: #168d76;
+      --warn: #ae7518;
+      --danger: #c84b59;
+      --viewport: #d8dbe1;
+      --viewport-deep: #bfc4cc;
+      --shadow: rgba(30,38,48,.16);
+      color-scheme: light;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--chrome-2);
+      color: var(--text);
+      font: 13px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+      overflow: hidden;
+    }
+    button, input, select { font: inherit; color: inherit; }
+    button { border: 0; cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .app { height: 100%; display: grid; grid-template-rows: 52px 30px minmax(0,1fr) 25px; }
+    .toolbar { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--chrome); border-bottom: 1px solid var(--line); }
+    .brand { display: flex; align-items: center; gap: 8px; min-width: 184px; font-weight: 650; letter-spacing: .02em; }
+    .brand-mark { width: 22px; height: 22px; border: 1px solid var(--accent); border-radius: 6px; display: grid; place-items: center; color: var(--accent); font-size: 12px; }
+    .toolbar-group { display: flex; align-items: center; gap: 3px; }
+    .tool, .tool-text, .mode { height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; background: transparent; color: var(--muted); border-radius: 6px; padding: 0 9px; }
+    .tool { width: 32px; padding: 0; font-size: 16px; }
+    .tool:hover, .tool-text:hover, .mode:hover { color: var(--text); background: var(--accent-soft); }
+    .tool-text.active, .mode.active { color: var(--text); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line-strong); }
+    .tool-text .glyph { font-size: 16px; color: var(--accent); }
+    .spacer { flex: 1; }
+    .file-tab { min-width: 240px; max-width: 340px; height: 32px; border: 1px solid var(--line); background: var(--chrome-2); border-radius: 7px 7px 0 0; display: flex; align-items: center; justify-content: space-between; padding: 0 10px 0 13px; }
+    .file-tab strong { font-size: 12px; font-weight: 600; }
+    .file-tab small { display: block; color: var(--muted); font-size: 10px; }
+    .menubar { background: var(--chrome-2); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 18px; padding: 0 16px; color: var(--muted); font-size: 12px; }
+    .menubar span { cursor: default; }
+    .workspace { min-height: 0; display: grid; grid-template-columns: 252px minmax(0,1fr) 300px; }
+    .sidebar, .inspector { min-width: 0; background: var(--panel); }
+    .sidebar { border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+    .inspector { border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+    .panel-head { height: 46px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+    .panel-head h2 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
+    .panel-head .count { margin-left: auto; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--quiet); }
+    .search { margin: 10px 10px 6px; position: relative; }
+    .search input { width: 100%; height: 28px; background: var(--chrome-2); border: 1px solid var(--line); border-radius: 6px; padding: 0 9px 0 29px; color: var(--text); }
+    .search span { position: absolute; left: 9px; top: 5px; color: var(--quiet); }
+    .tree { overflow: auto; padding: 2px 7px 12px; }
+    .tree-row { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 5px; border-radius: 5px; color: var(--muted); cursor: pointer; }
+    .tree-row:hover { background: var(--panel-2); color: var(--text); }
+    .tree-row.selected { background: var(--accent-soft); color: var(--text); }
+    .tree-row .twisty { width: 13px; color: var(--quiet); text-align: center; }
+    .tree-row .part { width: 17px; height: 17px; display: grid; place-items: center; color: var(--accent); border: 1px solid currentColor; border-radius: 4px; font-size: 9px; }
+    .tree-row .name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .tree-row .tri { font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--quiet); }
+    .tree-row .eye { width: 22px; background: transparent; color: var(--quiet); font-size: 13px; padding: 0; }
+    .tree-row .eye:hover { color: var(--accent); }
+    .tree-row.depth-1 { padding-left: 24px; }
+    .tree-row.depth-2 { padding-left: 43px; }
+    .canvas-wrap { min-width: 0; min-height: 0; position: relative; background: var(--viewport); }
+    #viewport { display: block; width: 100%; height: 100%; }
+    .hud { position: absolute; top: 14px; right: 15px; display: flex; gap: 3px; padding: 4px; background: color-mix(in srgb, var(--chrome) 90%, transparent); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 7px 18px var(--shadow); }
+    .hud button { width: 29px; height: 28px; border-radius: 5px; background: transparent; color: var(--text); }
+    .hud button:hover { background: var(--accent-soft); }
+    .canvas-label { position: absolute; left: 16px; top: 14px; padding: 5px 8px; background: color-mix(in srgb, var(--chrome) 82%, transparent); color: var(--text); border: 1px solid var(--line); border-radius: 5px; font-size: 11px; }
+    .canvas-label b { color: var(--accent); font-weight: 650; }
+    .scale { position: absolute; left: 17px; bottom: 18px; color: #2d333a; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .scale i { display: block; width: 82px; height: 5px; border-left: 1px solid currentColor; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; }
+    .triad { position: absolute; right: 18px; bottom: 17px; width: 54px; height: 54px; color: #37424c; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .triad::before, .triad::after { content: ""; position: absolute; left: 25px; top: 27px; width: 25px; height: 1px; background: #d34f5a; transform: rotate(-23deg); transform-origin: left; }
+    .triad::after { background: #377fbd; transform: rotate(-64deg); width: 24px; }
+    .triad span { position: absolute; left: 21px; top: 27px; width: 1px; height: 25px; background: #3b9b79; transform: rotate(7deg); transform-origin: top; }
+    .triad b { position: absolute; font-weight: 600; }
+    .triad .x { right: 0; top: 12px; color: #b43e49; }.triad .y { left: 17px; bottom: -3px; color: #267957; }.triad .z { right: 1px; top: -3px; color: #286aa2; }
+    .inspector-tabs { display: flex; gap: 3px; padding: 7px 9px; border-bottom: 1px solid var(--line); }
+    .inspector-tabs button { flex: 1; height: 29px; color: var(--muted); background: transparent; border-radius: 6px; }
+    .inspector-tabs button.active { color: var(--text); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line-strong); }
+    .inspector-body { overflow: auto; padding: 12px; }
+    .section { border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 14px; }
+    .section:last-child { border-bottom: 0; }
+    .section h3 { margin: 0 0 10px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+    .kv { display: grid; grid-template-columns: 92px minmax(0,1fr); gap: 7px 10px; font-size: 12px; }
+    .kv dt { color: var(--muted); }.kv dd { margin: 0; overflow-wrap: anywhere; color: var(--text); }
+    .mono { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .control { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; color: var(--muted); }
+    .control + .control { margin-top: 5px; }
+    .control select, .control input[type=range] { width: 130px; }
+    select { height: 27px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--chrome-2); padding: 0 6px; }
+    input[type=range] { accent-color: var(--accent); }
+    .swatches { display: flex; gap: 5px; }
+    .swatch { width: 24px; height: 24px; border-radius: 5px; border: 2px solid transparent; }
+    .swatch.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
+    .status { display: flex; align-items: center; gap: 13px; padding: 0 12px; background: var(--chrome-2); border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+    .status .path { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .status .ok { color: var(--ok); }.status .metric { font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .notice { display: flex; align-items: center; gap: 7px; min-height: 27px; padding: 0 9px; background: color-mix(in srgb, var(--warn) 13%, transparent); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); border-radius: 5px; font-size: 11px; }
+    .small-button { width: 100%; height: 29px; color: var(--text); background: var(--panel-2); border-radius: 5px; margin-top: 8px; }
+    .small-button:hover { background: var(--accent-soft); }
+    .hidden { display: none !important; }
+    @media (max-width: 980px) {
+      .workspace { grid-template-columns: 210px minmax(0,1fr); }
+      .inspector { display: none; }
+      .brand { min-width: 120px; }
+      .file-tab { min-width: 180px; }
+    }
+    @media (max-width: 650px) {
+      .workspace { grid-template-columns: minmax(0,1fr); }
+      .sidebar { display: none; }
+      .toolbar { gap: 3px; padding: 0 7px; }.brand { min-width: 0; }.brand span { display: none; }
+      .file-tab { min-width: 130px; }.toolbar-group .tool-text { padding: 0 6px; }.toolbar-group .tool-text .label { display: none; }
+      .menubar { gap: 10px; padding: 0 9px; }.status { gap: 6px; padding: 0 7px; }.status .metric { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="toolbar">
+      <div class="brand"><div class="brand-mark">C</div><span>Cadly Inspection Studio</span></div>
+      <div class="toolbar-group">
+        <button class="tool-text" title="Open file"><span class="glyph">↥</span><span class="label">Open</span></button>
+        <button class="tool" title="Recent files">⌄</button>
+      </div>
+      <div class="file-tab"><div><strong>pump_housing_rev_D.step</strong><small>AP242 · 1,248 nodes</small></div><button class="tool" title="Close document">×</button></div>
+      <div class="spacer"></div>
+      <div class="toolbar-group modes" aria-label="Display mode">
+        <button class="mode active" data-mode="shaded">Shaded</button>
+        <button class="mode" data-mode="hidden">Hidden line</button>
+        <button class="mode" data-mode="wire">Wireframe</button>
+      </div>
+      <div class="toolbar-group">
+        <button class="tool active" id="edges" title="BRep edges">▣</button>
+        <button class="tool" id="fit" title="Fit model">⌗</button>
+        <button class="tool" id="theme" title="Toggle appearance">◐</button>
+        <button class="tool" title="Export review pack">⇩</button>
+      </div>
+    </header>
+    <nav class="menubar"><span>File</span><span>View</span><span>Inspect</span><span>Section</span><span>Review</span><span>Window</span></nav>
+    <section class="workspace">
+      <aside class="sidebar">
+        <div class="panel-head"><h2>Model</h2><span class="count">1,248</span><button class="tool" title="Model options">⋯</button></div>
+        <label class="search"><span>⌕</span><input id="filter" type="search" placeholder="Filter parts"></label>
+        <div class="tree" id="tree">
+          <div class="tree-row selected" data-node="Pump housing"><span class="twisty">⌄</span><span class="part">A</span><span class="name">Pump housing</span><span class="tri">1.2M</span><button class="eye" title="Toggle visibility">◉</button></div>
+          <div class="tree-row depth-1" data-node="Upper shell"><span class="twisty">·</span><span class="part">P</span><span class="name">Upper shell</span><span class="tri">486k</span><button class="eye" title="Toggle visibility">◉</button></div>
+          <div class="tree-row depth-1" data-node="Rotor assembly"><span class="twisty">⌄</span><span class="part">A</span><span class="name">Rotor assembly</span><span class="tri">392k</span><button class="eye" title="Toggle visibility">◉</button></div>
+          <div class="tree-row depth-2" data-node="Rotor shaft"><span class="twisty">·</span><span class="part">P</span><span class="name">Rotor shaft</span><span class="tri">88k</span><button class="eye" title="Toggle visibility">◉</button></div>
+          <div class="tree-row depth-2" data-node="Impeller"><span class="twisty">·</span><span class="part">P</span><span class="name">Impeller</span><span class="tri">244k</span><button class="eye" title="Toggle visibility">◉</button></div>
+          <div class="tree-row depth-1" data-node="Fasteners (12x)"><span class="twisty">·</span><span class="part">P</span><span class="name">Fasteners (12x)</span><span class="tri">72k</span><button class="eye" title="Toggle visibility">◉</button></div>
+          <div class="tree-row depth-1" data-node="Seal"><span class="twisty">·</span><span class="part">P</span><span class="name">Seal</span><span class="tri">19k</span><button class="eye" title="Toggle visibility">◉</button></div>
+          <div class="tree-row depth-1" data-node="Datum planes"><span class="twisty">·</span><span class="part">D</span><span class="name">Datum planes</span><span class="tri">—</span><button class="eye" title="Toggle visibility">◉</button></div>
+        </div>
+      </aside>
+
+      <section class="canvas-wrap">
+        <canvas id="viewport"></canvas>
+        <div class="canvas-label"><b id="mode-label">SHADED</b><span> · Studio environment</span></div>
+        <div class="hud"><button id="views" title="Standard views">◇</button><button id="hud-fit" title="Fit all">⌗</button><button id="section-toggle" title="Section plane">∕</button><button id="hud-measure" title="Measure">↔</button></div>
+        <div class="scale"><i></i>100 mm</div>
+        <div class="triad"><span></span><b class="x">X</b><b class="y">Y</b><b class="z">Z</b></div>
+      </section>
+
+      <aside class="inspector">
+        <div class="inspector-tabs"><button class="active" data-tab="properties">Properties</button><button data-tab="display">Display</button><button data-tab="import">Import</button></div>
+        <div class="inspector-body" id="properties-panel">
+          <section class="section"><h3>Selection</h3><dl class="kv"><dt>Node</dt><dd id="selected-node">Pump housing</dd><dt>Occurrence</dt><dd class="mono">/pump_housing/upper_shell</dd><dt>Source</dt><dd class="mono">#4128 · face 187</dd></dl></section>
+          <section class="section"><h3>Geometry</h3><dl class="kv"><dt>Material</dt><dd id="selected-material">Painted metal · satin</dd><dt>Triangles</dt><dd class="mono">1,246,810</dd><dt>Bounds</dt><dd class="mono">340.0 × 214.8 × 168.5 mm</dd><dt>Units</dt><dd>millimetres</dd></dl></section>
+          <section class="section"><h3>Inspection</h3><div class="notice">● Translation verified · no open faces</div><button class="small-button" id="measure">Measure from selection</button><button class="small-button" id="isolate">Isolate selection</button></section>
+        </div>
+        <div class="inspector-body hidden" id="display-panel">
+          <section class="section"><h3>Appearance</h3><div class="control"><span>Material preset</span><select id="material"><option value="clay">Neutral clay</option><option value="paint">Painted metal</option><option value="aluminum">Aluminum</option><option value="steel">Machined steel</option></select></div><div class="control"><span>Exposure</span><input id="exposure" type="range" min="-2" max="2" step=".1" value="0"></div><div class="control"><span>Environment</span><input id="env" type="range" min="0" max="2" step=".05" value="1"></div><div class="control"><span>Exploded view</span><input id="explode" type="range" min="0" max="100" value="0"></div></section>
+          <section class="section"><h3>Overlays</h3><div class="control"><span>BRep edges</span><input id="edge-range" type="range" min="0" max="100" value="42"></div><div class="control"><span>Ground shadow</span><input id="ground" type="checkbox" checked></div><div class="control"><span>Contact AO</span><input id="ao" type="checkbox" checked></div></section>
+          <section class="section"><h3>Lighting</h3><div class="swatches"><button class="swatch active" data-env-tone="neutral" style="background:#dce3ee" title="Neutral studio"></button><button class="swatch" data-env-tone="cool" style="background:#a7b4c9" title="Cool studio"></button><button class="swatch" data-env-tone="warm" style="background:#e6cba3" title="Warm studio"></button></div></section>
+        </div>
+        <div class="inspector-body hidden" id="import-panel">
+          <section class="section"><h3>Import profile</h3><div class="control"><span>Tessellation</span><select><option>Screen error · 0.75 px</option><option>Fine · 0.25 px</option><option>Fast preview</option></select></div><div class="control"><span>Parallel meshing</span><input type="checkbox" checked></div><div class="control"><span>Colors and names</span><input type="checkbox" checked></div><div class="control"><span>Keep hierarchy</span><input type="checkbox" checked></div></section>
+          <section class="section"><h3>Last import</h3><dl class="kv"><dt>Read</dt><dd class="mono">1.42 s</dd><dt>Transfer</dt><dd class="mono">3.08 s</dd><dt>Mesh</dt><dd class="mono">0.86 s</dd><dt>Peak RSS</dt><dd class="mono">612 MB</dd></dl></section>
+          <section class="section"><div class="notice">! 2 faces have no analytic trim; review diagnostics</div><button class="small-button">Open diagnostics</button></section>
+        </div>
+      </aside>
+    </section>
+    <footer class="status"><span class="path">pump_housing_rev_D.step · AP242 · local file</span><span class="ok">● Ready</span><span class="metric">1,248 nodes</span><span class="metric">2.1M tris</span><span class="metric">Frame 8.4 ms</span></footer>
+  </main>
+  <script>
+    const root = document.documentElement;
+    const canvas = document.getElementById('viewport');
+    const ctx = canvas.getContext('2d');
+    let selected = 'Pump housing';
+    let mode = 'shaded';
+    let exploded = 0;
+    let section = false;
+    let edgesOn = true;
+    let measured = false;
+    let environmentTone = 'neutral';
+    let angle = -0.18;
+    let dragging = false;
+    let previous = 0;
+    const palette = { clay: ['#aab1bc', '#dce0e5'], paint: ['#71859e', '#b2c1d5'], aluminum: ['#aeb4bb', '#eef0f1'], steel: ['#5c6571', '#a1a9b4'] };
+
+    function fitCanvas() {
+      const r = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(r.width * dpr));
+      canvas.height = Math.max(1, Math.floor(r.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw();
+    }
+    function project(x, y, z, cx, cy, scale) {
+      const ca = Math.cos(angle), sa = Math.sin(angle);
+      const rx = x * ca - z * sa, rz = x * sa + z * ca;
+      return [cx + (rx - rz) * scale * .92, cy - (y + (rx + rz) * .34) * scale];
+    }
+    function poly(points, fill, stroke = 'rgba(40,48,58,.56)', width = 1) {
+      ctx.beginPath(); points.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath();
+      ctx.fillStyle = fill; ctx.fill();
+      if (edgesOn || mode !== 'shaded') { ctx.strokeStyle = stroke; ctx.lineWidth = width; ctx.stroke(); }
+    }
+    function box(x, y, z, w, h, d, colors, lift = 0) {
+      const cx = canvas.clientWidth * .54, cy = canvas.clientHeight * .57;
+      const scale = Math.min(canvas.clientWidth / 640, canvas.clientHeight / 480);
+      const ox = x + (x > 0 ? exploded * .55 : 0), oy = y + lift, oz = z + (z > 0 ? exploded * .35 : 0);
+      const a = project(ox, oy, oz, cx, cy, scale), b = project(ox+w, oy, oz, cx, cy, scale), c = project(ox+w, oy+h, oz, cx, cy, scale), d0 = project(ox, oy+h, oz, cx, cy, scale);
+      const e = project(ox, oy, oz+d, cx, cy, scale), f = project(ox+w, oy, oz+d, cx, cy, scale), g = project(ox+w, oy+h, oz+d, cx, cy, scale), h0 = project(ox, oy+h, oz+d, cx, cy, scale);
+      poly([d0,c,g,h0], colors[1]); poly([b,c,g,f], colors[0]); poly([a,b,c,d0], colors[0], 'rgba(40,48,58,.7)', 1.25);
+      return {a,b,c,d0,e,f,g,h0};
+    }
+    function draw() {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (!w || !h) return;
+      const light = root.classList.contains('light');
+      const environment = Number(document.getElementById('env').value);
+      const exposure = Number(document.getElementById('exposure').value);
+      ctx.clearRect(0,0,w,h);
+      const backgrounds = {
+        neutral: light ? ['#dfe2e7','#b9bec7'] : ['#c9cdd4','#adb2bc'],
+        cool: light ? ['#d8e0ea','#aebac9'] : ['#c2ccd9','#9faebe'],
+        warm: light ? ['#e8e0d4','#c9baa7'] : ['#d7cec1','#b7aa99']
+      };
+      const bg = ctx.createLinearGradient(0,0,0,h); bg.addColorStop(0,backgrounds[environmentTone][0]); bg.addColorStop(1,backgrounds[environmentTone][1]); ctx.fillStyle = bg; ctx.fillRect(0,0,w,h);
+      const scale = Math.min(w/640,h/480), cx = w*.54, cy = h*.57;
+      if (document.getElementById('ground').checked) { ctx.fillStyle = 'rgba(30,36,45,.16)'; ctx.beginPath(); ctx.ellipse(cx, cy+93*scale, 207*scale, 26*scale, -.1, 0, Math.PI*2); ctx.fill(); }
+      const colors = palette[document.getElementById('material').value];
+      const shell = box(-145, -35, -42, 268, 133, 92, colors, selected === 'Upper shell' ? 0 : 0);
+      ctx.globalAlpha = .92; box(-104, 15, 22, 166, 45, 38, [colors[0], colors[1]], selected === 'Rotor assembly' ? -exploded*.18 : 0); ctx.globalAlpha = 1;
+      const rotor = project(4 + exploded*.62, 70, 9, cx, cy, scale);
+      ctx.fillStyle = colors[1]; ctx.strokeStyle = 'rgba(40,48,58,.65)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.ellipse(rotor[0], rotor[1], 49*scale, 19*scale, -.18, 0, Math.PI*2); ctx.fill(); if(edgesOn || mode !== 'shaded')ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(rotor[0], rotor[1], 17*scale, 8*scale, -.18, 0, Math.PI*2); ctx.fillStyle = colors[0]; ctx.fill(); if(edgesOn || mode !== 'shaded')ctx.stroke();
+      if (document.getElementById('ao').checked) { ctx.strokeStyle='rgba(28,34,42,.22)'; ctx.lineWidth=7*scale; ctx.beginPath(); ctx.ellipse(rotor[0],rotor[1],52*scale,21*scale,-.18,0,Math.PI*2); ctx.stroke(); }
+      for (let i=0;i<4;i++) { const p = project(-84 + i*53, 116 + (i%2)*5, -47, cx, cy, scale); ctx.fillStyle = colors[1]; ctx.fillRect(p[0]-9*scale,p[1]-4*scale,18*scale,8*scale); ctx.strokeRect(p[0]-9*scale,p[1]-4*scale,18*scale,8*scale); }
+      if (section) { ctx.save(); ctx.globalAlpha = .34; ctx.fillStyle = '#e39b57'; ctx.beginPath(); ctx.moveTo(0,h*.38); ctx.lineTo(w,h*.32); ctx.lineTo(w,h*.68); ctx.lineTo(0,h*.74); ctx.closePath(); ctx.fill(); ctx.restore(); ctx.strokeStyle='#d27a35'; ctx.setLineDash([7,5]); ctx.beginPath(); ctx.moveTo(0,h*.56); ctx.lineTo(w,h*.46); ctx.stroke(); ctx.setLineDash([]); }
+      if (mode === 'wire') { ctx.strokeStyle = '#414a57'; ctx.globalAlpha=.85; ctx.lineWidth=1; ctx.strokeRect(cx-125*scale, cy-63*scale, 242*scale, 112*scale); ctx.globalAlpha=1; }
+      if (mode === 'hidden') { ctx.strokeStyle = '#59626e'; ctx.setLineDash([3,4]); ctx.globalAlpha=.65; ctx.beginPath(); ctx.moveTo(cx-75*scale,cy-15*scale);ctx.lineTo(cx+117*scale,cy+36*scale);ctx.moveTo(cx-38*scale,cy+45*scale);ctx.lineTo(cx+68*scale,cy-39*scale);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1; }
+      if (selected !== 'Pump housing') { ctx.strokeStyle = '#3d6fe0'; ctx.lineWidth=2; ctx.setLineDash([5,3]); ctx.strokeRect(cx-145*scale,cy-82*scale,268*scale,133*scale); ctx.setLineDash([]); }
+      if (measured) { const p0=[cx-84*scale,cy+61*scale], p1=[cx+82*scale,cy+18*scale]; ctx.strokeStyle='#3d6fe0';ctx.fillStyle='#3d6fe0';ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(...p0);ctx.lineTo(...p1);ctx.stroke();ctx.beginPath();ctx.arc(...p0,3,0,Math.PI*2);ctx.arc(...p1,3,0,Math.PI*2);ctx.fill();ctx.fillStyle='rgba(31,36,43,.9)';ctx.fillRect((p0[0]+p1[0])/2-31,(p0[1]+p1[1])/2-21,68,18);ctx.fillStyle='#fff';ctx.font='11px ui-monospace';ctx.fillText('42.18 mm',(p0[0]+p1[0])/2-25,(p0[1]+p1[1])/2-8); }
+      if (environment !== 1 || exposure !== 0) { const amount=Math.min(.34,Math.abs(exposure)*.1+Math.abs(environment-1)*.08);ctx.fillStyle=(exposure+environment-1)>=0?`rgba(255,255,255,${amount})`:`rgba(18,23,30,${amount})`;ctx.fillRect(0,0,w,h); }
+    }
+    function setSelected(name, row) { selected=name; document.querySelectorAll('.tree-row').forEach(x=>x.classList.remove('selected')); row.classList.add('selected'); document.getElementById('selected-node').textContent=name; draw(); }
+    document.querySelectorAll('.tree-row').forEach(row => row.addEventListener('click', e => { if (e.target.classList.contains('eye')) { e.stopPropagation(); e.target.textContent = e.target.textContent === '◉' ? '○' : '◉'; e.target.style.color = e.target.textContent === '○' ? 'var(--quiet)' : ''; draw(); return; } setSelected(row.dataset.node,row); }));
+    document.getElementById('filter').addEventListener('input', e => { const q=e.target.value.toLowerCase(); document.querySelectorAll('.tree-row').forEach(r=>r.classList.toggle('hidden', q && !r.dataset.node.toLowerCase().includes(q))); });
+    document.querySelectorAll('.mode').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active'));b.classList.add('active');mode=b.dataset.mode;document.getElementById('mode-label').textContent=mode.toUpperCase();draw();}));
+    document.getElementById('edges').addEventListener('click', e=>{edgesOn=!edgesOn;e.currentTarget.classList.toggle('active',edgesOn);draw();});
+    document.getElementById('theme').addEventListener('click',()=>{root.classList.toggle('light');draw();});
+    ['fit','hud-fit'].forEach(id=>document.getElementById(id).addEventListener('click',()=>{exploded=0; section=false; document.getElementById('section-toggle').style.color=''; draw();}));
+    document.getElementById('section-toggle').addEventListener('click', e=>{section=!section;e.currentTarget.style.color=section?'var(--accent)':'';draw();});
+    document.getElementById('isolate').addEventListener('click',()=>{document.querySelectorAll('.tree-row').forEach(r=>{if(r.dataset.node!==selected)r.style.opacity=.35;});});
+    function toggleMeasure(){measured=!measured;document.getElementById('selected-material').textContent=measured?'Distance · 42.18 mm':'Painted metal · satin';draw();}
+    document.getElementById('measure').addEventListener('click',toggleMeasure);
+    document.getElementById('hud-measure').addEventListener('click',toggleMeasure);
+    document.getElementById('material').addEventListener('change',draw);
+    document.getElementById('ground').addEventListener('change',draw);
+    document.getElementById('ao').addEventListener('change',draw);
+    document.getElementById('exposure').addEventListener('input',draw);
+    document.getElementById('env').addEventListener('input',draw);
+    document.getElementById('explode').addEventListener('input',e=>{exploded=Number(e.target.value);draw();});
+    document.querySelectorAll('[data-env-tone]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-env-tone]').forEach(x=>x.classList.remove('active'));b.classList.add('active');environmentTone=b.dataset.envTone;draw();}));
+    document.getElementById('edge-range').addEventListener('input', e=>{document.getElementById('edges').style.opacity=.35+e.target.value/150;});
+    document.querySelectorAll('.inspector-tabs button').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.inspector-tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active');['properties','display','import'].forEach(t=>document.getElementById(t+'-panel').classList.toggle('hidden',t!==b.dataset.tab));}));
+    document.getElementById('views').addEventListener('click',()=>{angle=-.18;draw();});
+    canvas.addEventListener('pointerdown',e=>{dragging=true;previous=e.clientX;canvas.setPointerCapture(e.pointerId);});
+    canvas.addEventListener('pointermove',e=>{if(!dragging)return;angle+=(e.clientX-previous)*.006;previous=e.clientX;draw();});
+    canvas.addEventListener('pointerup',()=>dragging=false);
+    window.addEventListener('resize',fitCanvas); fitCanvas();
+  </script>
+</body>
+</html>
