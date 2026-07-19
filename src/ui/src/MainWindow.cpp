@@ -891,6 +891,21 @@ void MainWindow::run_demo(const QString& name) {
     set_surface_mode(SurfaceMode::Wireframe);
   } else if (name == QLatin1String("hiddenline")) {
     set_surface_mode(SurfaceMode::HiddenLine);
+  } else if (name == QLatin1String("wireframe-reopen") ||
+             name == QLatin1String("hiddenline-reopen")) {
+    // Regression drivers for the renderer's lazy GPU upload: switch to a
+    // surface mode FIRST, then force a fresh import of the active document.
+    // The re-import swaps in a brand-new scene::Scene, so attach_scene()
+    // evicts every resident GPU mesh and the next frame must repopulate
+    // them from whichever pass actually runs in that mode. Wireframe once
+    // rendered nothing here (its early-out skips the surface pass that did
+    // the uploading — see GLRenderer draw_edges) until the user toggled
+    // back to Shaded; the screenshot must show geometry, not background.
+    set_surface_mode(name.startsWith(QLatin1String("wireframe"))
+                       ? SurfaceMode::Wireframe : SurfaceMode::HiddenLine);
+    if (auto* document = active_document(); document && !importing_) {
+      start_import(document, inspector_->import_options());
+    }
   } else if (name == QLatin1String("shadedmenu")) {
     set_surface_mode(SurfaceMode::Shaded);
     toolbar_->display_segments()->show_segment_menu(0);
