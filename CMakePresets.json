@@ -104,9 +104,10 @@
     {
       "name": "windows-ninja-release",
       "inherits": "windows-ninja-debug",
-      "displayName": "Windows Ninja Release (vcpkg manifest, MSVC from environment)",
+      "displayName": "Windows Ninja Release (vcpkg manifest, release-only deps, MSVC from environment)",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-release"
       }
     }
   ],

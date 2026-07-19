@@ -33,8 +33,13 @@ from `~/Qt/6.8.3/gcc_64`, enables the qlementine style), `linux-vcpkg-debug`,
 `windows-msvc-{debug,release}` (VS solution), `windows-ninja-{debug,release}`
 (single-config Ninja; expects MSVC in the environment, i.e. a VS dev prompt —
 what CI uses, since it can't pin a VS-year generator to a rotating runner
-image). CI (`.github/workflows/ci.yml`) builds, tests, and packages on
-Linux + Windows; the smoke test and a headless STEP import are the gates.
+image). `windows-ninja-release` pins the release-only `x64-windows-release`
+triplet — a release build never links the debug deps, so vcpkg skips building
+debug Qt/OCCT (half the cold dependency build). The debug and VS presets keep
+stock `x64-windows`; the VS one because its multi-config generator can still
+build a Debug config. CI (`.github/workflows/ci.yml`) builds, tests, and
+packages on Linux + Windows; the smoke test and a headless STEP import are
+the gates.
 
 `cad_import_cli` is the fastest way to validate an import change without a GL
 context or display — prefer it when touching `src/cad`.

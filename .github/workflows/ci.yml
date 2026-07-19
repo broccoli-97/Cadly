@@ -115,11 +115,12 @@ jobs:
   windows:
     name: Windows (windows-ninja-release)
     runs-on: windows-latest
-    # First run builds Qt + OCCT from source via vcpkg (a few hours); later
-    # runs restore per-package binaries from the Actions cache and take
-    # minutes. A full rebuild recurs only when something that feeds vcpkg's
-    # ABI hash actually changes — baseline bump, or the hosted image
-    # rotating its MSVC toolset.
+    # First run builds Qt + OCCT from source via vcpkg — release-only, via
+    # the preset's x64-windows-release triplet, since nothing here ever
+    # links the debug variants — later runs restore per-package binaries
+    # from the Actions cache and take minutes. A full rebuild recurs only
+    # when something that feeds vcpkg's ABI hash actually changes —
+    # baseline bump, or the hosted image rotating its MSVC toolset.
     timeout-minutes: 350
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
