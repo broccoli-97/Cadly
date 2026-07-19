@@ -57,37 +57,40 @@ void Camera::rotate_around(const vec3& pivot, const quat& delta) {
 }
 
 void Camera::orbit(float yaw_delta, float pitch_delta, const vec3& pivot) {
-  // Clamp pitch to keep the camera right-side up. Composition of quaternions
-  // is mathematically clean, but a yaw-around-world-up + pitch-around-camera-
-  // right ("turntable") camera does NOT stay user-coherent once the camera
-  // pitches past ±90° elevation: the camera flips upside down, world-up
-  // no longer matches the user's perceived up, and yaw around world-up then
-  // looks reversed on screen. Quaternions don't rescue this — the issue is
-  // user-frame vs world-frame, not the rotation representation. So clamp the
-  // resulting pitch to a hair under ±π/2 and feed the clamped delta into the
-  // rotation. `forward().y` is the sine of the current elevation in the
-  // no-roll steady state (right() lies in the world-XZ plane, so neither
-  // yaw nor pitch ever leaks roll), so `asin(forward.y)` is the current
-  // pitch angle.
-  const float fwd_y       = glm::clamp(forward().y, -1.0f, 1.0f);
-  const float cur_pitch   = std::asin(fwd_y);
-  const float pitch_limit = glm::half_pi<float>() - glm::radians(1.0f);
-  const float new_pitch   = glm::clamp(cur_pitch + pitch_delta,
-                                       -pitch_limit, pitch_limit);
-  const float pitch_eff   = new_pitch - cur_pitch;
-
-  // Yaw around the world-up axis. This never injects roll — world-Y is a fixed
-  // direction independent of the camera's current orientation.
-  const quat q_yaw = glm::angleAxis(yaw_delta, kWorldUp);
-
-  // Pitch around the camera-right axis AFTER yaw, so the response matches the
-  // user's expectation across the full sphere. `right()` is in the world XZ
-  // plane in the no-roll steady state; `q_yaw * right()` is the right axis
-  // the user sees once yaw has been applied.
-  const vec3 right_after_yaw = glm::normalize(q_yaw * right());
-  const quat q_pitch = glm::angleAxis(pitch_eff, right_after_yaw);
-
-  rotate_around(pivot, q_pitch * q_yaw);
+  // Screen-space tumble ("free orbit") — the scheme mainstream mechanical
+  // CAD uses for its rotate drag (SolidWorks, NX, Creo, Fusion's free
+  // orbit). The drag rotates the model about a single axis that lies in the
+  // screen plane, perpendicular to the drag direction:
+  //
+  //   yaw_delta   spins about the camera's own up axis    (screen vertical)
+  //   pitch_delta spins about the camera's own right axis (screen horizontal)
+  //
+  // and a diagonal drag combines them into one rotation about
+  // `up*yaw + right*pitch` — exactly like rolling a ball under the cursor.
+  // Because the axes are re-read from the current orientation on every
+  // event, the response is uniform over the whole sphere: dragging right
+  // always moves the model's near side right, at every elevation. There is
+  // no pole to stall on and no upside-down regime where the response
+  // reverses — the failure modes of the turntable schemes this replaces
+  // (yaw about *world* up, first clamped at ±89°, then mirrored when
+  // upside down; both read as bugs during free inspection of a part).
+  //
+  // The price is that roll can accumulate: a circular drag path slowly
+  // rotates the model about the view axis, so the horizon may end up
+  // tilted. That is inherent to any screen-space scheme (the commercial
+  // packages above drift the same way) and is cheap to undo — the standard
+  // views (keys 1-7) and Fit (F) restore an upright orientation.
+  //
+  // Per mouse-move the deltas are a few milliradians, so folding both spins
+  // into one angleAxis about the scaled-axis sum is exact to O(θ²); larger
+  // programmatic steps stay well-behaved because the axis still lies in the
+  // screen plane. Right/up are orthonormal, so the combined angle is just
+  // the Euclidean norm of the two deltas.
+  const float angle = std::sqrt(yaw_delta * yaw_delta +
+                                pitch_delta * pitch_delta);
+  if (angle <= 0.0f) return;
+  const vec3 axis = (up() * yaw_delta + right() * pitch_delta) / angle;
+  rotate_around(pivot, glm::angleAxis(angle, axis));
 }
 
 void Camera::set_orientation_yaw_pitch(float yaw, float pitch) {

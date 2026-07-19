@@ -11,9 +11,10 @@ namespace cadly::scene {
 // The orientation is stored as a quaternion (rather than yaw+pitch Euler
 // angles) so rotations compose without gimbal headaches and so the camera can
 // be orbited around an arbitrary world-space pivot — see `rotate_around()`.
-// CAD-style "no roll" behaviour is preserved by always feeding orbit input
-// through `orbit()`, which decomposes the delta into yaw-around-world-up and
-// pitch-around-camera-right.
+// Interactive rotation is a screen-space tumble ("free orbit"): `orbit()`
+// spins about the camera's *own* up/right axes, so the drag response is
+// uniform over the whole sphere — no pole to stall on, no orientation where
+// it reverses. See orbit() for the trade-offs.
 enum class Projection {
   Orthographic,
   Perspective,
@@ -60,10 +61,13 @@ struct Camera {
   // and similar features.
   void rotate_around(const vec3& pivot, const quat& delta);
 
-  // Convenience for orbit-style mouse input: composes a delta that is
-  //   - yaw_delta around the world up axis (no roll added)
-  //   - pitch_delta around the camera-right axis after yaw
-  // and applies it around `pivot`. Use this from input controllers.
+  // Screen-space tumble for orbit-style mouse input: one rotation about the
+  // screen-plane axis `up()*yaw_delta + right()*pitch_delta` (perpendicular
+  // to the drag direction), applied around `pivot`. The response follows the
+  // hand identically in every orientation — no pitch clamp, no reversal.
+  // Roll accumulates on curved drag paths (inherent to screen-space orbit);
+  // the standard views / set_orientation_yaw_pitch() restore upright.
+  // Use this from input controllers.
   void orbit(float yaw_delta, float pitch_delta, const vec3& pivot);
 
   // Reset the orientation from a yaw/pitch pair. Convenient for view-cube

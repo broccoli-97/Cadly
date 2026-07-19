@@ -83,6 +83,52 @@ static void test_camera_fit() {
   CHECK(c.far_z > c.near_z);
 }
 
+// Screen-space ("free orbit") tumble: the drag response must be identical in
+// every orientation. A pure horizontal step swings forward() toward -right()
+// by sin(step); a pure vertical step swings it toward +up() — with no stall
+// at the poles and no orientation where the response reverses (the failure
+// modes of the turntable schemes orbit() replaces).
+static void test_camera_orbit_screen_space() {
+  s::Camera c;
+  c.target   = {0.0f, 0.0f, 0.0f};
+  c.distance = 5.0f;
+
+  const float step = glm::radians(10.0f);
+  const s::quat test_orientations[] = {
+    s::quat(1.0f, 0.0f, 0.0f, 0.0f),                                  // upright
+    glm::angleAxis(glm::radians(40.0f),   s::vec3(0.0f, 1.0f, 0.0f)) *
+      glm::angleAxis(glm::radians(-30.0f), s::vec3(1.0f, 0.0f, 0.0f)), // oblique
+    glm::angleAxis(glm::radians(-90.0f),  s::vec3(1.0f, 0.0f, 0.0f)),  // pole
+    glm::angleAxis(glm::radians(-170.0f), s::vec3(1.0f, 0.0f, 0.0f)),  // upside down
+    glm::angleAxis(glm::radians(25.0f),   s::vec3(0.0f, 0.0f, 1.0f)),  // rolled
+  };
+  for (const s::quat& q : test_orientations) {
+    c.orientation = q;
+    const s::vec3 right = c.right();
+    const s::vec3 up    = c.up();
+    c.orbit(step, 0.0f, c.target);
+    CHECK(std::fabs(glm::dot(c.forward(), right) + std::sin(step)) < 1e-4f);
+    c.orientation = q;
+    c.orbit(0.0f, step, c.target);
+    CHECK(std::fabs(glm::dot(c.forward(), up) - std::sin(step)) < 1e-4f);
+  }
+
+  // A continuous vertical drag tumbles straight over the top (a pitch clamp
+  // would stall at 90°), preserving distance and the pivot == target.
+  c.set_orientation_yaw_pitch(0.0f, 0.0f);
+  for (int i = 0; i < 100; ++i) c.orbit(0.0f, glm::radians(1.7f), c.target);
+  CHECK(c.up().y < 0.0f);
+  CHECK(std::fabs(c.distance - 5.0f) < 1e-4f);
+  CHECK(glm::length(c.target) < 1e-4f);
+
+  // A full 360° vertical tumble comes back to the starting view.
+  c.set_orientation_yaw_pitch(0.0f, 0.0f);
+  const s::vec3 start_fwd = c.forward();
+  for (int i = 0; i < 100; ++i) c.orbit(0.0f, glm::radians(3.6f), c.target);
+  CHECK(glm::length(c.forward() - start_fwd) < 1e-3f);
+  CHECK(std::fabs(c.up().y - 1.0f) < 1e-3f);
+}
+
 static void test_display_mode_defaults() {
   r::DisplayMode mode;
   CHECK(!mode.wireframe);
@@ -289,6 +335,7 @@ int main() {
   test_transform_roundtrip();
   test_scene_hierarchy();
   test_camera_fit();
+  test_camera_orbit_screen_space();
   test_display_mode_defaults();
   test_importer_registry();
   test_tessellation_policy();
