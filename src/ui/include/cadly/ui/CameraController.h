@@ -84,6 +84,14 @@ public:
   // on -Z looking toward +Z (the "front" face), pitch=-90 looks straight down.
   void set_view(float yaw_deg, float pitch_deg);
 
+  // Switch the projection mode. Goes through the controller (rather than
+  // writing Camera::projection_mode directly) because the two modes have
+  // different zoom/clip policies: entering Perspective re-clamps the distance
+  // so an eye parked inside the model by deep ortho zoom (harmless there)
+  // pops back outside the bounding sphere before the near plane could slice
+  // the model open.
+  void set_projection(scene::Projection mode);
+
   // Replace the rotation-pivot strategy. Passing `nullptr` restores the
   // default `TargetPivotResolver`. Safe to call mid-session; the next
   // `begin_drag(Orbit, ...)` will use the new resolver.
@@ -108,15 +116,26 @@ signals:
   void rotation_pivot_visibility_changed(scene::vec3 pivot, bool visible);
 
 private:
-  // Clamp a requested zoom distance so the resulting camera position stays
-  // outside the scene's bounding sphere with a small safety margin. With no
-  // scene loaded (`scene_radius_ == 0`) only an absolute minimum is
-  // enforced.
+  // Zoom-distance policy, split by projection mode. Orthographic: zoom is
+  // pure magnification (the eye position is optically meaningless), so only
+  // an absolute epsilon floor applies — detail zoom is unlimited and
+  // update_clip_planes() guarantees the model is never sliced. Perspective:
+  // the eye must stay outside the scene's bounding sphere (small margin) so
+  // the positive near plane can never cut the model open — zooming in stops
+  // at the model instead of passing through it.
   float clamp_distance(float requested) const;
 
+  // The smallest Camera::distance that keeps the eye outside the scene's
+  // bounding sphere along the current view ray (0 when there is no scene or
+  // the ray misses the sphere). Backs both the perspective zoom clamp and
+  // the ortho→perspective transition.
+  float min_outside_distance() const;
+
   // Recompute Camera::near_z / far_z from the current camera position and
-  // the cached scene bounds, so the model is never clipped at any zoom
-  // level. Cheap; safe to call on every input event.
+  // the cached scene bounds. Orthographic fits the slab around the whole
+  // model (near may go negative) so no zoom level can clip it; perspective
+  // adapts positive near/far to the eye-to-model distance. Cheap; safe to
+  // call on every input event.
   void  update_clip_planes();
 
   scene::Camera camera_;

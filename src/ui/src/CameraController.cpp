@@ -11,6 +11,11 @@ constexpr float kOrbitSpeed = 0.006f;   // rad/pixel
 constexpr float kPanSpeed   = 0.0025f;
 constexpr float kZoomSpeed  = 0.0025f;
 constexpr float kWheelSpeed = 0.0015f;
+
+// Safety margin on the scene's bounding sphere for the perspective
+// stay-outside rule: the eye is kept at ≥ radius × this, so the model's
+// extreme points (which touch the sphere) can never reach the near plane.
+constexpr float kOutsideMargin = 1.05f;
 }
 
 RotationPivot TargetPivotResolver::resolve(const scene::Camera& camera,
@@ -56,30 +61,89 @@ void CameraController::restore_camera(const scene::Camera& camera,
   emit changed();
 }
 
+float CameraController::min_outside_distance() const {
+  // Smallest `Camera::distance` for which the eye sits outside the scene's
+  // bounding sphere (inflated by kOutsideMargin). The eye moves along the
+  // ray  position(d) = target − forward·d  as the user zooms, and `target`
+  // is generally NOT the sphere centre (cursor-anchored zoom and panning
+  // move it), so this is a ray/sphere intersection, not a plain radius
+  // comparison. With o = target − centre and f = forward, solving
+  // |o − f·d| = r for d gives  d = o·f ± sqrt((o·f)² − |o|² + r²);  the eye
+  // is inside the sphere exactly between the two roots, so the larger root
+  // is the zoom-in limit. A negative discriminant means the eye ray misses
+  // the sphere entirely — the user is zooming past the model, which can
+  // never put the eye inside it, so no limit applies.
+  if (scene_radius_ <= 0.0f) return 0.0f;
+  const scene::vec3 o = camera_.target - scene_center_;
+  const scene::vec3 f = camera_.forward();
+  const float r    = scene_radius_ * kOutsideMargin;
+  const float of   = glm::dot(o, f);
+  const float disc = of * of - glm::dot(o, o) + r * r;
+  if (disc <= 0.0f) return 0.0f;
+  return of + std::sqrt(disc);
+}
+
 float CameraController::clamp_distance(float requested) const {
-  // Only enforce the absolute epsilon floor; CAD inspection requires the
-  // user to be able to zoom into individual features, which means the
-  // camera must be free to enter (and pass through) the model's bounding
-  // sphere. update_clip_planes() keeps the near plane sane no matter how
-  // close the user gets, and the "F" key reframes the model if they lose
-  // their bearings.
   constexpr float kAbsoluteMin = 1e-4f;
-  return std::max(requested, kAbsoluteMin);
+  if (camera_.projection_mode == scene::Projection::Orthographic) {
+    // Under parallel projection the eye position has no optical meaning —
+    // zoom is pure magnification (the ortho extents derive from `distance`),
+    // and update_clip_planes() fits the depth slab around the whole model no
+    // matter where the eye sits. So ortho zoom is unlimited: the user can
+    // magnify a single feature indefinitely and the model is never cut open.
+    return std::max(requested, kAbsoluteMin);
+  }
+  // Perspective is different: the near plane must sit at z > 0 in front of
+  // the eye, so once the eye enters the model the near plane inevitably
+  // slices it ("inside the model" cutaway). Keep the eye outside the scene's
+  // bounding sphere instead — zooming in runs up to the model and stops at
+  // its surface rather than passing through. The sphere is a conservative
+  // stand-in for the real surface until depth-based picking exists. If the
+  // eye is somehow already inside (camera restored from an older session),
+  // don't yank it outward — just refuse to go deeper.
+  const float d_min = std::min(min_outside_distance(), camera_.distance);
+  return std::max(std::max(requested, d_min), kAbsoluteMin);
+}
+
+void CameraController::set_projection(scene::Projection mode) {
+  camera_.projection_mode = mode;
+  if (mode == scene::Projection::Perspective) {
+    // Deep ortho zoom may have parked the eye inside the model — invisible
+    // and harmless under parallel projection, but perspective gives the eye
+    // position optical meaning again. Hop it back outside the bounding
+    // sphere; the apparent zoom level changes, which beats slicing the model
+    // open the moment the user presses P.
+    camera_.distance = std::max(camera_.distance, min_outside_distance());
+  }
+  update_clip_planes();
+  emit changed();
 }
 
 void CameraController::update_clip_planes() {
-  // Re-derive near/far from the actual camera-to-scene-center distance.
-  // The static near/far set once by Camera::frame_bounds becomes wrong as
-  // soon as the user zooms: the model's front face ends up closer to the
-  // camera than the original near plane and gets clipped, which looks
-  // exactly like "the camera is passing through the model."
+  // Re-derive near/far from the actual camera and scene geometry on every
+  // interaction. A static near/far set once at frame time becomes wrong as
+  // soon as the user zooms.
   if (scene_radius_ <= 0.0f) return;
+  const float r = scene_radius_;
+  if (camera_.projection_mode == scene::Projection::Orthographic) {
+    // Fit the clip slab around the entire model, wherever the eye happens to
+    // be. `near` may legitimately go negative (model behind the eye plane):
+    // GL orthographic projection allows it, and it is exactly what makes
+    // deep ortho zoom a magnification instead of a cutaway — the model can
+    // never poke out of the slab, so it is never sliced by the near plane.
+    const float d_center = glm::dot(scene_center_ - camera_.position(),
+                                    camera_.forward());
+    camera_.near_z = d_center - r * kOutsideMargin;
+    camera_.far_z  = d_center + r * kOutsideMargin;
+    return;
+  }
+  // Perspective: near must stay positive. clamp_distance() keeps the eye
+  // outside the bounding sphere, so `near_to_face` (eye to the sphere's
+  // front) stays positive too; half of it gives the model headroom while
+  // the absolute floor (a small fraction of `distance`) keeps depth
+  // precision sane at the closest allowed approach.
   const float d_to_center  = glm::length(camera_.position() - scene_center_);
-  const float r            = scene_radius_;
   const float near_to_face = std::max(d_to_center - r, 0.0f);
-  // Half the distance to the nearest model point gives the model plenty of
-  // headroom, while the absolute floor (a small fraction of `distance`)
-  // keeps depth precision sane when the user has zoomed very close.
   camera_.near_z = std::max(near_to_face * 0.5f, camera_.distance * 0.001f);
   camera_.far_z  = (d_to_center + r) * 2.0f + 1.0f;
   if (camera_.far_z <= camera_.near_z) camera_.far_z = camera_.near_z + 1.0f;

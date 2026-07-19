@@ -835,8 +835,8 @@ void MainWindow::set_surface_mode(SurfaceMode mode) {
 void MainWindow::on_toggle_perspective(bool on) {
   auto* ctrl = viewport_->camera_controller();
   if (!ctrl) return;
-  ctrl->camera().projection_mode =
-    on ? scene::Projection::Perspective : scene::Projection::Orthographic;
+  ctrl->set_projection(
+    on ? scene::Projection::Perspective : scene::Projection::Orthographic);
   viewport_->update();
 }
 
@@ -923,6 +923,16 @@ void MainWindow::run_demo(const QString& name) {
     show_views_popover(toolbar_->views_button());
   } else if (name == QLatin1String("zerochrome")) {
     act_zero_chrome_->setChecked(true);
+  } else if (name == QLatin1String("deepzoom")) {
+    // Regression driver for the zoom clip policy: wheel far past the model's
+    // surface, the way a user zooming onto a feature does. Ten steps put the
+    // eye well inside the model's bounding sphere; the ortho clip slab must
+    // keep the whole model un-sliced, so the screenshot shows magnified
+    // surface detail — not a cutaway of the model's interior.
+    if (auto* ctrl = viewport_ ? viewport_->camera_controller() : nullptr) {
+      const QPoint anchor(viewport_->width() / 2, viewport_->height() / 2);
+      for (int i = 0; i < 10; ++i) ctrl->wheel(anchor, 240);
+    }
   } else if (name == QLatin1String("getinfo")) {
     // Pop Get Info for the first leaf node with geometry, anchored near the
     // top of the sidebar (mirrors a hover-(i) click on a tree row).
