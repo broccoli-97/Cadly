@@ -79,6 +79,24 @@ if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
   )
 
+  add_executable(cadly_sidebar_test sidebar_test.cpp)
+  target_link_libraries(cadly_sidebar_test
+    PRIVATE
+      Cadly::Ui
+      Cadly::Warnings
+      Qt6::Test
+      qlementine-icons
+  )
+  target_include_directories(cadly_sidebar_test
+    PRIVATE
+      ${CMAKE_SOURCE_DIR}/src/ui/src
+  )
+  target_compile_features(cadly_sidebar_test PRIVATE cxx_std_17)
+  add_test(NAME cadly_sidebar COMMAND cadly_sidebar_test)
+  set_tests_properties(cadly_sidebar PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+  )
+
   add_executable(cadly_camera_controller_test camera_controller_test.cpp)
   target_link_libraries(cadly_camera_controller_test
     PRIVATE

@@ -1239,6 +1239,9 @@ void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
 
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;
+    // Isolate mode: the debug overlay follows the edge overlay's rule and
+    // leaves ghosted parts as a clean veil.
+    if (node.ghosted) continue;
     if (*node.mesh_index >= scene_->meshes.size()) continue;
     const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
     if (!mesh_ptr) continue;
@@ -1296,7 +1299,6 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
   const float a = mode.hidden_line
     ? 1.0f : std::clamp(mode.edge_intensity, 0.0f, 1.0f);
   const scene::vec4 ec{0.05f, 0.06f, 0.08f, a};
-  gl_.glUniform4fv(loc_color, 1, &ec.x);
 
   gl_.glEnable(GL_BLEND);
   // Alpha-preserving blend: the edge ink blends into RGB normally, but
@@ -1359,6 +1361,12 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
 
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;
+    // Ghosted (isolate) parts draw no edge ink in the surface modes: their
+    // faces are a translucent veil, and full-strength edges on top would
+    // read as more present than the focused part. Wireframe has no surfaces
+    // to carry the veil, so there the ghosting moves into the line alpha
+    // below instead of skipping the node.
+    if (node.ghosted && !mode.wireframe) continue;
     if (*node.mesh_index >= scene_->meshes.size()) continue;
     const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
     if (!mesh_ptr) continue;
@@ -1393,6 +1401,19 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
       vao   = g.strip_vao;
       count = g.strip_index_count;
     }
+
+    // Wireframe is lines-only, so selection/isolate cues live in the ink
+    // itself: the selected part's edges take the accent colour, ghosted
+    // parts fade to a whisper. The surface modes keep uniform ink — there
+    // the surface tint/veil already carries both cues.
+    scene::vec4 line_color = ec;
+    if (mode.wireframe) {
+      if (node.selected) {
+        line_color = scene::vec4(mode.selection_color, ec.a);
+      }
+      if (node.ghosted) line_color.a *= 0.18f;
+    }
+    gl_.glUniform4fv(loc_color, 1, &line_color.x);
 
     gl_.glUniformMatrix4fv(loc_model, 1, GL_FALSE,
                            glm::value_ptr(node.world_matrix));
@@ -1607,26 +1628,35 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   const GLint loc_refl      = prog_pbr_.uniform(gl_, "u_reflectance");
   const GLint loc_emi_col   = prog_pbr_.uniform(gl_, "u_emissive_color");
   const GLint loc_emi       = prog_pbr_.uniform(gl_, "u_emissive");
+  const GLint loc_highlight = prog_pbr_.uniform(gl_, "u_highlight");
+  const GLint loc_ghost     = prog_pbr_.uniform(gl_, "u_ghost");
   gl_.glUniform1i(prog_pbr_.uniform(gl_, "u_hidden_line"),
                   mode.hidden_line ? 1 : 0);
   gl_.glUniform3fv(prog_pbr_.uniform(gl_, "u_hidden_line_color"), 1,
                    &mode.hidden_line_color.x);
+  gl_.glUniform3fv(prog_pbr_.uniform(gl_, "u_highlight_color"), 1,
+                   &mode.selection_color.x);
+  gl_.glUniform1f(loc_ghost, 0.0f);
 
-  for (const auto& node : scene_->nodes) {
-    if (!node.visible || !node.mesh_index) continue;
-    if (*node.mesh_index >= scene_->meshes.size()) continue;
+  // Shared per-node surface submission: transforms, per-submesh material,
+  // cull mode, selection highlight. The opaque pass and the isolate ghost
+  // pass below differ only in blend/depth state and the u_ghost value, so
+  // the body is one lambda.
+  auto draw_node_surfaces = [&](const scene::Node& node) {
+    if (!node.mesh_index || *node.mesh_index >= scene_->meshes.size()) return;
     const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
-    if (!mesh_ptr) continue;
+    if (!mesh_ptr) return;
 
     ensure_mesh_upload(*mesh_ptr, mesh_ptr);
     auto mit = meshes_.find(mesh_ptr.get());
-    if (mit == meshes_.end()) continue;
+    if (mit == meshes_.end()) return;
     const auto& g = mit->second;
 
     const scene::mat4 model = node.world_matrix;
     const scene::mat3 normal_matrix = glm::transpose(glm::inverse(scene::mat3(model)));
     gl_.glUniformMatrix4fv(loc_model,    1, GL_FALSE, glm::value_ptr(model));
     gl_.glUniformMatrix3fv(loc_normal_m, 1, GL_FALSE, glm::value_ptr(normal_matrix));
+    gl_.glUniform1f(loc_highlight, node.selected ? 1.0f : 0.0f);
 
     gl_.glBindVertexArray(g.vao);
     for (const auto& sub : mesh_ptr->submeshes) {
@@ -1661,6 +1691,13 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
                            static_cast<std::uintptr_t>(sub.index_offset) * sizeof(std::uint32_t)));
     }
     gl_.glBindVertexArray(0);
+  };
+
+  bool any_ghosted = false;
+  for (const auto& node : scene_->nodes) {
+    if (!node.visible || !node.mesh_index) continue;
+    if (node.ghosted) { any_ghosted = true; continue; }
+    draw_node_surfaces(node);
   }
 
   if (line_overlay) {
@@ -1669,6 +1706,30 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
 
   draw_triangle_mesh(mode);
   draw_edges(mode);
+
+  // Isolate ghost pass: everything outside the focus as a translucent veil.
+  // Runs AFTER the edge overlays so a ghost sitting in front of the focused
+  // part correctly veils its edge ink too. Depth test stays on (ghosts
+  // behind the focused part are occluded by its real depth) but depth write
+  // is off — the veil must not punch holes for later ghosts or the pivot
+  // pass. No sorting between ghosts: at veil opacity the order error is
+  // invisible, and the alpha-preserving blend keeps the compositor safe.
+  if (any_ghosted) {
+    gl_.glUseProgram(prog_pbr_.id());
+    gl_.glEnable(GL_BLEND);
+    gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                            GL_ZERO,      GL_ONE);
+    gl_.glDepthMask(GL_FALSE);
+    gl_.glUniform1f(loc_ghost, std::clamp(mode.ghost_opacity, 0.02f, 1.0f));
+    for (const auto& node : scene_->nodes) {
+      if (!node.visible || !node.ghosted) continue;
+      draw_node_surfaces(node);
+    }
+    gl_.glUniform1f(loc_ghost, 0.0f);
+    gl_.glDepthMask(GL_TRUE);
+    gl_.glDisable(GL_BLEND);
+  }
+
   draw_pivot(mode);
   draw_axes_triad(mode);
   draw_scale_bar(mode);

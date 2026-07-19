@@ -30,6 +30,7 @@ const ThemeTokens& ThemeTokens::dark_tokens() {
     d.warn           = QColor(0xFB, 0xC0, 0x64);
     d.error          = QColor(0xE9, 0x6B, 0x72);
     d.info           = QColor(0x1B, 0xA8, 0xD5);
+    d.viewport_highlight = QColor(0xFF, 0x7A, 0x26);
     d.viewport_top    = QColor(0xAC, 0xB0, 0xB7);   // unchanged from Theme.cpp era
     d.viewport_bottom = QColor(0x80, 0x83, 0x8A);
     return d;
@@ -62,6 +63,9 @@ const ThemeTokens& ThemeTokens::light_tokens() {
     l.warn           = QColor(0xB0, 0x7D, 0x2A);
     l.error          = QColor(0xC8, 0x4F, 0x56);
     l.info           = QColor(0x15, 0x7F, 0xA0);
+    // A notch darker than the dark variant so it keeps its punch against the
+    // lighter viewport gradient.
+    l.viewport_highlight = QColor(0xE8, 0x62, 0x10);
     l.viewport_top    = QColor(0xDA, 0xDD, 0xE2);
     l.viewport_bottom = QColor(0xAB, 0xAF, 0xB7);
     return l;

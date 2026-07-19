@@ -149,6 +149,15 @@ switches. Panels are fixed-position and toggle visibility only; the old
   (not yet implemented, passed through). Wheel zoom anchors on the point under
   the cursor. Orbit uses a quaternion camera around a pluggable
   `RotationPivotResolver` (default: camera target).
+- Sidebar tree: click selects and **highlights** the part in the viewport
+  (`Node::selected` → saturated signal-orange tint,
+  `ThemeTokens::viewport_highlight` — deliberately not the accent, which
+  vanished against the grey parts); double-click **isolates** it — everything
+  else ghosts translucent (`Node::ghosted`) and grays in the tree, with a
+  floating Back banner over the viewport as the exit (Esc works too; isolate
+  unwinds before zero-chrome). Isolate persists per tab via
+  `DocumentState::isolate_node`; the flags live in the scene's nodes but the
+  sidebar wipes them on every scene handover and the shell re-applies.
 - Shortcuts: `F` fit, `W` wireframe, `H` hidden line, `E` edges, `T` triangle mesh, `P`
   perspective toggle (ortho is default for CAD). Standard views `1`-`7`
   (Front/Back/Right/Left/Top/Bottom/Iso, Blender-style numbering). `⌃.` toggles
@@ -171,7 +180,7 @@ switches. Panels are fixed-position and toggle visibility only; the old
   scrollbars. Do not install a second app-wide stylesheet from the UI module.
   Reuse the existing Fusion style instance on theme changes: replacing it can
   recreate `QOpenGLWidget`'s backing surface and invalidate renderer resources.
-- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|zerochrome]`
+- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|zerochrome|highlight|isolate]`
   drives a UI state and grabs it headlessly (used to verify the shell without an
   input-injection tool).
 

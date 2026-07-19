@@ -26,6 +26,7 @@ namespace cadly::ui {
 
 class DiagnosticsStrip;
 class InspectorWidget;
+class IsolateBanner;
 class SidebarWidget;
 class ToolbarButton;
 class ToolbarWidget;
@@ -75,6 +76,7 @@ protected:
 private slots:
   void on_toggle_perspective(bool on);
   void on_zero_chrome(bool on);
+  void on_isolate_changed(std::uint32_t isolate_node);
   void on_about();
 
 private:
@@ -92,6 +94,8 @@ private:
   void update_status_for_scene();
   void rebuild_recents_menu();
   void show_views_popover(QWidget* anchor);
+  // Keep the isolate banner centred over the viewport's top edge.
+  void position_isolate_banner();
 
   DocumentState* active_document() const;
   DocumentState* find_document(const QString& path) const;
@@ -121,6 +125,9 @@ private:
   QSplitter*        split_v_{nullptr};
   QWidget*          hud_{nullptr};
   ToolbarButton*    hud_views_{nullptr};
+  // Floating capsule over the viewport while isolate mode is active; carries
+  // the only always-visible way back out (the Back button).
+  IsolateBanner*    isolate_banner_{nullptr};
 
   QLabel* status_path_{nullptr};
   QLabel* status_stats_{nullptr};
@@ -139,6 +146,9 @@ private:
   QAction* act_edges_{nullptr};
   QAction* act_triangle_mesh_{nullptr};
   QAction* act_perspective_{nullptr};
+  // Hidden + disabled outside isolate mode; the banner's Back button and the
+  // View menu entry both drive it.
+  QAction* act_exit_isolate_{nullptr};
   QAction* act_toggle_sidebar_{nullptr};
   QAction* act_toggle_inspector_{nullptr};
   QAction* act_toggle_strip_{nullptr};

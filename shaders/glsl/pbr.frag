@@ -33,6 +33,15 @@ uniform float u_emissive;
 uniform int   u_hidden_line;
 uniform vec3  u_hidden_line_color;
 
+// Selection highlight / isolate ghosting (see DisplayMode + Node docs).
+// u_highlight is 0 or 1 per node; u_highlight_color arrives in sRGB and is
+// applied AFTER tonemap+gamma so the tint matches the UI accent exactly.
+// u_ghost is 0 in the opaque pass; the translucent isolate pass sets it to
+// the veil opacity and the fragment's alpha comes from it.
+uniform float u_highlight;
+uniform vec3  u_highlight_color;
+uniform float u_ghost;
+
 uniform samplerCube u_irradiance_cube;  // diffuse IBL
 uniform samplerCube u_prefilter_cube;   // specular IBL (mip chain by roughness)
 uniform sampler2D   u_brdf_lut;         // split-sum BRDF LUT
@@ -100,7 +109,19 @@ void main() {
   if (u_hidden_line != 0) {
     vec3 paper = pow(clamp(u_hidden_line_color, 0.0, 1.0),
                      vec3(1.0 / 2.2));
-    frag_color = vec4(paper, 1.0);
+    // Highlight on paper: a flat accent wash — any lighting trick would
+    // break the technical-drawing field.
+    paper = mix(paper, u_highlight_color, 0.30 * u_highlight);
+    float alpha = 1.0;
+    if (u_ghost > 0.0) {
+      // The hidden-line paper is the SAME colour as the background, so a
+      // plain low-alpha veil would vanish entirely. Pull the veil toward a
+      // mid grey and boost its alpha so ghosted parts stay readable as
+      // silhouettes behind the focused part.
+      paper = mix(paper, vec3(0.42), 0.35);
+      alpha = clamp(u_ghost * 2.4, 0.0, 1.0);
+    }
+    frag_color = vec4(paper, alpha);
     return;
   }
 
@@ -204,5 +225,25 @@ void main() {
   color = clamp(color, 0.0, 1.0);
   color = pow(color, vec3(1.0 / 2.2));
 
-  frag_color = vec4(color, u_base_color.a);
+  // Selection highlight, post-gamma so the wash lands on the exact UI
+  // signal colour. Rim-weighted: a firm base tint makes even a face-on,
+  // featureless part unmistakably "the selected one", and the silhouette
+  // picks up a stronger glow — enough to spot a small part inside a dense
+  // assembly at a glance.
+  if (u_highlight > 0.0) {
+    float rim = pow(1.0 - NoV, 2.0);
+    color = mix(color, u_highlight_color,
+                u_highlight * clamp(0.30 + 0.45 * rim, 0.0, 0.8));
+  }
+
+  float alpha = u_base_color.a;
+  if (u_ghost > 0.0) {
+    // Isolate veil: drain most of the saturation so the focused part owns
+    // the colour in the frame, then hand alpha to the blend pass.
+    float grey = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(color, vec3(grey), 0.65);
+    alpha = u_ghost;
+  }
+
+  frag_color = vec4(color, alpha);
 }

@@ -94,6 +94,74 @@ struct DocumentState {
   bool failed{false};
   bool camera_initialized{false};
   bool close_requested{false};
+  // Isolate focus for this tab (kInvalid = full assembly). The ghost flags
+  // themselves live in the scene's nodes, but the sidebar resets them on
+  // every scene handover, so the shell re-applies this on tab activation.
+  std::uint32_t isolate_node{scene::Node::kInvalid};
+};
+
+// Floating capsule pinned over the viewport's top-centre while isolate mode
+// is active: part glyph + "Isolating <name>" + the Back button. This is the
+// mode's one guaranteed exit affordance (menus and panels can all be hidden,
+// e.g. in zero-chrome), so it lives on the viewport itself, painted with the
+// same capsule recipe as the HUD cluster so the two read as one family.
+class IsolateBanner final : public QWidget {
+public:
+  IsolateBanner(QAction* back_action, QWidget* parent) : QWidget(parent) {
+    auto* lay = new QHBoxLayout(this);
+    lay->setContentsMargins(11, 4, 5, 4);
+    lay->setSpacing(7);
+    icon_ = new QLabel(this);
+    icon_->setFixedSize(15, 15);
+    lay->addWidget(icon_);
+    label_ = new QLabel(this);
+    label_->setFont(ui_font(12, QFont::DemiBold));
+    lay->addWidget(label_);
+    auto* back = new ToolbarButton(this);
+    back->setDefaultAction(back_action);
+    back->set_show_text(true);
+    back->set_emphasis(ToolbarButton::Emphasis::Accent);
+    lay->addWidget(back);
+    connect(&ThemeManager::instance(), &ThemeManager::changed,
+            this, [this]() { refresh_theme(); });
+    refresh_theme();
+  }
+
+  void set_part_name(const QString& name) {
+    const QFontMetrics fm(label_->font());
+    label_->setText(tr("Isolating %1").arg(
+      fm.elidedText(name, Qt::ElideMiddle, 240)));
+    adjustSize();
+  }
+
+protected:
+  void paintEvent(QPaintEvent*) override {
+    const auto& t = tokens();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QColor bg = t.toolbar_bg;
+    bg.setAlpha(225);
+    p.setPen(QPen(t.hairline_soft, 1.0));
+    p.setBrush(bg);
+    p.drawRoundedRect(QRectF(0.5, 0.5, width() - 1.0, height() - 1.0), 8, 8);
+  }
+
+private:
+  void refresh_theme() {
+    const auto& t = tokens();
+    // The accent-tinted part glyph is the banner's link to the sidebar row
+    // glyphs (accent when selected) and to the highlight colour in the
+    // viewport.
+    icon_->setPixmap(themed_icon(QStringLiteral("shape/cube"),
+                                 t.accent, t.accent).pixmap(15, 15));
+    QPalette pal = label_->palette();
+    pal.setColor(QPalette::WindowText, t.text1);
+    label_->setPalette(pal);
+    update();
+  }
+
+  QLabel* icon_{nullptr};
+  QLabel* label_{nullptr};
 };
 
 namespace {
@@ -317,10 +385,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   build_menus();
   build_status_bar();
 
-  // Zero-chrome escape hatch: Esc restores the panels (the action's own ^.
-  // shortcut also works, but Esc is the instinctive way out).
+  // Esc is the instinctive way out of a modal-ish view state. Isolate is
+  // the more nested state, so it unwinds first; a second Esc then restores
+  // the panels (the actions' own shortcuts also work).
   auto* esc = new QShortcut(QKeySequence(Qt::Key_Escape), this);
   connect(esc, &QShortcut::activated, this, [this]() {
+    if (sidebar_ && sidebar_->isolate_node() != scene::Node::kInvalid) {
+      sidebar_->set_isolate(scene::Node::kInvalid);
+      return;
+    }
     if (act_zero_chrome_->isChecked()) act_zero_chrome_->setChecked(false);
   });
 
@@ -364,6 +437,18 @@ void MainWindow::build_actions() {
   act_fit_->setShortcut(Qt::Key_F);
   connect(act_fit_, &QAction::triggered,
           this, [this]() { viewport_->fit_view(); });
+
+  // Only ever reachable while isolate mode is on (sidebar double-click);
+  // hidden otherwise so the View menu and the banner don't advertise a
+  // no-op. The banner's Back button shares this action.
+  act_exit_isolate_ = new QAction(tr("Exit &Isolate"), this);
+  act_exit_isolate_->setIconText(tr("Back"));
+  act_exit_isolate_->setEnabled(false);
+  act_exit_isolate_->setVisible(false);
+  act_exit_isolate_->setToolTip(tr("Show the full assembly again (Esc)"));
+  connect(act_exit_isolate_, &QAction::triggered, this, [this]() {
+    if (sidebar_) sidebar_->set_isolate(scene::Node::kInvalid);
+  });
 
   act_wireframe_ = new QAction(tr("&Wireframe"), this);
   act_wireframe_->setCheckable(true);
@@ -578,6 +663,10 @@ void MainWindow::build_shell() {
   hud->adjustSize();
   hud_ = hud;
 
+  // Isolate banner: hidden until the sidebar reports an isolate focus.
+  isolate_banner_ = new IsolateBanner(act_exit_isolate_, viewport_);
+  isolate_banner_->hide();
+
   // --- wiring ------------------------------------------------------------
   connect(act_toggle_sidebar_, &QAction::toggled,
           sidebar_, &QWidget::setVisible);
@@ -601,6 +690,10 @@ void MainWindow::build_shell() {
           inspector_, &InspectorWidget::show_node);
   connect(sidebar_, &SidebarWidget::visibility_changed,
           viewport_, QOverload<>::of(&QWidget::update));
+  connect(sidebar_, &SidebarWidget::highlight_changed,
+          viewport_, QOverload<>::of(&QWidget::update));
+  connect(sidebar_, &SidebarWidget::isolate_changed,
+          this, &MainWindow::on_isolate_changed);
 
   connect(inspector_, &InspectorWidget::display_changed, this, [this]() {
     update_display_mode();
@@ -640,6 +733,7 @@ void MainWindow::build_menus() {
 
   auto* view_menu = menuBar()->addMenu(tr("&View"));
   view_menu->addAction(act_fit_);
+  view_menu->addAction(act_exit_isolate_);
   view_menu->addSeparator();
   view_menu->addAction(act_wireframe_);
   view_menu->addAction(act_hidden_line_);
@@ -692,8 +786,9 @@ void MainWindow::build_status_bar() {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
-  if (watched == viewport_ && event->type() == QEvent::Resize && hud_) {
-    hud_->move(viewport_->width() - hud_->width() - 12, 12);
+  if (watched == viewport_ && event->type() == QEvent::Resize) {
+    if (hud_) hud_->move(viewport_->width() - hud_->width() - 12, 12);
+    position_isolate_banner();
   }
   return QMainWindow::eventFilter(watched, event);
 }
@@ -707,6 +802,8 @@ void MainWindow::refresh_theme() {
     themed_icon(QStringLiteral("navigation/settings")));
   act_close_tab_->setIcon(themed_icon(QStringLiteral("action/close-small")));
   act_fit_->setIcon(themed_icon(QStringLiteral("action/zoom-fit")));
+  act_exit_isolate_->setIcon(
+    themed_icon(QStringLiteral("navigation/arrow-left")));
   act_wireframe_->setIcon(themed_icon(QStringLiteral("shape/cube")));
   act_hidden_line_->setIcon(themed_icon(QStringLiteral("shape/borders")));
   act_perspective_->setIcon(
@@ -791,6 +888,9 @@ void MainWindow::update_display_mode() {
   mode.background_top    = to_vec3(t.viewport_top);
   mode.background_bottom = to_vec3(t.viewport_bottom);
   mode.hidden_line_color = mode.background_top;
+  // Highlight tint: the dedicated signal orange, not the accent — see the
+  // ThemeTokens::viewport_highlight comment. Re-fed on every theme change.
+  mode.selection_color   = to_vec3(t.viewport_highlight);
   if (mode.hidden_line) mode.background_bottom = mode.background_top;
   viewport_->set_display_mode(mode);
   update_status_for_scene();
@@ -880,6 +980,38 @@ void MainWindow::on_zero_chrome(bool on) {
        : tr("Hide all panels; press Esc to restore them"));
 }
 
+void MainWindow::position_isolate_banner() {
+  if (!isolate_banner_ || !viewport_) return;
+  isolate_banner_->move(
+    std::max(12, (viewport_->width() - isolate_banner_->width()) / 2), 12);
+}
+
+void MainWindow::on_isolate_changed(std::uint32_t isolate_node) {
+  const bool active = isolate_node != scene::Node::kInvalid;
+  // Remember per document so a tab switch restores the mode (the sidebar
+  // resets scene flags on every handover; activate_document re-applies).
+  if (auto* document = active_document()) {
+    document->isolate_node = isolate_node;
+  }
+  act_exit_isolate_->setEnabled(active);
+  act_exit_isolate_->setVisible(active);
+  if (active && isolate_banner_) {
+    QString name;
+    if (const auto* document = active_document();
+        document && document->scene &&
+        isolate_node < document->scene->nodes.size()) {
+      name = QString::fromStdString(document->scene->nodes[isolate_node].name);
+    }
+    isolate_banner_->set_part_name(name.isEmpty() ? tr("(unnamed)") : name);
+    position_isolate_banner();
+    isolate_banner_->show();
+    isolate_banner_->raise();
+  } else if (isolate_banner_) {
+    isolate_banner_->hide();
+  }
+  viewport_->update();
+}
+
 void MainWindow::show_views_popover(QWidget* anchor) {
   QList<QAction*> actions = view_actions_;
   actions.append(act_fit_);
@@ -932,6 +1064,43 @@ void MainWindow::run_demo(const QString& name) {
     if (auto* ctrl = viewport_ ? viewport_->camera_controller() : nullptr) {
       const QPoint anchor(viewport_->width() / 2, viewport_->height() / 2);
       for (int i = 0; i < 10; ++i) ctrl->wheel(anchor, 240);
+    }
+  } else if (name == QLatin1String("highlight")) {
+    // Select the first geometry-bearing node the way a tree click would, so
+    // the screenshot shows the accent highlight over the shaded part.
+    if (const auto* document = active_document();
+        document && document->scene) {
+      const auto& nodes = document->scene->nodes;
+      for (std::uint32_t i = 0; i < nodes.size(); ++i) {
+        if (nodes[i].mesh_index) {
+          sidebar_->select_node(i);
+          break;
+        }
+      }
+    }
+  } else if (name == QLatin1String("isolate") ||
+             name == QLatin1String("isolate-wireframe") ||
+             name == QLatin1String("isolate-hiddenline")) {
+    // Isolate a mid-assembly part (the first is often the base body, which
+    // would leave nothing meaningful to ghost) — with surface-mode variants
+    // to exercise the ghost handling in every draw path.
+    if (name.endsWith(QLatin1String("wireframe"))) {
+      set_surface_mode(SurfaceMode::Wireframe);
+    } else if (name.endsWith(QLatin1String("hiddenline"))) {
+      set_surface_mode(SurfaceMode::HiddenLine);
+    }
+    if (const auto* document = active_document();
+        document && document->scene) {
+      const auto& nodes = document->scene->nodes;
+      std::vector<std::uint32_t> mesh_nodes;
+      for (std::uint32_t i = 0; i < nodes.size(); ++i) {
+        if (nodes[i].mesh_index) mesh_nodes.push_back(i);
+      }
+      if (!mesh_nodes.empty()) {
+        const auto target = mesh_nodes[mesh_nodes.size() / 2];
+        sidebar_->select_node(target);
+        sidebar_->set_isolate(target);
+      }
     }
   } else if (name == QLatin1String("getinfo")) {
     // Pop Get Info for the first leaf node with geometry, anchored near the
@@ -1039,10 +1208,16 @@ void MainWindow::activate_document(int index) {
   }
 
   if (document->scene) {
+    // Read before the sidebar handover: set_scene → clear() reports
+    // isolate-off, and that report writes kInvalid into this very field.
+    const std::uint32_t isolate = document->isolate_node;
     viewport_->set_scene(document->scene, !document->camera_initialized);
     document->camera_initialized = true;
     sidebar_->set_scene(document->scene);
     inspector_->set_scene(document->scene);
+    // Re-apply this tab's isolate focus (no-op when kInvalid); rebuilds the
+    // ghost flags the handover just wiped and re-shows the banner.
+    sidebar_->set_isolate(isolate);
   } else {
     viewport_->set_scene(nullptr);
     sidebar_->clear();
@@ -1327,6 +1502,9 @@ void MainWindow::finish_import(DocumentState* document,
   if (had_scene) document->scene->camera = previous_camera;
   document->failed = false;
   document->camera_initialized = had_scene;
+  // The fresh scene has fresh node indices; a remembered isolate focus
+  // would point at an arbitrary part of the new hierarchy.
+  document->isolate_node = scene::Node::kInvalid;
   update_document_tab(document);
   if (active_document() == document) {
     activate_document(document_index(document));

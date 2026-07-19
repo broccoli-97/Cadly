@@ -44,6 +44,19 @@ struct DisplayMode {
   bool        show_rotation_pivot{false};
   scene::vec3 rotation_pivot     {0.0f};
 
+  // Selection highlight + isolate ghosting (driven by the sidebar tree).
+  // `selection_color` arrives in sRGB — the PBR shader applies the tint
+  // after tonemapping/gamma, so no linearisation on this side. Nodes with
+  // Node::selected get a rim-weighted wash of it; in wireframe mode their
+  // edges draw in it outright. Nodes with Node::ghosted (isolate mode)
+  // render as a translucent veil at `ghost_opacity` — full-detail geometry,
+  // but faded so the focused part carries the frame. The default matches
+  // the dark theme's viewport_highlight token: a saturated signal orange,
+  // chosen over the accent blue because nothing else in a typical CAD scene
+  // is orange (the UI overwrites per theme).
+  scene::vec3 selection_color{1.0f, 0.478f, 0.149f};
+  float       ghost_opacity  {0.12f};
+
   // Anti-aliasing. Off (0 or 1) renders directly to the host's default
   // framebuffer; any other value asks the renderer to allocate an offscreen
   // multisample colour+depth target with that many samples, draw the whole

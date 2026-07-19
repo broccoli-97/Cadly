@@ -5,6 +5,8 @@
 #include "PropertiesPanel.h"
 #include "cadly/ui/ThemeTokens.h"
 
+#include <QGuiApplication>
+#include <QCursor>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -25,6 +27,7 @@ namespace {
 constexpr int kRoleNodeIndex = Qt::UserRole + 1;
 constexpr int kRoleTriCount  = Qt::UserRole + 2;
 constexpr int kRoleVisible   = Qt::UserRole + 3;
+constexpr int kRoleGhosted   = Qt::UserRole + 4;
 
 constexpr int kRowHeight   = 28;
 constexpr int kGlyphSize   = 16;   // eye / info hit targets
@@ -33,8 +36,10 @@ constexpr int kGlyphPad    = 4;
 
 // Paints one source-list row: selection pill, name, right-aligned triangle
 // count, and — on hover or when the node is hidden — the eye and ⓘ glyphs.
-// Click handling for the glyphs lives in editorEvent so the tree view's
-// selection behaviour stays untouched everywhere else in the row.
+// Rows outside the current isolate focus paint grayed (kRoleGhosted), the
+// tree-side twin of the viewport's ghost veil. Click handling for the glyphs
+// lives in editorEvent so the tree view's selection behaviour stays
+// untouched everywhere else in the row.
 class SidebarDelegate final : public QStyledItemDelegate {
 public:
   explicit SidebarDelegate(SidebarWidget* owner, QTreeView* view)
@@ -43,6 +48,19 @@ public:
   QSize sizeHint(const QStyleOptionViewItem&,
                  const QModelIndex&) const override {
     return {120, kRowHeight};
+  }
+
+  // Row-glyph hit boxes, shared with SidebarWidget's double-click handler so
+  // a rapid eye/ⓘ click never reads as an isolate request.
+  static QRect eye_rect(const QRect& row) {
+    return {row.right() - 2 * (kGlyphSize + kGlyphPad) - 4,
+            row.top() + (row.height() - kGlyphSize) / 2,
+            kGlyphSize, kGlyphSize};
+  }
+  static QRect info_rect(const QRect& row) {
+    return {row.right() - (kGlyphSize + kGlyphPad) - 2,
+            row.top() + (row.height() - kGlyphSize) / 2,
+            kGlyphSize, kGlyphSize};
   }
 
   void paint(QPainter* p, const QStyleOptionViewItem& opt,
@@ -54,6 +72,7 @@ public:
     const bool selected = opt.state.testFlag(QStyle::State_Selected);
     const bool hovered  = opt.state.testFlag(QStyle::State_MouseOver);
     const bool visible  = index.data(kRoleVisible).toBool();
+    const bool ghosted  = index.data(kRoleGhosted).toBool();
 
     if (selected) {
       p->setPen(Qt::NoPen);
@@ -69,10 +88,13 @@ public:
     // glyphs on hover so the row never jumps in height, only in detail.
     int right = opt.rect.right() - 6;
 
+    QColor faded = t.text3;
+    faded.setAlphaF(faded.alphaF() * 0.55);
+
     const QString count = index.data(kRoleTriCount).toString();
     if (!count.isEmpty() && !hovered) {
       p->setFont(mono_font(11));
-      p->setPen(t.text3);
+      p->setPen(ghosted ? faded : t.text3);
       p->drawText(QRect(opt.rect.left(), opt.rect.top(),
                         right - opt.rect.left(), opt.rect.height()),
                   Qt::AlignRight | Qt::AlignVCenter, count);
@@ -100,13 +122,16 @@ public:
     const QRect part_icon(opt.rect.left() + 3,
                           opt.rect.top() + (opt.rect.height() - 14) / 2,
                           14, 14);
-    const QColor part_color = selected ? t.accent : t.text3;
+    const QColor part_color = selected ? t.accent
+                            : ghosted  ? faded
+                                       : t.text3;
     draw_glyph_icon(p, part_icon, QStringLiteral("shape/cube"), part_color);
 
-    // Name, elided to whatever space is left.
+    // Name, elided to whatever space is left. Hidden and ghosted rows both
+    // drop to the tertiary tone; the eye glyph disambiguates which is which.
     const QString name = index.data(Qt::DisplayRole).toString();
     p->setFont(ui_font(12, selected ? QFont::DemiBold : QFont::Normal));
-    p->setPen(visible ? t.text1 : t.text3);
+    p->setPen(visible && !ghosted ? t.text1 : t.text3);
     const QFontMetrics fm(p->font());
     const QRect name_rect(part_icon.right() + 5, opt.rect.top(),
                           right - part_icon.right() - 9, opt.rect.height());
@@ -118,7 +143,12 @@ public:
   bool editorEvent(QEvent* event, QAbstractItemModel*,
                    const QStyleOptionViewItem& opt,
                    const QModelIndex& index) override {
-    if (event->type() != QEvent::MouseButtonPress) return false;
+    // A double-click's second press arrives as MouseButtonDblClick, not
+    // MouseButtonPress. Handle both so rapid eye clicks each count as a
+    // toggle, and a rapid ⓘ click doesn't stack a second popover.
+    const bool press    = event->type() == QEvent::MouseButtonPress;
+    const bool dblclick = event->type() == QEvent::MouseButtonDblClick;
+    if (!press && !dblclick) return false;
     auto* me = static_cast<QMouseEvent*>(event);
     if (me->button() != Qt::LeftButton) return false;
 
@@ -132,25 +162,17 @@ public:
       return true;   // consumed: don't let the click change selection
     }
     if (info_rect(opt.rect).contains(me->pos())) {
-      const QRect global(view_->viewport()->mapToGlobal(opt.rect.topLeft()),
-                         opt.rect.size());
-      owner_->show_get_info(node_index, global);
+      if (press) {
+        const QRect global(view_->viewport()->mapToGlobal(opt.rect.topLeft()),
+                           opt.rect.size());
+        owner_->show_get_info(node_index, global);
+      }
       return true;
     }
     return false;
   }
 
 private:
-  static QRect eye_rect(const QRect& row) {
-    return {row.right() - 2 * (kGlyphSize + kGlyphPad) - 4,
-            row.top() + (row.height() - kGlyphSize) / 2,
-            kGlyphSize, kGlyphSize};
-  }
-  static QRect info_rect(const QRect& row) {
-    return {row.right() - (kGlyphSize + kGlyphPad) - 2,
-            row.top() + (row.height() - kGlyphSize) / 2,
-            kGlyphSize, kGlyphSize};
-  }
   static void draw_glyph_icon(QPainter* p, const QRect& r, const QString& name,
                               const QColor& color = tokens().text2) {
     themed_icon(name, color, color).paint(p, r);
@@ -195,6 +217,9 @@ SidebarWidget::SidebarWidget(QWidget* parent) : QWidget(parent) {
   tree_->setMouseTracking(true);   // hover state for the delegate glyphs
   tree_->setFrameShape(QFrame::NoFrame);
   tree_->setIndentation(14);
+  // Double-click is the isolate gesture; expand/collapse stays on the
+  // branch indicator so entering isolate never also folds an assembly.
+  tree_->setExpandsOnDoubleClick(false);
   tree_->viewport()->setAutoFillBackground(false);
   tree_->setItemDelegate(new SidebarDelegate(this, tree_));
   outer->addWidget(tree_, 1);
@@ -207,9 +232,35 @@ SidebarWidget::SidebarWidget(QWidget* parent) : QWidget(parent) {
 
   connect(tree_->selectionModel(), &QItemSelectionModel::currentChanged, this,
           [this](const QModelIndex& current, const QModelIndex&) {
-            if (!current.isValid()) return;
+            if (!current.isValid()) {
+              apply_selection(scene::Node::kInvalid);
+              return;
+            }
             const auto v = current.data(kRoleNodeIndex);
-            if (v.isValid()) emit node_selected(v.toUInt());
+            if (!v.isValid()) return;
+            apply_selection(v.toUInt());
+            emit node_selected(v.toUInt());
+          });
+
+  // Double-click isolates the row's subtree (again on the isolate root to
+  // exit). doubleClicked fires before the delegate can consume the event,
+  // so filter out double-clicks that land on the eye/ⓘ glyphs — those are
+  // rapid toggles, not an isolate request.
+  connect(tree_, &QTreeView::doubleClicked, this,
+          [this](const QModelIndex& index) {
+            if (!index.isValid()) return;
+            if (!(QGuiApplication::mouseButtons() & Qt::LeftButton)) return;
+            const auto v = index.data(kRoleNodeIndex);
+            if (!v.isValid()) return;
+            const QPoint pos =
+              tree_->viewport()->mapFromGlobal(QCursor::pos());
+            const QRect row = tree_->visualRect(index);
+            if (SidebarDelegate::eye_rect(row).contains(pos) ||
+                SidebarDelegate::info_rect(row).contains(pos)) {
+              return;
+            }
+            const auto idx = v.toUInt();
+            set_isolate(idx == isolate_node_ ? scene::Node::kInvalid : idx);
           });
 
   connect(&ThemeManager::instance(), &ThemeManager::changed,
@@ -226,12 +277,27 @@ void SidebarWidget::paintEvent(QPaintEvent*) {
 void SidebarWidget::clear() {
   model_->removeRows(0, model_->rowCount());
   scene_.reset();
-  solo_node_ = scene::Node::kInvalid;
+  solo_node_     = scene::Node::kInvalid;
+  selected_node_ = scene::Node::kInvalid;
+  if (isolate_node_ != scene::Node::kInvalid) {
+    isolate_node_ = scene::Node::kInvalid;
+    emit isolate_changed(scene::Node::kInvalid);
+  }
 }
 
 void SidebarWidget::set_scene(std::shared_ptr<scene::Scene> scene) {
   clear();
   scene_ = std::move(scene);
+  if (scene_) {
+    // The scene may carry viewer flags from the last time this document was
+    // active; the tree selection and isolate state start fresh here, so the
+    // flags must too. The shell re-applies a persisted isolate (per
+    // document) via set_isolate right after handing over the scene.
+    for (auto& n : scene_->nodes) {
+      n.selected = false;
+      n.ghosted  = false;
+    }
+  }
   rebuild();
 }
 
@@ -245,6 +311,7 @@ void SidebarWidget::rebuild() {
       node.name.empty() ? std::string("(unnamed)") : node.name));
     item->setData(idx, kRoleNodeIndex);
     item->setData(node.visible, kRoleVisible);
+    item->setData(node.ghosted, kRoleGhosted);
     item->setEditable(false);
     std::size_t tris = 0;
     if (node.mesh_index && *node.mesh_index < scene_->meshes.size() &&
@@ -284,16 +351,94 @@ void SidebarWidget::set_subtree_visible(std::uint32_t node_index, bool visible) 
   }
 }
 
-void SidebarWidget::sync_visible_flags(QStandardItem* item) {
+void SidebarWidget::set_subtree_selected(std::uint32_t node_index, bool selected) {
+  if (!scene_ || node_index >= scene_->nodes.size()) return;
+  scene_->nodes[node_index].selected = selected;
+  for (auto c : scene_->nodes[node_index].children) {
+    set_subtree_selected(c, selected);
+  }
+}
+
+void SidebarWidget::set_subtree_ghosted(std::uint32_t node_index, bool ghosted) {
+  if (!scene_ || node_index >= scene_->nodes.size()) return;
+  scene_->nodes[node_index].ghosted = ghosted;
+  for (auto c : scene_->nodes[node_index].children) {
+    set_subtree_ghosted(c, ghosted);
+  }
+}
+
+void SidebarWidget::sync_node_flags(QStandardItem* item) {
   if (!item) return;
   const auto v = item->data(kRoleNodeIndex);
   if (v.isValid() && scene_) {
     const auto idx = v.toUInt();
     if (idx < scene_->nodes.size()) {
       item->setData(scene_->nodes[idx].visible, kRoleVisible);
+      item->setData(scene_->nodes[idx].ghosted, kRoleGhosted);
     }
   }
-  for (int r = 0; r < item->rowCount(); ++r) sync_visible_flags(item->child(r));
+  for (int r = 0; r < item->rowCount(); ++r) sync_node_flags(item->child(r));
+}
+
+void SidebarWidget::apply_selection(std::uint32_t node_index) {
+  selected_node_ = node_index;
+  if (!scene_) return;
+  for (auto& n : scene_->nodes) n.selected = false;
+  // The isolate root is skipped on purpose: isolate shows that part
+  // "normally", and painting the accent wash over the very thing the user
+  // isolated would defeat the mode. Rows INSIDE the focus subtree (locating
+  // a child of the isolated group) and ghosted rows outside it still
+  // highlight, which is exactly the locate-a-part use case.
+  if (node_index < scene_->nodes.size() && node_index != isolate_node_) {
+    set_subtree_selected(node_index, true);
+  }
+  emit highlight_changed();
+}
+
+void SidebarWidget::select_node(std::uint32_t node_index) {
+  if (!scene_ || node_index >= scene_->nodes.size()) return;
+  std::function<QStandardItem*(QStandardItem*)> find =
+    [&](QStandardItem* item) -> QStandardItem* {
+      if (!item) return nullptr;
+      const auto v = item->data(kRoleNodeIndex);
+      if (v.isValid() && v.toUInt() == node_index) return item;
+      for (int r = 0; r < item->rowCount(); ++r) {
+        if (auto* hit = find(item->child(r))) return hit;
+      }
+      return nullptr;
+    };
+  auto* item = find(model_->invisibleRootItem());
+  if (!item) return;
+  const QModelIndex proxy_index = proxy_->mapFromSource(item->index());
+  if (!proxy_index.isValid()) return;
+  tree_->scrollTo(proxy_index);
+  tree_->setCurrentIndex(proxy_index);  // currentChanged applies the flags
+}
+
+void SidebarWidget::set_isolate(std::uint32_t node_index) {
+  if (!scene_ || node_index >= scene_->nodes.size()) {
+    node_index = scene::Node::kInvalid;
+  }
+  isolate_node_ = node_index;
+  if (scene_) {
+    const bool active = node_index != scene::Node::kInvalid;
+    for (auto& n : scene_->nodes) n.ghosted = active;
+    if (active) {
+      set_subtree_ghosted(node_index, false);
+      // Ancestors stay un-ghosted, matching the solo rule: the containers
+      // of the focus shouldn't read as "elsewhere" in tree or viewport.
+      for (auto p = scene_->nodes[node_index].parent;
+           p != scene::Node::kInvalid; p = scene_->nodes[p].parent) {
+        scene_->nodes[p].ghosted = false;
+      }
+    }
+  }
+  // Selection tint depends on the isolate root (see apply_selection);
+  // re-derive it for the current row before repainting.
+  apply_selection(selected_node_);
+  sync_node_flags(model_->invisibleRootItem());
+  tree_->viewport()->update();
+  emit isolate_changed(isolate_node_);
 }
 
 void SidebarWidget::toggle_eye(std::uint32_t node_index, bool solo) {
@@ -320,7 +465,7 @@ void SidebarWidget::toggle_eye(std::uint32_t node_index, bool solo) {
     set_subtree_visible(node_index, !scene_->nodes[node_index].visible);
   }
 
-  sync_visible_flags(model_->invisibleRootItem());
+  sync_node_flags(model_->invisibleRootItem());
   tree_->viewport()->update();
   emit visibility_changed();
 }

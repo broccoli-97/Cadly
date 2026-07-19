@@ -27,7 +27,15 @@ struct Node {
   std::optional<std::uint32_t> mesh_index; // index into Scene::meshes
 
   bool visible{true};
+  // Viewer-state flags written by the UI and read by the renderer, mirroring
+  // `visible`. `selected` marks the sidebar's current pick — the renderer
+  // tints those surfaces with DisplayMode::selection_color so the user can
+  // match a tree row to its geometry. `ghosted` marks everything OUTSIDE the
+  // isolate focus (sidebar double-click): those nodes draw as a translucent
+  // veil at DisplayMode::ghost_opacity instead of full surfaces. Importers
+  // leave both at their defaults.
   bool selected{false};
+  bool ghosted{false};
 
   // CAD provenance — kept here, not in Mesh, because the same Mesh can be
   // instanced under many nodes that all came from different assembly parts.

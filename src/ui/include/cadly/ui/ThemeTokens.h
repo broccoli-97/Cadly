@@ -53,6 +53,15 @@ struct ThemeTokens {
   QColor error;
   QColor info;
 
+  // Viewport selection highlight (Node::selected tint). Deliberately NOT the
+  // accent: the accent blue sits too close in hue and luminance to the
+  // neutral bluish-grey parts and the viewport gradient, so a highlighted
+  // part barely read as different. A saturated signal orange is the CAD
+  // convention (NX/CATIA) precisely because nothing else in a typical scene
+  // or in this chrome is orange — the tree keeps the accent for its
+  // selection pill, the viewport uses this.
+  QColor viewport_highlight;
+
   // Viewport gradient, pushed through DisplayMode::background_top/bottom.
   // Renderer-owned: the GL background pass draws it, not a Qt widget.
   QColor viewport_top;
