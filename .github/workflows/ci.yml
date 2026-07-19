@@ -222,9 +222,15 @@ jobs:
           Copy-Item "build/windows-ninja-release/bin/*.dll" "package/cadly/bin/" -Force
 
           # Qt DLLs + runtime-loaded plugins (platforms, imageformats,
-          # iconengines) via windeployqt from the vcpkg tools tree.
-          $wdq = Get-ChildItem "build/windows-ninja-release/vcpkg_installed" -Recurse -Filter "windeployqt.exe" | Select-Object -First 1
-          if (-not $wdq) { throw "windeployqt.exe not found under vcpkg_installed (qtbase[windeployqt] feature missing?)" }
+          # iconengines) via windeployqt from the vcpkg tools tree. Root the
+          # search at the target triplet: since the preset pinned the
+          # release-only x64-windows-release triplet, vcpkg also populates a
+          # host-triplet tree (x64-windows) with Qt's build tools, and that
+          # copy of windeployqt sorts first in a whole-tree search — but its
+          # qt.conf resolves against the host prefix, which has no Qt6Svg,
+          # plugins, or translations to deploy from (windeployqt exits 1).
+          $wdq = Get-ChildItem "build/windows-ninja-release/vcpkg_installed/x64-windows-release" -Recurse -Filter "windeployqt.exe" | Select-Object -First 1
+          if (-not $wdq) { throw "windeployqt.exe not found under vcpkg_installed/x64-windows-release (qtbase[windeployqt] feature missing?)" }
           & $wdq.FullName --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime package/cadly/bin/cadly.exe
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }
 
