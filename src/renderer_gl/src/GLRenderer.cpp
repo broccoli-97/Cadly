@@ -1362,6 +1362,17 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode) {
     if (*node.mesh_index >= scene_->meshes.size()) continue;
     const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
     if (!mesh_ptr) continue;
+    // In wireframe mode this pass is the ONLY one that runs — render()
+    // returns before the shaded surface loop that normally performs the
+    // lazy GPU upload. Right after attach_scene() swaps scenes (opening
+    // another file, switching document tabs) nothing is resident yet, so
+    // a bare meshes_.find() would skip every node and leave the viewport
+    // showing just the background until the user toggled back to Shaded.
+    // Upload here as well; when the mesh is already resident this is a
+    // single hash lookup. (ensure_mesh_upload leaves VAO binding at 0 and
+    // touches no program/blend/primitive-restart state, so the pass state
+    // set above survives.)
+    ensure_mesh_upload(*mesh_ptr, mesh_ptr);
     auto mit = meshes_.find(mesh_ptr.get());
     if (mit == meshes_.end()) continue;
     const auto& g = mit->second;
