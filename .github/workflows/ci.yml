@@ -123,11 +123,18 @@ jobs:
     # when something that feeds vcpkg's ABI hash actually changes —
     # baseline bump, or the hosted image rotating its MSVC toolset.
     timeout-minutes: 350
+    permissions:
+      contents: read
+      packages: write
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-      # Binary caching via vcpkg's native GitHub-Actions-cache backend: one
-      # cache entry per package, keyed by vcpkg's own ABI hash (compiler
-      # version, triplet, features, port tree all included).
+      # Binary caching via a NuGet feed on GitHub Packages: one package per
+      # vcpkg binary artifact, keyed by vcpkg's own ABI hash (compiler
+      # version, triplet, features, port tree all included). The previous
+      # `x-gha` Actions-cache backend was removed from the vcpkg tool
+      # (bootstrap always fetches the latest tool, whatever the port-tree
+      # baseline), after which caching silently no-opped and every run
+      # rebuilt all dependencies from source (~3 h).
       #
       # Deliberately NOT actions/cache over VCPKG_DEFAULT_BINARY_CACHE: that
       # tarball's key (hash of vcpkg.json) didn't include the MSVC version,
@@ -139,7 +146,8 @@ jobs:
       # changed. Per-package ABI-keyed entries cannot go stale-but-hitting,
       # and each package uploads right after it builds, so even a timed-out
       # run keeps its progress.
-      VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
+      VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+      VCPKG_BINARY_SOURCES: clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite
     steps:
       - uses: actions/checkout@v4
 
@@ -178,19 +186,18 @@ jobs:
           git -C $env:VCPKG_ROOT checkout FETCH_HEAD
           & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
 
-      # The x-gha binary source needs the Actions cache service endpoint and
-      # auth token, which the runner only exposes to JS actions, not to shell
-      # steps — hence this github-script hop (Microsoft's documented recipe
-      # for vcpkg binary caching on Actions). ACTIONS_CACHE_URL is the legacy
-      # cache service, ACTIONS_RESULTS_URL its v2 replacement; export
-      # whichever the runner provides and let the vcpkg tool pick.
-      - name: Export Actions cache environment for vcpkg
-        uses: actions/github-script@v7
-        with:
-          script: |
-            for (const name of ['ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_RUNTIME_TOKEN']) {
-              if (process.env[name]) core.exportVariable(name, process.env[name]);
-            }
+      # Point vcpkg's bundled NuGet client at the GitHub Packages feed.
+      # GITHUB_TOKEN can publish packages to the repository's namespace once
+      # the job requests `packages: write` (fork PRs get a read-only token —
+      # restores still work there; failed uploads are non-fatal warnings).
+      - name: Configure NuGet binary cache feed
+        shell: pwsh
+        run: |
+          $nuget = (& "$env:VCPKG_ROOT/vcpkg" fetch nuget) | Select-Object -Last 1
+          & $nuget sources add -Source $env:VCPKG_NUGET_FEED -Name GitHubPackages `
+            -UserName "${{ github.repository_owner }}" -Password "${{ secrets.GITHUB_TOKEN }}" `
+            -StorePasswordInClearText
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source $env:VCPKG_NUGET_FEED
 
       - name: Configure (builds vcpkg dependencies)
         run: cmake --preset windows-ninja-release
