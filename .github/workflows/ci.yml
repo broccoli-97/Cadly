@@ -5,7 +5,8 @@
 #     Pinned to ubuntu-24.04 (Qt 6.4, OCCT 7.6) so a runner-image bump can't
 #     silently change the toolchain the way `ubuntu-latest` would.
 #   - Windows: vcpkg manifest build (Qt 6.11, OCCT 8.0 at the pinned
-#     baseline), packaged self-contained with windeployqt. Built with Ninja
+#     baseline), packaged self-contained (applocal DLL closure + a manual
+#     Qt plugin copy — see the Package step). Built with Ninja
 #     against whatever MSVC toolset the runner image provides (vcvars via
 #     msvc-dev-cmd) — deliberately NOT a year-pinned Visual Studio generator,
 #     which breaks whenever the hosted image rotates VS versions.
@@ -221,18 +222,26 @@ jobs:
           # to the built executables — reuse it instead of re-deriving.
           Copy-Item "build/windows-ninja-release/bin/*.dll" "package/cadly/bin/" -Force
 
-          # Qt DLLs + runtime-loaded plugins (platforms, imageformats,
-          # iconengines) via windeployqt from the vcpkg tools tree. Root the
-          # search at the target triplet: since the preset pinned the
-          # release-only x64-windows-release triplet, vcpkg also populates a
-          # host-triplet tree (x64-windows) with Qt's build tools, and that
-          # copy of windeployqt sorts first in a whole-tree search — but its
-          # qt.conf resolves against the host prefix, which has no Qt6Svg,
-          # plugins, or translations to deploy from (windeployqt exits 1).
-          $wdq = Get-ChildItem "build/windows-ninja-release/vcpkg_installed/x64-windows-release" -Recurse -Filter "windeployqt.exe" | Select-Object -First 1
-          if (-not $wdq) { throw "windeployqt.exe not found under vcpkg_installed/x64-windows-release (qtbase[windeployqt] feature missing?)" }
-          & $wdq.FullName --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime package/cadly/bin/cadly.exe
-          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }
+          # Qt runtime-loaded plugins (platforms, imageformats, iconengines,
+          # styles), copied straight from the target triplet's plugin tree.
+          # windeployqt is deliberately NOT used here: with the release-only
+          # x64-windows-release target triplet, Qt's ports treat the build as
+          # a cross build (host triplet stays x64-windows) and only install
+          # tools for the host — the release tree has no windeployqt/qtpaths
+          # at all, and the host copy's qt.conf resolves against the host
+          # prefix, which has no Qt6Svg or plugins to deploy from. The Qt
+          # DLLs the executables link are already applocal-deployed (copied
+          # above); plugins are the only piece windeployqt added.
+          $qtRel = "build/windows-ninja-release/vcpkg_installed/x64-windows-release"
+          if (-not (Test-Path "$qtRel/Qt6/plugins")) { throw "Qt plugin tree not found at $qtRel/Qt6/plugins" }
+          foreach ($d in @('platforms', 'imageformats', 'iconengines', 'styles')) {
+            if (Test-Path "$qtRel/Qt6/plugins/$d") {
+              Copy-Item "$qtRel/Qt6/plugins/$d" "package/cadly/bin/" -Recurse -Force
+            }
+          }
+          # The svg plugins load Qt6Svg.dll at runtime; nothing links it
+          # directly, so the applocal closure copied above doesn't include it.
+          Copy-Item "$qtRel/bin/Qt6Svg.dll" "package/cadly/bin/" -Force
 
           # Fail loudly if the deploy silently missed the plugins the app
           # can't run without (window platform, SVG icon theme rendering).
