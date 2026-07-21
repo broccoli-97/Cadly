@@ -1638,6 +1638,12 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
                    &mode.selection_color.x);
   gl_.glUniform1f(loc_ghost, 0.0f);
 
+  // u_highlight carries the wash opacity, not a boolean — the shader blends
+  // the unlit selection colour over the finished pixel at exactly this
+  // factor, which is what keeps the highlight identical from every angle.
+  const float highlight_wash =
+    std::clamp(mode.selection_opacity, 0.0f, 1.0f);
+
   // Shared per-node surface submission: transforms, per-submesh material,
   // cull mode, selection highlight. The opaque pass and the isolate ghost
   // pass below differ only in blend/depth state and the u_ghost value, so
@@ -1656,7 +1662,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     const scene::mat3 normal_matrix = glm::transpose(glm::inverse(scene::mat3(model)));
     gl_.glUniformMatrix4fv(loc_model,    1, GL_FALSE, glm::value_ptr(model));
     gl_.glUniformMatrix3fv(loc_normal_m, 1, GL_FALSE, glm::value_ptr(normal_matrix));
-    gl_.glUniform1f(loc_highlight, node.selected ? 1.0f : 0.0f);
+    gl_.glUniform1f(loc_highlight, node.selected ? highlight_wash : 0.0f);
 
     gl_.glBindVertexArray(g.vao);
     for (const auto& sub : mesh_ptr->submeshes) {

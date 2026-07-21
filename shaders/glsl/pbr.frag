@@ -34,8 +34,9 @@ uniform int   u_hidden_line;
 uniform vec3  u_hidden_line_color;
 
 // Selection highlight / isolate ghosting (see DisplayMode + Node docs).
-// u_highlight is 0 or 1 per node; u_highlight_color arrives in sRGB and is
-// applied AFTER tonemap+gamma so the tint matches the UI accent exactly.
+// u_highlight is 0 for unselected nodes, else the wash opacity
+// (DisplayMode::selection_opacity); u_highlight_color arrives in sRGB and
+// is applied AFTER tonemap+gamma so the tint matches the UI accent exactly.
 // u_ghost is 0 in the opaque pass; the translucent isolate pass sets it to
 // the veil opacity and the fragment's alpha comes from it.
 uniform float u_highlight;
@@ -109,9 +110,9 @@ void main() {
   if (u_hidden_line != 0) {
     vec3 paper = pow(clamp(u_hidden_line_color, 0.0, 1.0),
                      vec3(1.0 / 2.2));
-    // Highlight on paper: a flat accent wash — any lighting trick would
-    // break the technical-drawing field.
-    paper = mix(paper, u_highlight_color, 0.30 * u_highlight);
+    // Highlight on paper: the same flat accent wash as the shaded path, so
+    // a selected part reads identically across surface modes.
+    paper = mix(paper, u_highlight_color, u_highlight);
     float alpha = 1.0;
     if (u_ghost > 0.0) {
       // The hidden-line paper is the SAME colour as the background, so a
@@ -226,14 +227,14 @@ void main() {
   color = pow(color, vec3(1.0 / 2.2));
 
   // Selection highlight, post-gamma so the wash lands on the exact UI
-  // signal colour. Rim-weighted: a firm base tint makes even a face-on,
-  // featureless part unmistakably "the selected one", and the silhouette
-  // picks up a stronger glow — enough to spot a small part inside a dense
-  // assembly at a glance.
+  // signal colour. A constant-opacity unlit wash, deliberately independent
+  // of N, V and the lights: the earlier rim-weighted variant brightened and
+  // dimmed as the camera orbited, which read as the selection colour itself
+  // changing. The sub-1 opacity is the "translucent film" part of the
+  // design — the part's own shading stays faintly visible through the wash
+  // so the selected part still reads as 3D geometry, not a flat decal.
   if (u_highlight > 0.0) {
-    float rim = pow(1.0 - NoV, 2.0);
-    color = mix(color, u_highlight_color,
-                u_highlight * clamp(0.30 + 0.45 * rim, 0.0, 0.8));
+    color = mix(color, u_highlight_color, u_highlight);
   }
 
   float alpha = u_base_color.a;

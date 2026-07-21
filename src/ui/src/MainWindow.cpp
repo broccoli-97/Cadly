@@ -694,6 +694,11 @@ void MainWindow::build_shell() {
           viewport_, QOverload<>::of(&QWidget::update));
   connect(sidebar_, &SidebarWidget::isolate_changed,
           this, &MainWindow::on_isolate_changed);
+  // A left-click in the viewport cancels the highlight. Picking isn't
+  // implemented, so the viewport reports every left press as a background
+  // click (see ViewportWidget::background_clicked).
+  connect(viewport_, &ViewportWidget::background_clicked,
+          sidebar_, &SidebarWidget::clear_selection);
 
   connect(inspector_, &InspectorWidget::display_changed, this, [this]() {
     update_display_mode();
@@ -1065,9 +1070,17 @@ void MainWindow::run_demo(const QString& name) {
       const QPoint anchor(viewport_->width() / 2, viewport_->height() / 2);
       for (int i = 0; i < 10; ++i) ctrl->wheel(anchor, 240);
     }
-  } else if (name == QLatin1String("highlight")) {
+  } else if (name == QLatin1String("highlight") ||
+             name == QLatin1String("highlight-wireframe") ||
+             name == QLatin1String("highlight-hiddenline")) {
     // Select the first geometry-bearing node the way a tree click would, so
-    // the screenshot shows the accent highlight over the shaded part.
+    // the screenshot shows the accent highlight over the part — with
+    // surface-mode variants to eyeball the wash in every draw path.
+    if (name.endsWith(QLatin1String("wireframe"))) {
+      set_surface_mode(SurfaceMode::Wireframe);
+    } else if (name.endsWith(QLatin1String("hiddenline"))) {
+      set_surface_mode(SurfaceMode::HiddenLine);
+    }
     if (const auto* document = active_document();
         document && document->scene) {
       const auto& nodes = document->scene->nodes;

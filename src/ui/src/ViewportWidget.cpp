@@ -155,13 +155,17 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e) {
   using DM = CameraController::DragMode;
   DM mode = DM::None;
   // Right-button orbits, middle-button pans. Left-button is reserved for
-  // picking/highlight (not yet implemented) — passed through to the base
-  // class so a future pick handler can consume it.
+  // picking; until a pick handler lands, every left press is reported as a
+  // background click so the shell can drop the selection highlight (the
+  // one thing a left-click can mean while nothing is pickable).
   if      (e->button() == Qt::RightButton)  mode = DM::Orbit;
   else if (e->button() == Qt::MiddleButton) mode = DM::Pan;
   if (mode != DM::None) {
     camera_->begin_drag(mode, e->pos());
     setCursor(Qt::ClosedHandCursor);
+    e->accept();
+  } else if (e->button() == Qt::LeftButton) {
+    emit background_clicked();
     e->accept();
   } else {
     QOpenGLWidget::mousePressEvent(e);

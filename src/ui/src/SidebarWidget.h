@@ -35,6 +35,12 @@ public:
   // Properties tab, viewport highlight. Used by the dev/test demo hook.
   void select_node(std::uint32_t node_index);
 
+  // Drop the current row / viewport highlight. Wired to blank-area clicks in
+  // the tree (eventFilter below) and to viewport background clicks by the
+  // shell. Routes through the tree's selection model so currentChanged runs
+  // the same deselect path a normal click would.
+  void clear_selection();
+
   // Enter/leave isolate mode. kInvalid exits. Recomputes Node::ghosted for
   // the whole scene, grays the tree, and emits isolate_changed — the shell
   // owns the exit affordance (floating Back pill) and per-document
@@ -51,6 +57,8 @@ public:
 
 signals:
   // Selection changed (click / keyboard) — drives the Properties tab.
+  // kInvalid means the selection was cleared (blank-area / viewport click)
+  // and the tab should reset.
   void node_selected(std::uint32_t node_index);
   // One or more nodes changed visibility — owner repaints the viewport.
   void visibility_changed();
@@ -62,6 +70,11 @@ signals:
 
 protected:
   void paintEvent(QPaintEvent*) override;
+  // Watches the tree viewport: a left press on blank space (no row under the
+  // cursor) clears the selection — QTreeView's SingleSelection mode offers
+  // no built-in way to deselect, so without this a highlight could never be
+  // cancelled from the tree.
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
   friend class SidebarDelegate;

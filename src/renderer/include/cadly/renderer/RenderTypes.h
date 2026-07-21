@@ -47,15 +47,22 @@ struct DisplayMode {
   // Selection highlight + isolate ghosting (driven by the sidebar tree).
   // `selection_color` arrives in sRGB — the PBR shader applies the tint
   // after tonemapping/gamma, so no linearisation on this side. Nodes with
-  // Node::selected get a rim-weighted wash of it; in wireframe mode their
-  // edges draw in it outright. Nodes with Node::ghosted (isolate mode)
-  // render as a translucent veil at `ghost_opacity` — full-detail geometry,
-  // but faded so the focused part carries the frame. The default matches
-  // the dark theme's viewport_highlight token: a saturated signal orange,
-  // chosen over the accent blue because nothing else in a typical CAD scene
-  // is orange (the UI overwrites per theme).
-  scene::vec3 selection_color{1.0f, 0.478f, 0.149f};
-  float       ghost_opacity  {0.12f};
+  // Node::selected get an unlit wash of it blended at `selection_opacity`:
+  // the wash is constant by design — independent of lights and view — so
+  // the highlight looks identical from every camera angle (the previous
+  // rim-weighted lit tint read as the selection colour itself changing
+  // while orbiting), and the sub-1 opacity keeps the part's own shading
+  // visible through the film so it still reads as 3D geometry. In
+  // wireframe mode selected edges draw in the colour outright. Nodes with
+  // Node::ghosted (isolate mode) render as a translucent veil at
+  // `ghost_opacity` — full-detail geometry, but faded so the focused part
+  // carries the frame. The default colour matches the dark theme's
+  // viewport_highlight token: a saturated signal orange, chosen over the
+  // accent blue because nothing else in a typical CAD scene is orange (the
+  // UI overwrites per theme).
+  scene::vec3 selection_color  {1.0f, 0.478f, 0.149f};
+  float       selection_opacity{0.65f};
+  float       ghost_opacity    {0.12f};
 
   // Anti-aliasing. Off (0 or 1) renders directly to the host's default
   // framebuffer; any other value asks the renderer to allocate an offscreen

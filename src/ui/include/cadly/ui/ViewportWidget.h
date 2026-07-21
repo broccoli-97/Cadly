@@ -40,6 +40,12 @@ signals:
   // frames-per-second figure would be a lie most of the time.
   void frame_timed(float ms);
 
+  // Left press that landed on empty space. Picking is not implemented yet,
+  // so today EVERY left press counts as empty space and the shell uses it to
+  // clear the selection highlight; a future pick handler must consume
+  // presses that hit geometry before emitting this.
+  void background_clicked();
+
 protected:
   void initializeGL() override;
   void resizeGL(int w, int h) override;

@@ -222,6 +222,8 @@ SidebarWidget::SidebarWidget(QWidget* parent) : QWidget(parent) {
   tree_->setExpandsOnDoubleClick(false);
   tree_->viewport()->setAutoFillBackground(false);
   tree_->setItemDelegate(new SidebarDelegate(this, tree_));
+  // Blank-area clicks (below the last row) deselect — see eventFilter.
+  tree_->viewport()->installEventFilter(this);
   outer->addWidget(tree_, 1);
 
   connect(filter_, &QLineEdit::textChanged, proxy_,
@@ -234,6 +236,9 @@ SidebarWidget::SidebarWidget(QWidget* parent) : QWidget(parent) {
           [this](const QModelIndex& current, const QModelIndex&) {
             if (!current.isValid()) {
               apply_selection(scene::Node::kInvalid);
+              // Deselect reaches the Properties tab too, so it resets
+              // instead of pinning the last-selected part forever.
+              emit node_selected(scene::Node::kInvalid);
               return;
             }
             const auto v = current.data(kRoleNodeIndex);
@@ -272,6 +277,29 @@ void SidebarWidget::paintEvent(QPaintEvent*) {
   const auto& t = tokens();
   p.fillRect(rect(), t.sidebar_bg);
   p.fillRect(QRect(width() - 1, 0, 1, height()), t.hairline);
+}
+
+bool SidebarWidget::eventFilter(QObject* watched, QEvent* event) {
+  if (tree_ && watched == tree_->viewport() &&
+      event->type() == QEvent::MouseButtonPress) {
+    auto* me = static_cast<QMouseEvent*>(event);
+    if (me->button() == Qt::LeftButton &&
+        !tree_->indexAt(me->pos()).isValid()) {
+      clear_selection();
+      // Not consumed: the view's own handling of a blank press is a no-op,
+      // and swallowing it here would steal focus behaviour.
+    }
+  }
+  return QWidget::eventFilter(watched, event);
+}
+
+void SidebarWidget::clear_selection() {
+  if (!tree_ || !tree_->selectionModel()) return;
+  // clearCurrentIndex fires currentChanged(invalid, …), which wipes
+  // Node::selected via apply_selection and resets the Properties tab —
+  // the exact path a row click takes, just toward "nothing".
+  tree_->selectionModel()->clearCurrentIndex();
+  tree_->clearSelection();
 }
 
 void SidebarWidget::clear() {

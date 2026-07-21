@@ -34,6 +34,7 @@ class SidebarTest : public QObject {
 
 private slots:
   void selecting_a_group_highlights_its_subtree();
+  void clear_selection_cancels_the_highlight();
   void isolate_ghosts_everything_outside_the_focus();
   void isolate_root_carries_no_selection_tint();
   void scene_handover_resets_isolate();
@@ -64,6 +65,31 @@ void SidebarTest::selecting_a_group_highlights_its_subtree() {
   QVERIFY(!scene->nodes[1].selected);
   QVERIFY(!scene->nodes[2].selected);
   QVERIFY(scene->nodes[3].selected);
+}
+
+// Cancelling the highlight — viewport background clicks and tree blank-area
+// clicks both funnel into clear_selection — must wipe Node::selected on the
+// whole scene, announce a repaint, and report kInvalid so the Properties tab
+// resets instead of pinning the last part. A second clear stays quiet.
+void SidebarTest::clear_selection_cancels_the_highlight() {
+  SidebarWidget sidebar;
+  auto scene = make_scene();
+  sidebar.set_scene(scene);
+  sidebar.select_node(1);
+  QVERIFY(scene->nodes[1].selected);
+
+  QSignalSpy picked(&sidebar, &SidebarWidget::node_selected);
+  QSignalSpy repaint(&sidebar, &SidebarWidget::highlight_changed);
+  sidebar.clear_selection();
+
+  QCOMPARE(picked.count(), 1);
+  QCOMPARE(picked.first().first().toUInt(), scene::Node::kInvalid);
+  QVERIFY(repaint.count() >= 1);
+  for (const auto& n : scene->nodes) QVERIFY(!n.selected);
+
+  picked.clear();
+  sidebar.clear_selection();
+  QCOMPARE(picked.count(), 0);
 }
 
 // Isolate = ghost everything except the focus subtree and its ancestors
