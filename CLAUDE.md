@@ -150,9 +150,12 @@ switches. Panels are fixed-position and toggle visibility only; the old
   the cursor. Orbit uses a quaternion camera around a pluggable
   `RotationPivotResolver` (default: camera target).
 - Sidebar tree: click selects and **highlights** the part in the viewport
-  (`Node::selected` → saturated signal-orange tint,
-  `ThemeTokens::viewport_highlight` — deliberately not the accent, which
-  vanished against the grey parts); double-click **isolates** it — everything
+  (`Node::selected` → an unlit, semi-transparent signal-orange wash —
+  `ThemeTokens::viewport_highlight` blended at `DisplayMode::selection_opacity`.
+  Unlit so the highlight reads identically from every angle; not the accent,
+  which vanished against the grey parts). Left-clicking the viewport or the
+  tree's blank area cancels the highlight (left is otherwise reserved for
+  picking, not yet implemented); double-click **isolates** it — everything
   else ghosts translucent (`Node::ghosted`) and grays in the tree, with a
   floating Back banner over the viewport as the exit (Esc works too; isolate
   unwinds before zero-chrome). Isolate persists per tab via
