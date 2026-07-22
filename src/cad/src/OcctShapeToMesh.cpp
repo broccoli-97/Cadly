@@ -403,6 +403,14 @@ std::size_t append_face(scene::Mesh& mesh,
   for (TopExp_Explorer ex_e(face, TopAbs_EDGE); ex_e.More(); ex_e.Next()) {
     const TopoDS_Edge& edge = TopoDS::Edge(ex_e.Current());
     if (BRep_Tool::Degenerated(edge)) continue;
+    // Parametric seam edges (the closing edge of a periodic face: cylinder
+    // and cone walls, sphere meridians, torus rings) are an artifact of the
+    // surface parametrization, not part geometry — commercial CAD (Creo,
+    // SolidWorks, NX) never inks them. The renderer's silhouette pass now
+    // gives curved faces their view-dependent contour, so dropping seams
+    // costs nothing visually and stops the hidden-line style from painting
+    // a stray lengthwise line on every cylinder.
+    if (BRep_Tool::IsClosed(edge, face)) continue;
     const void* key = edge.TShape().get();
     if (!seen_edges.insert(key).second) continue;
 
@@ -570,10 +578,26 @@ void extract_brep_edges(scene::Mesh& mesh,
   }
 
   std::unordered_set<const void*> seen;
+  // Seam edges are per-face closing edges, so detecting them needs the face
+  // context this shape-level edge walk doesn't have: collect their TShapes
+  // up front. Skipped for the same reason append_face skips them — they are
+  // parametrization artifacts no commercial viewer draws, and the
+  // silhouette pass carries the curved-face contour in wireframe now.
+  std::unordered_set<const void*> seam_edges;
+  for (TopExp_Explorer fx(shape, TopAbs_FACE); fx.More(); fx.Next()) {
+    const TopoDS_Face& face = TopoDS::Face(fx.Current());
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+      const TopoDS_Edge& edge = TopoDS::Edge(ex.Current());
+      if (BRep_Tool::IsClosed(edge, face)) {
+        seam_edges.insert(edge.TShape().get());
+      }
+    }
+  }
   for (TopExp_Explorer ex(shape, TopAbs_EDGE); ex.More(); ex.Next()) {
     const TopoDS_Edge& edge = TopoDS::Edge(ex.Current());
     if (BRep_Tool::Degenerated(edge)) continue;
     const void* key = edge.TShape().get();
+    if (seam_edges.count(key)) continue;
     if (!seen.insert(key).second) continue;
 
     for (std::size_t t = 0; t < kLodCount; ++t) {
