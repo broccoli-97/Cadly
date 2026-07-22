@@ -23,8 +23,16 @@ struct MaterialHandle : ResourceHandle {};
 struct DisplayMode {
   bool wireframe        {false};
   // Technical-drawing view: render flat, unlit faces into colour + depth,
-  // then draw only the BRep edges that pass the depth test.
+  // then draw the BRep edges and view-dependent silhouette contours that
+  // pass the depth test; occluded lines re-appear dimmed when
+  // `show_hidden_edges` is on.
   bool hidden_line      {false};
+  // Hidden-line only: also draw the lines the depth test rejected — edges
+  // and silhouettes occluded by the model — in a dimmed ink (mixed toward
+  // the paper colour). This is the Creo/SolidWorks "Hidden Line" style,
+  // where hidden structure stays readable in grey; switching it off gives
+  // the stricter "No Hidden" drafting style (hidden lines removed).
+  bool show_hidden_edges {true};
   bool show_edges       {true};    // outline at sharp creases
   bool show_axes        {true};    // world-axes triad overlay (corner)
   bool show_scale_bar   {true};    // fixed-length scale bar overlay (corner)

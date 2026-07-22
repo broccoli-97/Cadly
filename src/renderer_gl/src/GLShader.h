@@ -24,6 +24,15 @@ public:
              const std::string& fragment_source,
              const char* debug_name);
 
+  // Same, with a geometry stage between vertex and fragment (used by the
+  // silhouette pass). An empty geometry_source degrades to the two-stage
+  // build above.
+  bool build(GLFunctions& gl,
+             const std::string& vertex_source,
+             const std::string& geometry_source,
+             const std::string& fragment_source,
+             const char* debug_name);
+
   void destroy(GLFunctions& gl);
 
   GLuint id() const { return id_; }

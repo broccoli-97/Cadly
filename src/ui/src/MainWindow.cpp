@@ -1028,6 +1028,13 @@ void MainWindow::run_demo(const QString& name) {
     set_surface_mode(SurfaceMode::Wireframe);
   } else if (name == QLatin1String("hiddenline")) {
     set_surface_mode(SurfaceMode::HiddenLine);
+  } else if (name == QLatin1String("hiddenline-persp")) {
+    // Perspective variant of the hidden-line demo. Ortho is the default
+    // everywhere, so without this the silhouette pass's perspective facing
+    // function (per-vertex toward-eye rather than a constant direction —
+    // see silhouette.geom) would have no screenshot driver at all.
+    set_surface_mode(SurfaceMode::HiddenLine);
+    act_perspective_->setChecked(true);
   } else if (name == QLatin1String("wireframe-reopen") ||
              name == QLatin1String("hiddenline-reopen")) {
     // Regression drivers for the renderer's lazy GPU upload: switch to a

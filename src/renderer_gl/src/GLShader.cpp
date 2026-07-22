@@ -39,6 +39,14 @@ bool GLProgram::build(GLFunctions& gl,
                       const std::string& vertex_source,
                       const std::string& fragment_source,
                       const char* debug_name) {
+  return build(gl, vertex_source, std::string(), fragment_source, debug_name);
+}
+
+bool GLProgram::build(GLFunctions& gl,
+                      const std::string& vertex_source,
+                      const std::string& geometry_source,
+                      const std::string& fragment_source,
+                      const char* debug_name) {
   destroy(gl);
 
   std::string err;
@@ -48,16 +56,28 @@ bool GLProgram::build(GLFunctions& gl,
     CADLY_LOG_ERROR("{}", last_error_);
     return false;
   }
+  GLuint gs = 0;
+  if (!geometry_source.empty()) {
+    gs = compile_stage(gl, GL_GEOMETRY_SHADER, geometry_source, err);
+    if (!gs) {
+      last_error_ = std::string("geometry (") + debug_name + "): " + err;
+      CADLY_LOG_ERROR("{}", last_error_);
+      gl.glDeleteShader(vs);
+      return false;
+    }
+  }
   GLuint fs = compile_stage(gl, GL_FRAGMENT_SHADER, fragment_source, err);
   if (!fs) {
     last_error_ = std::string("fragment (") + debug_name + "): " + err;
     CADLY_LOG_ERROR("{}", last_error_);
     gl.glDeleteShader(vs);
+    if (gs) gl.glDeleteShader(gs);
     return false;
   }
 
   id_ = gl.glCreateProgram();
   gl.glAttachShader(id_, vs);
+  if (gs) gl.glAttachShader(id_, gs);
   gl.glAttachShader(id_, fs);
   gl.glLinkProgram(id_);
 
@@ -74,6 +94,7 @@ bool GLProgram::build(GLFunctions& gl,
     id_ = 0;
   }
   gl.glDeleteShader(vs);
+  if (gs) gl.glDeleteShader(gs);
   gl.glDeleteShader(fs);
   return id_ != 0;
 }
