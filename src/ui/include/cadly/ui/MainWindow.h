@@ -145,6 +145,9 @@ private:
   QAction* act_hidden_line_{nullptr};
   QAction* act_edges_{nullptr};
   QAction* act_triangle_mesh_{nullptr};
+  // Hidden Line's one option: show occluded edges dimmed (Creo "Hidden
+  // Line") vs removed ("No Hidden"). Lives in the segment's chevron menu.
+  QAction* act_hidden_dimmed_{nullptr};
   QAction* act_perspective_{nullptr};
   // Hidden + disabled outside isolate mode; the banner's Back button and the
   // View menu entry both drive it.

@@ -24,6 +24,7 @@ public:
     QAction* fit{nullptr};
     QAction* edges{nullptr};
     QAction* triangle_mesh{nullptr};
+    QAction* hidden_dimmed{nullptr};
     QAction* perspective{nullptr};
     QAction* toggle_sidebar{nullptr};
     QAction* toggle_inspector{nullptr};

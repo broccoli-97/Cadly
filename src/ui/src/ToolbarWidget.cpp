@@ -104,6 +104,9 @@ ToolbarWidget::ToolbarWidget(const Actions& a, QWidget* parent)
   shaded_menu->addAction(a.edges);
   shaded_menu->addAction(a.triangle_mesh);
   segments_->set_segment_menu(0, shaded_menu);
+  auto* hidden_menu = new QMenu(tr("Hidden line options"), this);
+  hidden_menu->addAction(a.hidden_dimmed);
+  segments_->set_segment_menu(1, hidden_menu);
   layout->addWidget(segments_);
 
   layout->addWidget(new ToolbarSeparator(this));

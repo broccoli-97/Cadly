@@ -486,6 +486,23 @@ void MainWindow::build_actions() {
   connect(act_triangle_mesh_, &QAction::toggled,
           this, [this](bool) { update_display_mode(); });
 
+  // Hidden Line's drafting-style choice, presented in the segment's chevron
+  // menu the way Edges/Mesh hang off Shaded. Checked (default) is Creo's
+  // "Hidden Line" style — occluded edges drawn dimmed; unchecked is the
+  // stricter "No Hidden" — occluded edges removed. Unlike the Shaded chips
+  // it is never force-cleared: the checkbox IS the persisted preference and
+  // the renderer simply ignores it outside hidden-line mode, so only the
+  // enabled state tracks the surface mode (see set_surface_mode).
+  act_hidden_dimmed_ = new QAction(tr("&Dimmed Hidden Lines"), this);
+  act_hidden_dimmed_->setIconText(tr("Dimmed"));
+  act_hidden_dimmed_->setCheckable(true);
+  act_hidden_dimmed_->setChecked(true);
+  act_hidden_dimmed_->setToolTip(
+    tr("Draw occluded edges dimmed instead of removing them"));
+  act_hidden_dimmed_->setEnabled(false);   // startup surface mode is Shaded
+  connect(act_hidden_dimmed_, &QAction::toggled,
+          this, [this](bool) { update_display_mode(); });
+
   act_perspective_ = new QAction(tr("&Perspective Projection"), this);
   act_perspective_->setIconText(tr("Persp"));
   act_perspective_->setCheckable(true);
@@ -586,6 +603,7 @@ void MainWindow::build_shell() {
   ta.fit              = act_fit_;
   ta.edges            = act_edges_;
   ta.triangle_mesh    = act_triangle_mesh_;
+  ta.hidden_dimmed    = act_hidden_dimmed_;
   ta.perspective      = act_perspective_;
   ta.toggle_sidebar   = act_toggle_sidebar_;
   ta.toggle_inspector = act_toggle_inspector_;
@@ -744,6 +762,7 @@ void MainWindow::build_menus() {
   view_menu->addAction(act_hidden_line_);
   view_menu->addAction(act_edges_);
   view_menu->addAction(act_triangle_mesh_);
+  view_menu->addAction(act_hidden_dimmed_);
   view_menu->addSeparator();
   view_menu->addAction(act_perspective_);
   auto* views_menu = view_menu->addMenu(tr("Standard &Views"));
@@ -884,6 +903,7 @@ void MainWindow::update_display_mode() {
   mode.hidden_line        = surface_mode_ == SurfaceMode::HiddenLine;
   mode.show_edges         = mode.hidden_line || act_edges_->isChecked();
   mode.show_triangle_mesh = act_triangle_mesh_->isChecked();
+  mode.show_hidden_edges  = act_hidden_dimmed_->isChecked();
   if (mode.wireframe || mode.hidden_line) {
     mode.show_edges         = mode.hidden_line;
     mode.show_triangle_mesh = false;
@@ -925,6 +945,11 @@ void MainWindow::set_surface_mode(SurfaceMode mode) {
     act_edges_->setChecked(remembered_edges_);
     act_triangle_mesh_->setChecked(remembered_mesh_);
   }
+
+  // The dimmed toggle only ever *means* something in hidden-line mode, but
+  // its checked state is the preference itself — leave it alone so it
+  // survives mode round-trips (the renderer ignores it elsewhere).
+  act_hidden_dimmed_->setEnabled(mode == SurfaceMode::HiddenLine);
 
   surface_mode_ = mode;
   {
@@ -1050,9 +1075,41 @@ void MainWindow::run_demo(const QString& name) {
     if (auto* document = active_document(); document && !importing_) {
       start_import(document, inspector_->import_options());
     }
+  } else if (name.startsWith(QLatin1String("hiddenline-orbit:")) ||
+             name.startsWith(QLatin1String("wireframe-orbit:"))) {
+    // Line-mode display at an arbitrary orbit orientation
+    // (`<mode>-orbit:<yaw>,<pitch>[,persp]`, angles in degrees). The
+    // silhouette pass is view-dependent — a contour that renders fine from
+    // the seven standard views can still fail at an in-between azimuth (its
+    // zero crossing sweeps across the tessellation facets as the camera
+    // moves), so verifying it needs screenshots at exact arbitrary angles,
+    // not just the canned views.
+    set_surface_mode(name.startsWith(QLatin1String("wireframe"))
+                       ? SurfaceMode::Wireframe : SurfaceMode::HiddenLine);
+    const QStringList parts =
+      name.section(QLatin1Char(':'), 1).split(QLatin1Char(','));
+    bool ok_yaw = false, ok_pitch = false;
+    const float yaw   = parts.value(0).toFloat(&ok_yaw);
+    const float pitch = parts.value(1).toFloat(&ok_pitch);
+    if (parts.value(2) == QLatin1String("persp")) {
+      act_perspective_->setChecked(true);
+    }
+    if (ok_yaw && ok_pitch) {
+      if (auto* ctrl = viewport_ ? viewport_->camera_controller() : nullptr) {
+        ctrl->set_view(yaw, pitch);
+      }
+    }
   } else if (name == QLatin1String("shadedmenu")) {
     set_surface_mode(SurfaceMode::Shaded);
     toolbar_->display_segments()->show_segment_menu(0);
+  } else if (name == QLatin1String("hiddenmenu")) {
+    set_surface_mode(SurfaceMode::HiddenLine);
+    toolbar_->display_segments()->show_segment_menu(1);
+  } else if (name == QLatin1String("hiddenline-nodim")) {
+    // The "No Hidden" drafting style: occluded edges removed instead of
+    // dimmed. Exercises DisplayMode::show_hidden_edges == false end to end.
+    set_surface_mode(SurfaceMode::HiddenLine);
+    act_hidden_dimmed_->setChecked(false);
   } else if (name == QLatin1String("display")) {
     act_toggle_inspector_->setChecked(true);
     inspector_->set_current_tab(InspectorWidget::DisplayTab);
@@ -1616,6 +1673,8 @@ void MainWindow::load_settings() {
   mode.msaa_samples   = s.value("msaa_samples", mode.msaa_samples).toInt();
   mode.show_scale_bar = s.value("scale_bar", mode.show_scale_bar).toBool();
   mode.show_axes      = s.value("axes", mode.show_axes).toBool();
+  act_hidden_dimmed_->setChecked(
+    s.value("dimmed_hidden", act_hidden_dimmed_->isChecked()).toBool());
   s.endGroup();
   inspector_->load_display(mode);
 
@@ -1648,6 +1707,7 @@ void MainWindow::save_settings() const {
   s.setValue("msaa_samples",   mode.msaa_samples);
   s.setValue("scale_bar",      mode.show_scale_bar);
   s.setValue("axes",           mode.show_axes);
+  s.setValue("dimmed_hidden",  act_hidden_dimmed_->isChecked());
   s.endGroup();
 
   s.beginGroup(QStringLiteral("ui"));
