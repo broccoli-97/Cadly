@@ -110,17 +110,35 @@ Easy to conflate; they are deliberately separate (see `scene::Mesh` doc comments
    `Mesh::edge_strip_indices`, BRep edges sampled *exactly* on the face
    triangulation nodes, so polygon offset alone keeps them in front (no Z-fight).
 2. **Hidden line** (`hidden_line`) — flat, unlit faces write colour and depth,
-   then mesh-coupled BRep edges draw over them. The filled depth buffer removes
-   far-side edges; do not replace this with plain wireframe rendering.
+   then mesh-coupled BRep edges and silhouette contours draw over them: visible
+   lines in ink, occluded lines re-drawn dimmed via a second pass with
+   `GL_GREATER` (Creo's "Hidden Line" style; `DisplayMode::show_hidden_edges`
+   off gives the stricter "No Hidden"). Do not replace the filled depth
+   prepass with plain wireframe rendering.
 3. **Wireframe** (`wireframe`) — BRep edges *without* surfaces. Uses
    `Mesh::edge_lods`, an analytical LOD ladder selected per frame by
-   world-per-pixel scale (refines on zoom). Mutually exclusive with the triangle
-   mesh overlay.
+   world-per-pixel scale (refines on zoom), plus silhouette contours. Mutually
+   exclusive with the triangle mesh overlay.
 4. **Triangle mesh** (`show_triangle_mesh`) — debug overlay drawing every
    triangle edge of the tessellation.
 
 Edge polylines are `GL_LINE_STRIP` runs terminated by the `0xFFFFFFFF`
 primitive-restart sentinel, one drawcall per tier.
+
+**Silhouettes** (the view-dependent contours where a curved surface rolls away
+— cylinder sides, sphere outlines) are not BRep edges and can't come from the
+edge buffers. Both line modes get them from a per-frame GPU pass
+(`silhouette.vert/.geom` + the edges fragment stage): a geometry shader reads
+the surface triangles through the PBR VAO and emits the zero-crossing of
+`dot(N, toward-eye)` interpolated *inside* each triangle — smooth sub-facet
+contours, no adjacency data, no CPU recompute while orbiting. The segments lie
+on the surface, so the polygon-offset contract above applies to them
+unchanged. Shaded mode deliberately draws no silhouette lines (shading carries
+the contour; commercial CAD does the same). Relatedly, the importer skips
+parametric **seam edges** (`BRep_Tool::IsClosed(edge, face)` — the closing
+edge of cylinder/cone/sphere/torus faces) in both edge buffers: no commercial
+viewer inks seams, and the silhouette pass now supplies curved faces' visual
+presence instead.
 
 ### Rendering gotchas (don't "fix" these)
 
