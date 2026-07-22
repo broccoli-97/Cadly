@@ -113,8 +113,10 @@ Easy to conflate; they are deliberately separate (see `scene::Mesh` doc comments
    then mesh-coupled BRep edges and silhouette contours draw over them: visible
    lines in ink, occluded lines re-drawn dimmed via a second pass with
    `GL_GREATER` (Creo's "Hidden Line" style; `DisplayMode::show_hidden_edges`
-   off gives the stricter "No Hidden"). Do not replace the filled depth
-   prepass with plain wireframe rendering.
+   off gives the stricter "No Hidden" — user-facing as the "Dimmed Hidden
+   Lines" toggle in the Hidden Line segment's chevron menu, persisted in
+   `display/dimmed_hidden`). Do not replace the filled depth prepass with
+   plain wireframe rendering.
 3. **Wireframe** (`wireframe`) — BRep edges *without* surfaces. Uses
    `Mesh::edge_lods`, an analytical LOD ladder selected per frame by
    world-per-pixel scale (refines on zoom), plus silhouette contours. Mutually
@@ -131,8 +133,15 @@ edge buffers. Both line modes get them from a per-frame GPU pass
 (`silhouette.vert/.geom` + the edges fragment stage): a geometry shader reads
 the surface triangles through the PBR VAO and emits the zero-crossing of
 `dot(N, toward-eye)` interpolated *inside* each triangle — smooth sub-facet
-contours, no adjacency data, no CPU recompute while orbiting. The segments lie
-on the surface, so the polygon-offset contract above applies to them
+contours, no adjacency data, no CPU recompute while orbiting. Each crossing is
+then lifted from the triangle's chord onto the *true* surface (second-order
+sag reconstruction from the edge's endpoint normals, curvature-signed for
+concave bores — see `surface_crossing` in `silhouette.geom`): the raw chord
+point sits up to one linear-deflection *inside* the solid, and at grazing
+contour rays that burial becomes a depth gap big enough for the neighbouring
+front facets or an adjoining planar cap to swallow a whole generator line at
+certain azimuths. The reconstructed segments lie on the smooth surface, so
+the polygon-offset contract above applies to them
 unchanged. Shaded mode deliberately draws no silhouette lines (shading carries
 the contour; commercial CAD does the same). Relatedly, the importer skips
 parametric **seam edges** (`BRep_Tool::IsClosed(edge, face)` — the closing
@@ -186,7 +195,10 @@ switches. Panels are fixed-position and toggle visibility only; the old
   pre-flight; `Ctrl+W` closes the active document tab.
 - Surface modes are visibly exclusive in the toolbar
   `Shaded|Hidden Line|Wireframe` `SegmentedControl`. Edges/Mesh chips apply to
-  Shaded and are **disabled-but-remembered** in the other two modes.
+  Shaded and are **disabled-but-remembered** in the other two modes. Hidden
+  Line's chevron menu holds "Dimmed Hidden Lines" (`show_hidden_edges`);
+  its checked state is the preference itself, so it is only ever
+  enabled/disabled with the mode, never force-cleared.
 - Custom-painted widgets (`ToolbarButton`, `SegmentedControl`,
   the sidebar delegate, `Popover`, …) read `ui::ThemeTokens` (a struct, **not**
   `QPalette`) so they render identically under Fusion (Qt 6.4) and qlementine
@@ -201,9 +213,12 @@ switches. Panels are fixed-position and toggle visibility only; the old
   scrollbars. Do not install a second app-wide stylesheet from the UI module.
   Reuse the existing Fusion style instance on theme changes: replacing it can
   recreate `QOpenGLWidget`'s backing surface and invalidate renderer resources.
-- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|zerochrome|highlight|isolate]`
+- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|shadedmenu|hiddenmenu|zerochrome|highlight|isolate]`
   drives a UI state and grabs it headlessly (used to verify the shell without an
-  input-injection tool).
+  input-injection tool). `--demo hiddenline-orbit:<yaw>,<pitch>[,persp]` (and
+  the `wireframe-orbit:` twin) screenshots a line mode at an exact arbitrary
+  orientation — the silhouette pass is view-dependent, so regressions hide at
+  in-between azimuths the seven standard views never hit.
 
 ## Assets & logging
 
