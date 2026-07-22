@@ -19,11 +19,13 @@
 // makes seams (duplicated nodes with equal normals, e.g. a cylinder's
 // parametric seam) come out watertight for free.
 //
-// The emitted segment endpoints are barycentric points ON the triangle, so
-// their depth is the surface's own depth: the renderer's polygon-offset
-// scheme (faces pushed back, lines at true depth) keeps visible contours in
-// front of their surface while genuinely occluded contours still lose the
-// depth test — exactly the hidden-line semantics the BRep edge overlay uses.
+// The emitted segment endpoints start as barycentric points ON the triangle,
+// then get pushed out to the *true* surface (see surface_crossing below):
+// their depth is the smooth surface's own depth, so the renderer's
+// polygon-offset scheme (faces pushed back, lines at true depth) keeps
+// visible contours in front of their surface while genuinely occluded
+// contours still lose the depth test — exactly the hidden-line semantics the
+// BRep edge overlay uses.
 
 layout(triangles) in;
 layout(line_strip, max_vertices = 2) out;
@@ -52,6 +54,46 @@ layout(std140) uniform FrameBlock {
 // all view rays are parallel, and using the eye point instead would bow the
 // contour of a long cylinder toward the eye's perpendicular foot.
 uniform vec4 u_view_ref;
+
+// The d = 0 crossing on edge a->b, lifted from the chord onto the smooth
+// surface it approximates.
+//
+// The naive mix(p_a, p_b, t) point lies on the CHORD, which sags inside a
+// convex surface by up to the mesher's linear deflection — i.e. the raw
+// crossing is buried up to one sag INSIDE the solid. Right at the contour
+// the view rays are tangent to the surface, so a world-space burial of one
+// sag becomes a huge depth gap along the grazing ray, and whichever face
+// rasterises in front there (the adjacent front-facing facet column, or a
+// planar cap that meets the curved face at the rim) occludes the line by far
+// more than glPolygonOffset compensates. The failure is quantised by the
+// tessellation: on a cylinder the facing function is constant along each
+// generator, so as the camera's azimuth sweeps across a facet the ENTIRE
+// contour line pops in and out of visibility at once.
+//
+// Second-order reconstruction from data already in the triangle: the two
+// endpoint normals span the local bend angle alpha (cos(alpha) = n_a.n_b),
+// the local radius of curvature is |chord| / (2 sin(alpha/2)), and the
+// chord-to-arc gap at parameter t works out to
+//     sag(t) = |chord| * sin(alpha/2) * t * (1 - t).
+// Pushing the chord point that far along the interpolated normal lands it on
+// the circumscribed arc — the true surface to second order — which is also
+// OUTSIDE every neighbouring chord facet, so the contour can never be hidden
+// by its own mesh again. The push is signed by the bend direction
+// (dot(n_b - n_a, chord): positive = convex, normals fan outward) so concave
+// features (bore walls) reconstruct inward correctly, and it vanishes for
+// straight-ruled edges (alpha = 0), keeping flat-adjacent geometry exact.
+vec3 surface_crossing(vec3 p_a, vec3 p_b, vec3 n_a, vec3 n_b,
+                      float d_a, float d_b) {
+  float t = d_a / (d_a - d_b);
+  vec3 p = mix(p_a, p_b, t);
+  vec3 n_c = mix(n_a, n_b, t);
+  if (dot(n_c, n_c) < 1e-12) return p;   // opposed normals — no arc to fit
+  vec3 chord = p_b - p_a;
+  float cos_alpha = clamp(dot(n_a, n_b), -1.0, 1.0);
+  float sin_half  = sqrt(0.5 * (1.0 - cos_alpha));
+  float sag = length(chord) * sin_half * t * (1.0 - t);
+  return p + normalize(n_c) * (sag * sign(dot(n_b - n_a, chord)));
+}
 
 void main() {
   const float kFlatDot = 0.99999; // ~0.26 deg — see planar-facet cull below
@@ -107,13 +149,16 @@ void main() {
   vec3 pts[2];
   int  count = 0;
   if (f0 != f1) {
-    pts[count++] = mix(v_world_pos[0], v_world_pos[1], d0 / (d0 - d1));
+    pts[count++] = surface_crossing(v_world_pos[0], v_world_pos[1],
+                                    n0, n1, d0, d1);
   }
   if (f1 != f2) {
-    pts[count++] = mix(v_world_pos[1], v_world_pos[2], d1 / (d1 - d2));
+    pts[count++] = surface_crossing(v_world_pos[1], v_world_pos[2],
+                                    n1, n2, d1, d2);
   }
   if (f2 != f0 && count < 2) {
-    pts[count++] = mix(v_world_pos[2], v_world_pos[0], d2 / (d2 - d0));
+    pts[count++] = surface_crossing(v_world_pos[2], v_world_pos[0],
+                                    n2, n0, d2, d0);
   }
   if (count < 2) return;
 
