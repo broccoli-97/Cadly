@@ -134,16 +134,19 @@ edge buffers. Both line modes get them from a per-frame GPU pass
 the surface triangles through the PBR VAO and emits the zero-crossing of
 `dot(N, toward-eye)` interpolated *inside* each triangle — smooth sub-facet
 contours, no adjacency data, no CPU recompute while orbiting. Each crossing is
-then lifted from the triangle's chord onto the *true* surface (second-order
-sag reconstruction from the edge's endpoint normals, curvature-signed for
-concave bores — see `surface_crossing` in `silhouette.geom`): the raw chord
-point sits up to one linear-deflection *inside* the solid, and at grazing
-contour rays that burial becomes a depth gap big enough for the neighbouring
-front facets or an adjoining planar cap to swallow a whole generator line at
-certain azimuths. The reconstructed segments lie on the smooth surface, so
-the polygon-offset contract above applies to them
-unchanged. Shaded mode deliberately draws no silhouette lines (shading carries
-the contour; commercial CAD does the same). Relatedly, the importer skips
+then lifted from the triangle's chord onto the smooth surface using the
+directional normal curvature along that edge (`0.5 * dot(delta-normal,
+delta-position)`, signed for concave bores — see `surface_crossing` in
+`silhouette.geom`). Do not replace the dot product with the product of vector
+lengths: a cylinder mesh's diagonal edge also spans its zero-curvature axial
+direction, and treating that full length as curved makes the generator bulge
+outward while orbiting. In hidden-line mode only, the reconstructed contour
+gets a fixed 0.65 px outward shift after projection; this provides stable
+raster coverage against the filled depth surface without deforming the
+world-space curve or changing its depth against other geometry. Wireframe has
+no filled surface and therefore gets no screen-space shift. Shaded mode
+deliberately draws no silhouette lines (shading carries the contour;
+commercial CAD does the same). Relatedly, the importer skips
 parametric **seam edges** (`BRep_Tool::IsClosed(edge, face)` — the closing
 edge of cylinder/cone/sphere/torus faces) in both edge buffers: no commercial
 viewer inks seams, and the silhouette pass now supplies curved faces' visual

@@ -19,13 +19,12 @@
 // makes seams (duplicated nodes with equal normals, e.g. a cylinder's
 // parametric seam) come out watertight for free.
 //
-// The emitted segment endpoints start as barycentric points ON the triangle,
-// then get pushed out to the *true* surface (see surface_crossing below):
-// their depth is the smooth surface's own depth, so the renderer's
-// polygon-offset scheme (faces pushed back, lines at true depth) keeps
-// visible contours in front of their surface while genuinely occluded
-// contours still lose the depth test — exactly the hidden-line semantics the
-// BRep edge overlay uses.
+// The emitted segment endpoints start as barycentric points on the triangle
+// and are reconstructed onto the smooth surface (see surface_crossing).
+// Hidden-line mode additionally shifts the projected line outward by a fixed
+// sub-pixel amount. Keeping that coverage adjustment in screen space is
+// important: moving farther in world space makes long, diagonally split
+// cylinders visibly bulge as the contour crosses each triangle.
 
 layout(triangles) in;
 layout(line_strip, max_vertices = 2) out;
@@ -54,6 +53,8 @@ layout(std140) uniform FrameBlock {
 // all view rays are parallel, and using the eye point instead would bow the
 // contour of a long cylinder toward the eye's perpendicular foot.
 uniform vec4 u_view_ref;
+uniform vec2 u_viewport_px;
+uniform float u_outward_px;
 
 // The d = 0 crossing on edge a->b, lifted from the chord onto the smooth
 // surface it approximates.
@@ -70,29 +71,53 @@ uniform vec4 u_view_ref;
 // generator, so as the camera's azimuth sweeps across a facet the ENTIRE
 // contour line pops in and out of visibility at once.
 //
-// Second-order reconstruction from data already in the triangle: the two
-// endpoint normals span the local bend angle alpha (cos(alpha) = n_a.n_b),
-// the local radius of curvature is |chord| / (2 sin(alpha/2)), and the
-// chord-to-arc gap at parameter t works out to
-//     sag(t) = |chord| * sin(alpha/2) * t * (1 - t).
-// Pushing the chord point that far along the interpolated normal lands it on
-// the circumscribed arc — the true surface to second order — which is also
-// OUTSIDE every neighbouring chord facet, so the contour can never be hidden
-// by its own mesh again. The push is signed by the bend direction
-// (dot(n_b - n_a, chord): positive = convex, normals fan outward) so concave
-// features (bore walls) reconstruct inward correctly, and it vanishes for
-// straight-ruled edges (alpha = 0), keeping flat-adjacent geometry exact.
+// Second-order reconstruction from the discrete normal curvature along this
+// particular edge:
+//     sag(t) = 0.5 * dot(n_b - n_a, p_b - p_a) * t * (1 - t).
+// The dot product is the essential part. The previous implementation used
+// 0.5*|delta-normal|*|chord|, its Cauchy upper bound, which is equal only when
+// the edge follows one curvature direction. A cylinder's mesh diagonals also
+// span its zero-curvature axial direction, so that bound treated the full
+// cylinder length as curved and pushed the mid-height contour far outside the
+// body. The directional form automatically discards that axial component and
+// retains the signed convex/concave bend needed for outer walls and bores.
 vec3 surface_crossing(vec3 p_a, vec3 p_b, vec3 n_a, vec3 n_b,
-                      float d_a, float d_b) {
+                      float d_a, float d_b, out vec3 n_c) {
   float t = d_a / (d_a - d_b);
   vec3 p = mix(p_a, p_b, t);
-  vec3 n_c = mix(n_a, n_b, t);
-  if (dot(n_c, n_c) < 1e-12) return p;   // opposed normals — no arc to fit
+  n_c = mix(n_a, n_b, t);
+  if (dot(n_c, n_c) < 1e-12) {
+    n_c = n_a;
+    return p;   // opposed normals — no local surface to reconstruct
+  }
+  n_c = normalize(n_c);
   vec3 chord = p_b - p_a;
-  float cos_alpha = clamp(dot(n_a, n_b), -1.0, 1.0);
-  float sin_half  = sqrt(0.5 * (1.0 - cos_alpha));
-  float sag = length(chord) * sin_half * t * (1.0 - t);
-  return p + normalize(n_c) * (sag * sign(dot(n_b - n_a, chord)));
+  float sag = 0.5 * dot(n_b - n_a, chord) * t * (1.0 - t);
+  return p + n_c * sag;
+}
+
+// Move a hidden-line contour just beyond the filled surface in screen space.
+// At a smooth silhouette the projected normal points away from the body. A
+// fixed pixel offset gives stable raster coverage at every zoom level without
+// changing the model-space curve or pulling it through unrelated geometry in
+// depth. Wireframe passes u_outward_px=0 because it has no filled surface to
+// compete with.
+vec4 project_contour(vec3 p, vec3 n) {
+  vec4 clip = u_view_proj * vec4(p, 1.0);
+  if (u_outward_px <= 0.0 || abs(clip.w) < 1e-8) return clip;
+
+  // Derivative of the perspective divide for a displacement along n.
+  vec4 delta_clip = u_view_proj * vec4(n, 0.0);
+  vec2 ndc_dir = (delta_clip.xy * clip.w - clip.xy * delta_clip.w) /
+                 (clip.w * clip.w);
+  vec2 pixel_dir = ndc_dir * (0.5 * u_viewport_px);
+  float pixel_len2 = dot(pixel_dir, pixel_dir);
+  if (pixel_len2 < 1e-12) return clip;
+
+  vec2 unit_pixel_dir = pixel_dir * inversesqrt(pixel_len2);
+  vec2 ndc_offset = unit_pixel_dir * (2.0 * u_outward_px / u_viewport_px);
+  clip.xy += ndc_offset * clip.w;
+  return clip;
 }
 
 void main() {
@@ -147,24 +172,28 @@ void main() {
   if (f0 == f1 && f1 == f2) return;   // wholly front- or back-facing
 
   vec3 pts[2];
+  vec3 ns[2];
   int  count = 0;
   if (f0 != f1) {
-    pts[count++] = surface_crossing(v_world_pos[0], v_world_pos[1],
-                                    n0, n1, d0, d1);
+    pts[count] = surface_crossing(v_world_pos[0], v_world_pos[1],
+                                  n0, n1, d0, d1, ns[count]);
+    ++count;
   }
   if (f1 != f2) {
-    pts[count++] = surface_crossing(v_world_pos[1], v_world_pos[2],
-                                    n1, n2, d1, d2);
+    pts[count] = surface_crossing(v_world_pos[1], v_world_pos[2],
+                                  n1, n2, d1, d2, ns[count]);
+    ++count;
   }
   if (f2 != f0 && count < 2) {
-    pts[count++] = surface_crossing(v_world_pos[2], v_world_pos[0],
-                                    n2, n0, d2, d0);
+    pts[count] = surface_crossing(v_world_pos[2], v_world_pos[0],
+                                  n2, n0, d2, d0, ns[count]);
+    ++count;
   }
   if (count < 2) return;
 
-  gl_Position = u_view_proj * vec4(pts[0], 1.0);
+  gl_Position = project_contour(pts[0], ns[0]);
   EmitVertex();
-  gl_Position = u_view_proj * vec4(pts[1], 1.0);
+  gl_Position = project_contour(pts[1], ns[1]);
   EmitVertex();
   EndPrimitive();
 }

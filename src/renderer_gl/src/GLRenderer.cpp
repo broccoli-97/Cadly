@@ -1498,14 +1498,12 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
   // through shading itself, and the commercial viewers likewise reserve
   // silhouette curves for their line-based styles.
   //
-  // The emitted segments lie ON the surface (barycentric points inside each
-  // triangle), so the polygon-offset contract that keeps BRep edge overlays
-  // stable applies unchanged in hidden-line mode: contour fragments beat
-  // their own pushed-back face, still lose to genuinely nearer geometry,
-  // and the same GL_GREATER trick as draw_edges recovers the occluded ones
-  // for the dimmed pass. In wireframe mode there is no depth prepass and
-  // the contours draw unconditionally like every other line — wireframe
-  // shows everything by definition.
+  // The geometry stage reconstructs its crossings onto the smooth surface.
+  // Hidden-line then shifts them outward by a fixed sub-pixel distance in
+  // screen space, matching the coverage treatment used by production CAD
+  // renderers: it prevents the filled surface from swallowing its own
+  // tangent contour without deforming the world-space curve or changing its
+  // depth against genuinely nearer geometry. Wireframe needs no such shift.
   if (!prog_silhouette_.valid() || !scene_) return;
   if (!mode.hidden_line && !mode.wireframe) return;
   if (hidden_pass && !mode.hidden_line) return;
@@ -1515,6 +1513,8 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
   const GLint loc_normal_m = prog_silhouette_.uniform(gl_, "u_normal_matrix");
   const GLint loc_color    = prog_silhouette_.uniform(gl_, "u_color");
   const GLint loc_view_ref = prog_silhouette_.uniform(gl_, "u_view_ref");
+  const GLint loc_viewport = prog_silhouette_.uniform(gl_, "u_viewport_px");
+  const GLint loc_outward  = prog_silhouette_.uniform(gl_, "u_outward_px");
 
   // The facing function must match the projection, not just the eye point:
   // under orthographic projection all view rays are parallel, so the shader
@@ -1528,6 +1528,12 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
       ? scene::vec4(cam.position(), 1.0f)
       : scene::vec4(-cam.forward(), 0.0f);
   gl_.glUniform4fv(loc_view_ref, 1, &view_ref.x);
+  const scene::vec2 viewport_px{static_cast<float>(viewport_w_),
+                                static_cast<float>(viewport_h_)};
+  gl_.glUniform2fv(loc_viewport, 1, &viewport_px.x);
+  // A 1.2 px line centred 0.65 px outside the surface keeps at least one
+  // covered sample visible. This is a raster-space contract, not geometry.
+  gl_.glUniform1f(loc_outward, mode.hidden_line ? 0.65f : 0.0f);
 
   // Same pen and blend/depth etiquette as draw_edges so the two line
   // families read as one drawing (see there for the alpha-preserving blend
