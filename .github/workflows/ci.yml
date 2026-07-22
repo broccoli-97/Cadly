@@ -1,7 +1,8 @@
 # CI: build + test on Linux and Windows, and publish runnable packages.
 #
 # Two build flavors, matching the two supported dependency strategies:
-#   - Linux: system Qt6 + OCCT from apt (the primary dev configuration).
+#   - Linux: system Qt6 + OCCT from apt (the primary dev configuration), then
+#     bundled with their runtime closure into a portable tarball.
 #     Pinned to ubuntu-24.04 (Qt 6.4, OCCT 7.6) so a runner-image bump can't
 #     silently change the toolchain the way `ubuntu-latest` would.
 #   - Windows: vcpkg manifest build (Qt 6.11, OCCT 8.0 at the pinned
@@ -54,13 +55,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ninja-build \
-            qt6-base-dev qt6-svg-dev \
+            qt6-base-dev qt6-svg-dev qt6-wayland \
             libocct-foundation-dev libocct-modeling-data-dev \
             libocct-modeling-algorithms-dev libocct-data-exchange-dev \
             libocct-ocaf-dev \
             libtbb-dev libfontconfig-dev \
             libglm-dev libfmt-dev libspdlog-dev \
-            libgl1-mesa-dev
+            libgl1-mesa-dev \
+            patchelf
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -79,29 +81,13 @@ jobs:
       - name: Package
         if: matrix.preset == 'linux-release'
         run: |
-          cmake --install build/${{ matrix.preset }} --prefix stage/cadly
-          # FetchContent'd deps (qlementine-icons) install dev files into the
-          # prefix; the viewer package only needs bin/ + share/.
-          rm -rf stage/cadly/include stage/cadly/lib
-          mkdir -p stage/cadly/sample-files
-          cp test_files/as1-ug-214.stp stage/cadly/sample-files/
-          cat > stage/cadly/README.txt <<'EOF'
-          Cadly — Linux build (not self-contained)
-
-          Built on Ubuntu 24.04 against the system Qt 6 and Open CASCADE 7.6
-          packages. It needs those runtime libraries present; the easiest way
-          to get them all is the dev packages:
-
-            sudo apt install qt6-base-dev qt6-svg-dev libocct-data-exchange-dev \
-                 libocct-ocaf-dev libfmt-dev libspdlog-dev
-
-          Run:
-            bin/cadly sample-files/as1-ug-214.stp     # GUI viewer
-            bin/cad_import_cli sample-files/as1-ug-214.stp   # headless import stats
-          EOF
-          # Validate the installed tree actually runs from its own layout
-          # (asset lookup via ../share/cadly, system libs resolvable).
-          ./stage/cadly/bin/cad_import_cli test_files/as1-ug-214.stp
+          packaging/linux/package-portable.sh \
+            build/${{ matrix.preset }} stage/cadly
+          # Exercise both entry points through the packaged RPATH/plugin
+          # layout. --help exits before the GUI needs a display or GL context.
+          QT_QPA_PLATFORM=offscreen ./stage/cadly/bin/cadly --help >/dev/null
+          ./stage/cadly/bin/cad_import_cli \
+            stage/cadly/sample-files/as1-ug-214.stp
           # Tar before upload: artifact zips don't preserve the exec bit.
           tar -czf cadly-linux-x64.tar.gz -C stage cadly
 
