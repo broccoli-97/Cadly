@@ -60,9 +60,11 @@ struct DisplayMode {
   // the highlight looks identical from every camera angle (the previous
   // rim-weighted lit tint read as the selection colour itself changing
   // while orbiting), and the sub-1 opacity keeps the part's own shading
-  // visible through the film so it still reads as 3D geometry. In
-  // wireframe mode selected edges draw in the colour outright. Nodes with
-  // Node::ghosted (isolate mode) render as a translucent veil at
+  // visible through the film so it still reads as 3D geometry. Selected
+  // edges draw in the colour outright with a slightly heavier
+  // stroke in every display mode; occluded selected edges remain visible at
+  // reduced opacity, while the face wash stays normally depth-tested. Nodes
+  // with Node::ghosted (isolate mode) render as a translucent veil at
   // `ghost_opacity` — full-detail geometry, but faded so the focused part
   // carries the frame. The default colour matches the dark theme's
   // viewport_highlight token: a saturated signal orange, chosen over the

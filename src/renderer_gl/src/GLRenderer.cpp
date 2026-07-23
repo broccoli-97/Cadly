@@ -321,6 +321,10 @@ void emit_stroke(std::vector<OverlayVertex>& out, const PxStroke& s,
 // The near-black pen shared by the BRep edge and silhouette passes; dark
 // line over warm surfaces reads as ink.
 constexpr scene::vec3 kEdgeInk{0.05f, 0.06f, 0.08f};
+constexpr float kEdgeLineWidthPx             = 1.2f;
+constexpr float kSelectionLineWidthPx        = 1.8f;
+constexpr float kOccludedSelectionOpacity    = 0.38f;
+constexpr float kSelectionContourOutwardPx   = 0.90f;
 
 // Dimmed ink for the hidden-line mode's occluded-line pass: the visible ink
 // pulled most of the way toward the paper colour, i.e. the grey Creo-style
@@ -361,9 +365,11 @@ private:
   // Upload `overlay_vertices_` and draw them as one blended, depth-ignoring
   // triangle batch. Shared tail of every 2D overlay pass (scale bar, triad).
   void submit_overlay();
-  void draw_edges(const renderer::DisplayMode& mode, bool hidden_pass = false);
+  void draw_edges(const renderer::DisplayMode& mode, bool hidden_pass = false,
+                  bool selection_only = false);
   void draw_silhouettes(const renderer::DisplayMode& mode,
-                        bool hidden_pass = false);
+                        bool hidden_pass = false,
+                        bool selection_only = false);
   void draw_triangle_mesh(const renderer::DisplayMode& mode);
   bool needs_redraw() const override;
 
@@ -1322,7 +1328,8 @@ void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
 }
 
 void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
-                                bool hidden_pass) {
+                                bool hidden_pass,
+                                bool selection_only) {
   // Three display modes feed this pass:
   //   - mode.show_edges : overlay BRep edges on the shaded surface using
   //                       the mesh-coupled strip (depth-matched, no
@@ -1333,20 +1340,21 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
   //                       triangulated face to anchor against.
   //   - mode.hidden_line: draw mesh-coupled BRep edges over flat faces; the
   //                       filled depth buffer removes back-side lines.
+  //   - selection_only : draw only selected-node edges, including when the
+  //                      base display mode has no edge overlay enabled.
   // The three surface modes are mutually exclusive at the UI level.
   //
-  // `hidden_pass` is the hidden-line mode's second submission of the same
-  // strips with the depth test INVERTED (GL_GREATER): exactly the fragments
-  // the visible pass rejects — lines occluded by the model — draw in dimmed
-  // ink, so hidden structure stays readable the way Creo's "Hidden Line"
-  // style keeps it grey. Lines on their own visible face cannot double-draw
-  // here: the face was pushed back by glPolygonOffset, so the line's true
-  // depth is *nearer* than the stored value and GL_GREATER rejects it.
-  // Against the untouched background depth (1.0) GL_GREATER also rejects,
-  // which is what keeps the dimmed ink from ghosting over empty space.
+  // `hidden_pass` inverts the depth test (GL_GREATER): normal hidden-line
+  // rendering uses it for dimmed drafting ink, while the selection-only
+  // variant uses it for the translucent, through-object selection edge.
+  // Lines on their own visible face cannot double-draw here: the face was
+  // pushed back by glPolygonOffset, so the line's true depth is nearer than
+  // the stored value and GL_GREATER rejects it. Untouched background depth
+  // (1.0) rejects it too, keeping the pass inside the model silhouette.
   if (!prog_edges_.valid() || !scene_) return;
-  if (!mode.show_edges && !mode.wireframe && !mode.hidden_line) return;
-  if (hidden_pass && !mode.hidden_line) return;
+  if (!selection_only &&
+      !mode.show_edges && !mode.wireframe && !mode.hidden_line) return;
+  if (!selection_only && hidden_pass && !mode.hidden_line) return;
 
   gl_.glUseProgram(prog_edges_.id());
   const GLint loc_model = prog_edges_.uniform(gl_, "u_model");
@@ -1363,7 +1371,11 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
   // Depth test ON so back-of-part edges stay hidden. Depth write OFF so
   // the edge overlay doesn't pollute the depth buffer for the pivot pass.
   gl_.glDepthMask(GL_FALSE);
-  if (hidden_pass) gl_.glDepthFunc(GL_GREATER);
+  if (hidden_pass) {
+    gl_.glDepthFunc(GL_GREATER);
+  } else if (selection_only) {
+    gl_.glDepthFunc(GL_LEQUAL);
+  }
 
   // Dark line over warm surfaces reads as ink; intensity slider in
   // DisplayMode controls overall strength. The hidden pass draws solid
@@ -1372,9 +1384,12 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
   // every crossing of two hidden lines.
   const float a = mode.hidden_line
     ? 1.0f : std::clamp(mode.edge_intensity, 0.0f, 1.0f);
-  const scene::vec4 ec = hidden_pass
-    ? scene::vec4(hidden_ink_rgb(mode.hidden_line_color), 1.0f)
-    : scene::vec4(kEdgeInk, a);
+  const scene::vec4 ec = selection_only
+    ? scene::vec4(mode.selection_color,
+                  hidden_pass ? kOccludedSelectionOpacity : 1.0f)
+    : hidden_pass
+      ? scene::vec4(hidden_ink_rgb(mode.hidden_line_color), 1.0f)
+      : scene::vec4(kEdgeInk, a);
 
   gl_.glEnable(GL_BLEND);
   // Alpha-preserving blend: the edge ink blends into RGB normally, but
@@ -1386,9 +1401,10 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
   // pixels translucent and the desktop would bleed through the lines.
   gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
                           GL_ZERO,      GL_ONE);
-  // Drivers ignore this in core profile but it costs nothing and helps the
-  // permissive ones (Mesa, some Intel) draw 1.2 px lines.
-  gl_.glLineWidth(1.2f);
+  // A selected edge gets a restrained weight increase, matching the solid
+  // orange outline + faint occluded structure used by commercial CAD tools.
+  // Drivers restricted to 1 px core lines simply clamp this harmlessly.
+  gl_.glLineWidth(selection_only ? kSelectionLineWidthPx : kEdgeLineWidthPx);
 
   // Primitive restart lets a single GL_LINE_STRIP draw cover the whole edge
   // buffer: each polyline is a contiguous run of indices, separated by the
@@ -1437,12 +1453,13 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
 
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;
+    if (selection_only && !node.selected) continue;
     // Ghosted (isolate) parts draw no edge ink in the surface modes: their
     // faces are a translucent veil, and full-strength edges on top would
     // read as more present than the focused part. Wireframe has no surfaces
     // to carry the veil, so there the ghosting moves into the line alpha
     // below instead of skipping the node.
-    if (node.ghosted && !mode.wireframe) continue;
+    if (!selection_only && node.ghosted && !mode.wireframe) continue;
     if (*node.mesh_index >= scene_->meshes.size()) continue;
     const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
     if (!mesh_ptr) continue;
@@ -1478,12 +1495,11 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
       count = g.strip_index_count;
     }
 
-    // Wireframe is lines-only, so selection/isolate cues live in the ink
-    // itself: the selected part's edges take the accent colour, ghosted
-    // parts fade to a whisper. The surface modes keep uniform ink — there
-    // the surface tint/veil already carries both cues.
+    // Wireframe is lines-only, so its base pass also carries selection and
+    // isolate cues. The dedicated selection pass redraws selected lines at
+    // the stronger weight after this, keeping all display modes consistent.
     scene::vec4 line_color = ec;
-    if (mode.wireframe) {
+    if (!selection_only && mode.wireframe) {
       if (node.selected) {
         line_color = scene::vec4(mode.selection_color, ec.a);
       }
@@ -1504,7 +1520,8 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
 }
 
 void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
-                                      bool hidden_pass) {
+                                      bool hidden_pass,
+                                      bool selection_only) {
   // Companion to draw_edges for the lines a BRep doesn't have: the
   // view-dependent contours where a smooth surface curves away from the
   // camera (cylinder sides, sphere outlines, fillet horizons). Without them
@@ -1515,9 +1532,10 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
   // surface triangles go in through the PBR VAO, contour segments come out,
   // so orbiting stays live with no CPU recompute and no extra buffers.
   //
-  // Only the line styles draw them. Shaded mode conveys the same contour
-  // through shading itself, and the commercial viewers likewise reserve
-  // silhouette curves for their line-based styles.
+  // The normal pass is reserved for line styles: shaded mode conveys the
+  // contour through lighting itself. The selection-only pass is the one
+  // exception, since a selected shaded part still benefits from a clear
+  // silhouette cue.
   //
   // The geometry stage reconstructs its crossings onto the smooth surface.
   // Hidden-line then shifts them outward by a fixed sub-pixel distance in
@@ -1526,8 +1544,8 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
   // tangent contour without deforming the world-space curve or changing its
   // depth against genuinely nearer geometry. Wireframe needs no such shift.
   if (!prog_silhouette_.valid() || !scene_) return;
-  if (!mode.hidden_line && !mode.wireframe) return;
-  if (hidden_pass && !mode.hidden_line) return;
+  if (!selection_only && !mode.hidden_line && !mode.wireframe) return;
+  if (!selection_only && hidden_pass && !mode.hidden_line) return;
 
   gl_.glUseProgram(prog_silhouette_.id());
   const GLint loc_model    = prog_silhouette_.uniform(gl_, "u_model");
@@ -1552,32 +1570,44 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
   const scene::vec2 viewport_px{static_cast<float>(viewport_w_),
                                 static_cast<float>(viewport_h_)};
   gl_.glUniform2fv(loc_viewport, 1, &viewport_px.x);
-  // A 1.2 px line centred 0.65 px outside the surface keeps at least one
-  // covered sample visible. This is a raster-space contract, not geometry.
-  gl_.glUniform1f(loc_outward, mode.hidden_line ? 0.65f : 0.0f);
+  // Move contours half their pen width outside the surface so at least one
+  // covered sample remains visible. This is a raster-space contract, not a
+  // geometry deformation.
+  gl_.glUniform1f(loc_outward,
+                  selection_only
+                    ? kSelectionContourOutwardPx
+                    : mode.hidden_line ? 0.65f : 0.0f);
 
   // Same pen and blend/depth etiquette as draw_edges so the two line
   // families read as one drawing (see there for the alpha-preserving blend
   // and the solid-hidden-ink rationale).
   const float a = mode.hidden_line
     ? 1.0f : std::clamp(mode.edge_intensity, 0.0f, 1.0f);
-  const scene::vec4 ec = hidden_pass
-    ? scene::vec4(hidden_ink_rgb(mode.hidden_line_color), 1.0f)
-    : scene::vec4(kEdgeInk, a);
+  const scene::vec4 ec = selection_only
+    ? scene::vec4(mode.selection_color,
+                  hidden_pass ? kOccludedSelectionOpacity : 1.0f)
+    : hidden_pass
+      ? scene::vec4(hidden_ink_rgb(mode.hidden_line_color), 1.0f)
+      : scene::vec4(kEdgeInk, a);
 
   gl_.glDepthMask(GL_FALSE);
-  if (hidden_pass) gl_.glDepthFunc(GL_GREATER);
+  if (hidden_pass) {
+    gl_.glDepthFunc(GL_GREATER);
+  } else if (selection_only) {
+    gl_.glDepthFunc(GL_LEQUAL);
+  }
   gl_.glEnable(GL_BLEND);
   gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
                           GL_ZERO,      GL_ONE);
-  gl_.glLineWidth(1.2f);
+  gl_.glLineWidth(selection_only ? kSelectionLineWidthPx : kEdgeLineWidthPx);
 
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;
+    if (selection_only && !node.selected) continue;
     // Ghost/selection handling mirrors draw_edges: surface modes leave
     // ghosted parts as a clean veil; wireframe carries both cues in the
     // ink itself.
-    if (node.ghosted && !mode.wireframe) continue;
+    if (!selection_only && node.ghosted && !mode.wireframe) continue;
     if (*node.mesh_index >= scene_->meshes.size()) continue;
     const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
     if (!mesh_ptr) continue;
@@ -1591,7 +1621,7 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
     if (g.vao == 0 || g.index_count == 0) continue;
 
     scene::vec4 line_color = ec;
-    if (mode.wireframe) {
+    if (!selection_only && mode.wireframe) {
       if (node.selected) {
         line_color = scene::vec4(mode.selection_color, ec.a);
       }
@@ -1774,6 +1804,11 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     // have no presence at all between their boundary edges (a cylinder is
     // two circles), and Creo-style wireframe does draw silhouette edges.
     draw_silhouettes(mode);
+    // Redraw the selected part with a slightly heavier pen so selection is
+    // more than a colour substitution in this lines-only display mode.
+    draw_edges(mode, /*hidden_pass=*/false, /*selection_only=*/true);
+    draw_silhouettes(mode, /*hidden_pass=*/false,
+                     /*selection_only=*/true);
     draw_pivot(mode);
     draw_axes_triad(mode);
     draw_scale_bar(mode);
@@ -1790,8 +1825,13 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   //   - lines on the BACK of the part still fail the depth test against
   //     the front-facing surface — i.e. hidden lines stay hidden.
   // This is the classic CAD "shaded with edges" recipe.
+  const bool any_selected = std::any_of(
+    scene_->nodes.begin(), scene_->nodes.end(),
+    [](const scene::Node& node) {
+      return node.visible && node.selected && node.mesh_index.has_value();
+    });
   const bool line_overlay = mode.show_edges || mode.show_triangle_mesh ||
-                            mode.hidden_line;
+                            mode.hidden_line || any_selected;
   if (line_overlay) {
     gl_.glEnable(GL_POLYGON_OFFSET_FILL);
     // Mesh-coupled BRep edges and triangle-mesh lines both index the
@@ -1941,6 +1981,19 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     gl_.glUniform1f(loc_ghost, 0.0f);
     gl_.glDepthMask(GL_TRUE);
     gl_.glDisable(GL_BLEND);
+  }
+
+  // Selection edges are intentionally the final model pass. GL_GREATER
+  // first reveals occluded selected edges at low opacity; the normal depth
+  // pass then restores visible edges at full colour and a slightly heavier
+  // line weight. Selected faces never use this x-ray path.
+  if (any_selected) {
+    draw_edges(mode, /*hidden_pass=*/true, /*selection_only=*/true);
+    draw_silhouettes(mode, /*hidden_pass=*/true,
+                     /*selection_only=*/true);
+    draw_edges(mode, /*hidden_pass=*/false, /*selection_only=*/true);
+    draw_silhouettes(mode, /*hidden_pass=*/false,
+                     /*selection_only=*/true);
   }
 
   draw_pivot(mode);
