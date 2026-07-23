@@ -6,6 +6,7 @@ add_library(cadly_renderer_gl STATIC
   src/GLFunctions.cpp
   src/GLRenderer.cpp
   src/GLShader.cpp
+  src/IblBakePlan.cpp
 )
 add_library(Cadly::RendererGL ALIAS cadly_renderer_gl)
 

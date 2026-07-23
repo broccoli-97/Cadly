@@ -2,6 +2,7 @@
 
 #include "GLFunctions.h"
 #include "GLShader.h"
+#include "IblBakePlan.h"
 
 #include "cadly/platform/Log.h"
 #include "cadly/scene/Math.h"
@@ -364,6 +365,7 @@ private:
   void draw_silhouettes(const renderer::DisplayMode& mode,
                         bool hidden_pass = false);
   void draw_triangle_mesh(const renderer::DisplayMode& mode);
+  bool needs_redraw() const override;
 
   // MSAA offscreen target. The renderer owns its own multisample colour +
   // depth renderbuffers so anti-aliasing quality is decoupled from the host
@@ -375,15 +377,14 @@ private:
   void ensure_msaa_target(int width_px, int height_px, int samples);
   void release_msaa_target();
 
-  // IBL bake — runs once at init. The four targets together implement the
-  // Karis split-sum approximation: irradiance for diffuse, prefilter +
-  // brdf_lut for specular.
-  bool   bake_ibl();
+  // IBL bake — targets are allocated at init and filled incrementally. The
+  // four targets implement the Karis split-sum approximation: irradiance for
+  // diffuse, prefilter + brdf_lut for specular.
+  bool   begin_ibl_bake();
+  void   pump_ibl_bake();
+  bool   check_ibl_fbo(const char* pass_name);
+  void   fail_ibl_bake(const char* reason);
   GLuint create_cubemap(int size, int mip_count);
-  void   bake_env_cube();
-  void   bake_irradiance();
-  void   bake_prefilter();
-  void   bake_brdf_lut();
   static scene::mat3 cube_face_basis(int face);
 
   GLLoadProc load_proc_;
@@ -433,6 +434,10 @@ private:
   int      prefilter_mip_count_{5};
   int      brdf_lut_size_{256};
   GLuint   vao_quad_{0};
+  GLuint   ibl_fbo_{0};
+  std::unique_ptr<detail::IblBakePlan> ibl_plan_;
+  bool     ibl_ready_{false};
+  bool     ibl_failed_{false};
 
   // Scene + GPU mesh cache. Keyed by `const scene::Mesh*` purely to avoid the
   // const_cast that the previous non-const key forced. ABA address-reuse
@@ -537,11 +542,12 @@ void GLRendererImpl::initialize() {
   // triangle with no vertex attributes and pull positions from gl_VertexID.
   gl_.glGenVertexArrays(1, &vao_quad_);
 
-  // Bake the IBL targets once. Failure is non-fatal (the PBR shader falls
-  // back to its constant ambient if the cubemaps are zero) but the user
-  // would lose all environment lighting, so log loudly.
-  if (!bake_ibl()) {
-    CADLY_LOG_WARN("IBL bake failed — falling back to analytical ambient.");
+  // Allocate the IBL targets, then fill them incrementally from render().
+  // Initialization must not block the GUI thread on hundreds of millions of
+  // convolution samples. PBR stays on its analytical ambient path until the
+  // plan reports that every target is complete.
+  if (!begin_ibl_bake()) {
+    CADLY_LOG_WARN("IBL bake could not start — using analytical ambient.");
   }
 
   initialised_ = true;
@@ -830,16 +836,28 @@ GLuint GLRendererImpl::create_cubemap(int size, int mip_count) {
   return tex;
 }
 
-bool GLRendererImpl::bake_ibl() {
+bool GLRendererImpl::check_ibl_fbo(const char* pass_name) {
+  const GLenum status = gl_.glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (status == GL_FRAMEBUFFER_COMPLETE) return true;
+  CADLY_LOG_ERROR("IBL {} FBO incomplete (status=0x{:x})", pass_name, status);
+  return false;
+}
+
+void GLRendererImpl::fail_ibl_bake(const char* reason) {
+  if (!ibl_failed_) CADLY_LOG_WARN("IBL bake disabled: {}", reason);
+  ibl_failed_ = true;
+  ibl_ready_ = false;
+  ibl_plan_.reset();
+  if (ibl_fbo_) gl_.glDeleteFramebuffers(1, &ibl_fbo_);
+  ibl_fbo_ = 0;
+}
+
+bool GLRendererImpl::begin_ibl_bake() {
   if (!prog_env_capture_.valid() || !prog_irradiance_.valid() ||
       !prog_prefilter_.valid()  || !prog_brdf_lut_.valid()) {
+    fail_ibl_bake("required bake program is unavailable");
     return false;
   }
-
-  // Snapshot GL state we're going to clobber so the caller's setup survives.
-  GLint prev_fbo = 0, prev_viewport[4] = {0, 0, 0, 0};
-  gl_.glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
-  gl_.glGetIntegerv(GL_VIEWPORT, prev_viewport);
 
   // env_cube needs a mip chain because the prefilter pass samples it with
   // textureLod at PDF-matched mip levels to dodge fireflies.
@@ -858,123 +876,156 @@ bool GLRendererImpl::bake_ibl() {
   gl_.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   gl_.glBindTexture(GL_TEXTURE_2D, 0);
 
+  gl_.glGenFramebuffers(1, &ibl_fbo_);
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, ibl_fbo_);
+  gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                             GL_TEXTURE_CUBE_MAP_POSITIVE_X, env_cube_, 0);
+  const bool complete = check_ibl_fbo("environment");
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  if (!complete) {
+    fail_ibl_bake("environment target is not renderable");
+    return false;
+  }
+
+  ibl_plan_ = std::make_unique<detail::IblBakePlan>(
+    env_cube_size_, irradiance_size_, prefilter_size_, prefilter_mip_count_,
+    brdf_lut_size_);
+  ibl_ready_ = false;
+  ibl_failed_ = false;
+  return true;
+}
+
+void GLRendererImpl::pump_ibl_bake() {
+  if (!ibl_plan_ || ibl_plan_->complete() || ibl_failed_) return;
+
+  GLint previous_fbo = 0;
+  GLint previous_viewport[4] = {0, 0, 0, 0};
+  gl_.glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_fbo);
+  gl_.glGetIntegerv(GL_VIEWPORT, previous_viewport);
+
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, ibl_fbo_);
   gl_.glDisable(GL_DEPTH_TEST);
   gl_.glDisable(GL_CULL_FACE);
   gl_.glDisable(GL_BLEND);
   gl_.glBindVertexArray(vao_quad_);
 
-  bake_env_cube();
+  constexpr int kStepsPerFrame = 4;
+  for (int i = 0; i < kStepsPerFrame; ++i) {
+    const auto step = ibl_plan_->current();
+    if (!step) break;
 
-  // Generate mip chain of env cube — the prefilter shader samples mip levels
-  // via textureLod to keep importance-sampled specular free of fireflies.
-  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, env_cube_);
-  gl_.glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
-  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+    if (step->pass == detail::IblBakePass::GenerateEnvironmentMips) {
+      gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, env_cube_);
+      gl_.glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+      gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+      ibl_plan_->advance();
+      continue;
+    }
 
-  bake_irradiance();
-  bake_prefilter();
-  bake_brdf_lut();
+    gl_.glViewport(0, 0, step->target_size, step->target_size);
+    gl_.glEnable(GL_SCISSOR_TEST);
+    gl_.glScissor(step->x, step->y, step->width, step->height);
 
+    switch (step->pass) {
+      case detail::IblBakePass::EnvironmentFace: {
+        gl_.glFramebufferTexture2D(
+          GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+          GL_TEXTURE_CUBE_MAP_POSITIVE_X + step->face, env_cube_, 0);
+        if (!check_ibl_fbo("environment")) {
+          fail_ibl_bake("environment face attachment failed");
+          break;
+        }
+        gl_.glUseProgram(prog_env_capture_.id());
+        const scene::mat3 basis = cube_face_basis(step->face);
+        gl_.glUniformMatrix3fv(
+          prog_env_capture_.uniform(gl_, "u_face_basis"), 1, GL_FALSE,
+          glm::value_ptr(basis));
+        gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
+        break;
+      }
+      case detail::IblBakePass::IrradianceTile: {
+        gl_.glFramebufferTexture2D(
+          GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+          GL_TEXTURE_CUBE_MAP_POSITIVE_X + step->face, irradiance_cube_, 0);
+        if (!check_ibl_fbo("irradiance")) {
+          fail_ibl_bake("irradiance attachment failed");
+          break;
+        }
+        gl_.glUseProgram(prog_irradiance_.id());
+        gl_.glActiveTexture(GL_TEXTURE0);
+        gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, env_cube_);
+        gl_.glUniform1i(prog_irradiance_.uniform(gl_, "u_env_cube"), 0);
+        const scene::mat3 basis = cube_face_basis(step->face);
+        gl_.glUniformMatrix3fv(
+          prog_irradiance_.uniform(gl_, "u_face_basis"), 1, GL_FALSE,
+          glm::value_ptr(basis));
+        gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
+        break;
+      }
+      case detail::IblBakePass::PrefilterTile: {
+        gl_.glFramebufferTexture2D(
+          GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+          GL_TEXTURE_CUBE_MAP_POSITIVE_X + step->face, prefilter_cube_,
+          step->mip);
+        if (!check_ibl_fbo("prefilter")) {
+          fail_ibl_bake("prefilter attachment failed");
+          break;
+        }
+        gl_.glUseProgram(prog_prefilter_.id());
+        gl_.glActiveTexture(GL_TEXTURE0);
+        gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, env_cube_);
+        gl_.glUniform1i(prog_prefilter_.uniform(gl_, "u_env_cube"), 0);
+        gl_.glUniform1f(
+          prog_prefilter_.uniform(gl_, "u_roughness"),
+          prefilter_mip_count_ > 1
+            ? static_cast<float>(step->mip) /
+                static_cast<float>(prefilter_mip_count_ - 1)
+            : 0.0f);
+        gl_.glUniform1f(prog_prefilter_.uniform(gl_, "u_env_resolution"),
+                        static_cast<float>(env_cube_size_));
+        const scene::mat3 basis = cube_face_basis(step->face);
+        gl_.glUniformMatrix3fv(
+          prog_prefilter_.uniform(gl_, "u_face_basis"), 1, GL_FALSE,
+          glm::value_ptr(basis));
+        gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
+        break;
+      }
+      case detail::IblBakePass::BrdfLutTile:
+        gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_2D, brdf_lut_, 0);
+        if (!check_ibl_fbo("BRDF LUT")) {
+          fail_ibl_bake("BRDF LUT attachment failed");
+          break;
+        }
+        gl_.glUseProgram(prog_brdf_lut_.id());
+        gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
+        break;
+      case detail::IblBakePass::GenerateEnvironmentMips:
+        break;
+    }
+
+    gl_.glDisable(GL_SCISSOR_TEST);
+    if (ibl_failed_) break;
+    ibl_plan_->advance();
+  }
+
+  gl_.glDisable(GL_SCISSOR_TEST);
   gl_.glBindVertexArray(0);
+  gl_.glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous_fbo));
+  gl_.glViewport(previous_viewport[0], previous_viewport[1],
+                 previous_viewport[2], previous_viewport[3]);
   gl_.glEnable(GL_DEPTH_TEST);
   gl_.glEnable(GL_CULL_FACE);
-  gl_.glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prev_fbo));
-  gl_.glViewport(prev_viewport[0], prev_viewport[1],
-                 prev_viewport[2], prev_viewport[3]);
-  return true;
-}
+  gl_.glDisable(GL_BLEND);
+  gl_.glDepthMask(GL_TRUE);
 
-void GLRendererImpl::bake_env_cube() {
-  GLuint fbo = 0;
-  gl_.glGenFramebuffers(1, &fbo);
-  gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-  gl_.glViewport(0, 0, env_cube_size_, env_cube_size_);
-  gl_.glUseProgram(prog_env_capture_.id());
-  const GLint loc_basis = prog_env_capture_.uniform(gl_, "u_face_basis");
-
-  for (int face = 0; face < 6; ++face) {
-    gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
-                               env_cube_, 0);
-    const scene::mat3 basis = cube_face_basis(face);
-    gl_.glUniformMatrix3fv(loc_basis, 1, GL_FALSE, glm::value_ptr(basis));
-    gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
+  if (ibl_plan_ && ibl_plan_->complete()) {
+    ibl_ready_ = true;
+    gl_.glDeleteFramebuffers(1, &ibl_fbo_);
+    ibl_fbo_ = 0;
+    ibl_plan_.reset();
+    CADLY_LOG_INFO("IBL bake completed incrementally.");
   }
-  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  gl_.glDeleteFramebuffers(1, &fbo);
-}
-
-void GLRendererImpl::bake_irradiance() {
-  GLuint fbo = 0;
-  gl_.glGenFramebuffers(1, &fbo);
-  gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-  gl_.glViewport(0, 0, irradiance_size_, irradiance_size_);
-
-  gl_.glUseProgram(prog_irradiance_.id());
-  const GLint loc_basis = prog_irradiance_.uniform(gl_, "u_face_basis");
-  const GLint loc_env   = prog_irradiance_.uniform(gl_, "u_env_cube");
-  gl_.glUniform1i(loc_env, 0);
-  gl_.glActiveTexture(GL_TEXTURE0);
-  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, env_cube_);
-
-  for (int face = 0; face < 6; ++face) {
-    gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
-                               irradiance_cube_, 0);
-    const scene::mat3 basis = cube_face_basis(face);
-    gl_.glUniformMatrix3fv(loc_basis, 1, GL_FALSE, glm::value_ptr(basis));
-    gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
-  }
-  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  gl_.glDeleteFramebuffers(1, &fbo);
-}
-
-void GLRendererImpl::bake_prefilter() {
-  GLuint fbo = 0;
-  gl_.glGenFramebuffers(1, &fbo);
-  gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-
-  gl_.glUseProgram(prog_prefilter_.id());
-  const GLint loc_basis = prog_prefilter_.uniform(gl_, "u_face_basis");
-  const GLint loc_env   = prog_prefilter_.uniform(gl_, "u_env_cube");
-  const GLint loc_rough = prog_prefilter_.uniform(gl_, "u_roughness");
-  const GLint loc_res   = prog_prefilter_.uniform(gl_, "u_env_resolution");
-  gl_.glUniform1i(loc_env, 0);
-  gl_.glUniform1f(loc_res, static_cast<float>(env_cube_size_));
-  gl_.glActiveTexture(GL_TEXTURE0);
-  gl_.glBindTexture(GL_TEXTURE_CUBE_MAP, env_cube_);
-
-  for (int mip = 0; mip < prefilter_mip_count_; ++mip) {
-    const int mip_size = std::max(1, prefilter_size_ >> mip);
-    gl_.glViewport(0, 0, mip_size, mip_size);
-    const float roughness = prefilter_mip_count_ > 1
-      ? static_cast<float>(mip) / static_cast<float>(prefilter_mip_count_ - 1)
-      : 0.0f;
-    gl_.glUniform1f(loc_rough, roughness);
-    for (int face = 0; face < 6; ++face) {
-      gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                 GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
-                                 prefilter_cube_, mip);
-      const scene::mat3 basis = cube_face_basis(face);
-      gl_.glUniformMatrix3fv(loc_basis, 1, GL_FALSE, glm::value_ptr(basis));
-      gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
-    }
-  }
-  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  gl_.glDeleteFramebuffers(1, &fbo);
-}
-
-void GLRendererImpl::bake_brdf_lut() {
-  GLuint fbo = 0;
-  gl_.glGenFramebuffers(1, &fbo);
-  gl_.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-  gl_.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                             GL_TEXTURE_2D, brdf_lut_, 0);
-  gl_.glViewport(0, 0, brdf_lut_size_, brdf_lut_size_);
-  gl_.glUseProgram(prog_brdf_lut_.id());
-  gl_.glDrawArrays(GL_TRIANGLES, 0, 3);
-  gl_.glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  gl_.glDeleteFramebuffers(1, &fbo);
 }
 
 void GLRendererImpl::update_frame_uniforms() {
@@ -1667,6 +1718,10 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   GLint default_fbo = 0;
   gl_.glGetIntegerv(GL_FRAMEBUFFER_BINDING, &default_fbo);
 
+  // Advance the IBL plan before redirecting to the optional MSAA target. The
+  // bake restores this host framebuffer and viewport before normal drawing.
+  pump_ibl_bake();
+
   const int wanted_samples = clamp_msaa_samples(mode.msaa_samples);
   const bool use_msaa = wanted_samples > 0;
   if (use_msaa) {
@@ -1801,8 +1856,10 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   const GLint loc_emi       = prog_pbr_.uniform(gl_, "u_emissive");
   const GLint loc_highlight = prog_pbr_.uniform(gl_, "u_highlight");
   const GLint loc_ghost     = prog_pbr_.uniform(gl_, "u_ghost");
+  const GLint loc_ibl       = prog_pbr_.uniform(gl_, "u_ibl_enabled");
   gl_.glUniform1i(prog_pbr_.uniform(gl_, "u_hidden_line"),
                   mode.hidden_line ? 1 : 0);
+  gl_.glUniform1i(loc_ibl, ibl_ready_ ? 1 : 0);
   gl_.glUniform3fv(prog_pbr_.uniform(gl_, "u_hidden_line_color"), 1,
                    &mode.hidden_line_color.x);
   gl_.glUniform3fv(prog_pbr_.uniform(gl_, "u_highlight_color"), 1,
@@ -1921,6 +1978,10 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   draw_scale_bar(mode);
 }
 
+bool GLRendererImpl::needs_redraw() const {
+  return ibl_plan_ && !ibl_plan_->complete() && !ibl_failed_;
+}
+
 void GLRendererImpl::shutdown() {
   if (!initialised_) return;
   for (auto& [_, g] : meshes_) {
@@ -1938,9 +1999,14 @@ void GLRendererImpl::shutdown() {
   if (irradiance_cube_) gl_.glDeleteTextures(1, &irradiance_cube_);
   if (prefilter_cube_)  gl_.glDeleteTextures(1, &prefilter_cube_);
   if (brdf_lut_)        gl_.glDeleteTextures(1, &brdf_lut_);
+  if (ibl_fbo_)         gl_.glDeleteFramebuffers(1, &ibl_fbo_);
   ubo_frame_ = vbo_overlay_ = 0;
   vao_background_ = vao_pivot_ = vao_overlay_ = vao_quad_ = 0;
   env_cube_ = irradiance_cube_ = prefilter_cube_ = brdf_lut_ = 0;
+  ibl_fbo_ = 0;
+  ibl_plan_.reset();
+  ibl_ready_ = false;
+  ibl_failed_ = false;
   prog_pbr_.destroy(gl_);
   prog_background_.destroy(gl_);
   prog_pivot_.destroy(gl_);

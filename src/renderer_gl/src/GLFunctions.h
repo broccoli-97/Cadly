@@ -77,6 +77,7 @@ struct GLFunctions {
   PFNGLPOLYGONOFFSETPROC           glPolygonOffset           = nullptr;
   PFNGLPRIMITIVERESTARTINDEXPROC   glPrimitiveRestartIndex   = nullptr;
   PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC glRenderbufferStorageMultisample = nullptr;
+  PFNGLSCISSORPROC                glScissor                 = nullptr;
   PFNGLSHADERSOURCEPROC            glShaderSource            = nullptr;
   PFNGLTEXIMAGE2DPROC              glTexImage2D              = nullptr;
   PFNGLTEXPARAMETERIPROC           glTexParameteri           = nullptr;

@@ -112,6 +112,7 @@ void ViewportWidget::paintGL() {
   QElapsedTimer t;
   t.start();
   renderer_->render(display_mode_);
+  if (renderer_->needs_redraw()) update();
   const float ms = static_cast<float>(t.nsecsElapsed()) / 1.0e6f;
   frame_ms_avg_ = frame_ms_avg_ <= 0.0f ? ms
                                         : frame_ms_avg_ * 0.8f + ms * 0.2f;

@@ -38,6 +38,10 @@ public:
   // Issue a frame. Camera and lighting come from the attached scene.
   virtual void render(const DisplayMode& mode) = 0;
 
+  // True while the backend has incremental work that needs another frame.
+  // Hosts should schedule another paint after render() while this is set.
+  virtual bool needs_redraw() const { return false; }
+
   // Pick the front-most primitive under the given pixel. Returns an invalid
   // SelectionId if nothing was drawn there. The MVP can leave this as a stub.
   virtual scene::SelectionId pick(int /*pixel_x*/, int /*pixel_y*/) {

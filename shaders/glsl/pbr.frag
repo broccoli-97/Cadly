@@ -47,6 +47,7 @@ uniform samplerCube u_irradiance_cube;  // diffuse IBL
 uniform samplerCube u_prefilter_cube;   // specular IBL (mip chain by roughness)
 uniform sampler2D   u_brdf_lut;         // split-sum BRDF LUT
 uniform float       u_prefilter_max_lod;
+uniform int         u_ibl_enabled;      // zero while incremental bake is pending
 
 out vec4 frag_color;
 
@@ -182,21 +183,22 @@ void main() {
   vec3  kS_ibl = F_ibl;
   vec3  kD_ibl = (vec3(1.0) - kS_ibl) * (1.0 - metallic);
 
-  vec3 irradiance  = texture(u_irradiance_cube, N).rgb;
-  vec3 diffuse_ibl = irradiance * base;
-
-  vec3  R = reflect(-V, N);
-  vec3  prefiltered = textureLod(u_prefilter_cube, R,
-                                 roughness * u_prefilter_max_lod).rgb;
-  vec2  brdf = texture(u_brdf_lut, vec2(NoV, roughness)).rg;
-  vec3  specular_ibl = prefiltered * (F_ibl * brdf.x + brdf.y);
-
-  // Mild fallback if the IBL textures weren't bound (zero samples). The
-  // analytical `u_ambient` keeps the constant-ambient behaviour as a
-  // floor — invisible whenever IBL is healthy, visible if the bake failed.
-  vec3 ibl = kD_ibl * diffuse_ibl + specular_ibl;
   vec3 ambient_fallback = u_ambient.rgb * base * (1.0 - metallic * 0.5);
-  vec3 ambient = ibl + ambient_fallback * 0.15;
+  vec3 ambient = ambient_fallback;
+  if (u_ibl_enabled != 0) {
+    vec3 irradiance  = texture(u_irradiance_cube, N).rgb;
+    vec3 diffuse_ibl = irradiance * base;
+
+    vec3  R = reflect(-V, N);
+    vec3  prefiltered = textureLod(u_prefilter_cube, R,
+                                   roughness * u_prefilter_max_lod).rgb;
+    vec2  brdf = texture(u_brdf_lut, vec2(NoV, roughness)).rg;
+    vec3  specular_ibl = prefiltered * (F_ibl * brdf.x + brdf.y);
+    vec3  ibl = kD_ibl * diffuse_ibl + specular_ibl;
+    // Keep a small analytical floor even after a healthy bake, matching the
+    // old look while making the pre-bake path explicit and deterministic.
+    ambient = ibl + ambient_fallback * 0.15;
+  }
 
   vec3 color = ambient + Lo + u_emissive_color * u_emissive;
 
