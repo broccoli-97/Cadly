@@ -2,27 +2,15 @@
 
 // Cook-Torrance metallic-roughness with three analytical lights and
 // image-based lighting (split-sum / Karis 2013) for ambient + reflections.
-// The IBL targets are baked once at renderer init from a procedural studio
-// environment; the analytical lights stay on top for directional definition
-// (IBL alone makes machined parts look soft).
+// The IBL targets are filled incrementally after renderer init from a
+// procedural studio environment; the analytical lights stay on top for
+// directional definition (IBL alone makes machined parts look soft).
 
 in vec3 v_world_pos;
 in vec3 v_world_normal;
 in vec4 v_vertex_color;
 
-layout(std140) uniform FrameBlock {
-  mat4 u_view;
-  mat4 u_proj;
-  mat4 u_view_proj;
-  vec4 u_camera_pos;
-  vec4 u_ambient;
-  vec4 u_key_dir;
-  vec4 u_key_color;
-  vec4 u_fill_dir;
-  vec4 u_fill_color;
-  vec4 u_rim_dir;
-  vec4 u_rim_color;
-};
+#include "common/frame_block.glsl"
 
 uniform vec4  u_base_color;          // sRGB linearised
 uniform float u_metallic;

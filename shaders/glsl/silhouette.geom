@@ -32,19 +32,7 @@ layout(line_strip, max_vertices = 2) out;
 in vec3 v_world_pos[];
 in vec3 v_world_normal[];
 
-layout(std140) uniform FrameBlock {
-  mat4 u_view;
-  mat4 u_proj;
-  mat4 u_view_proj;
-  vec4 u_camera_pos;
-  vec4 u_ambient;
-  vec4 u_key_dir;
-  vec4 u_key_color;
-  vec4 u_fill_dir;
-  vec4 u_fill_color;
-  vec4 u_rim_dir;
-  vec4 u_rim_color;
-};
+#include "common/frame_block.glsl"
 
 // Perspective: .xyz = eye position, .w = 1 (toward-eye varies per vertex).
 // Orthographic: .xyz = unit vector from surface toward the eye (-camera

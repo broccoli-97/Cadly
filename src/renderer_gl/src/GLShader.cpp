@@ -3,11 +3,91 @@
 #include "cadly/platform/Log.h"
 #include "cadly/platform/Paths.h"
 
+#include <filesystem>
+#include <sstream>
 #include <vector>
 
 namespace cadly::renderer_gl::detail {
 
 namespace {
+
+namespace fs = std::filesystem;
+
+std::string trim_left(const std::string& line) {
+  const auto first = line.find_first_not_of(" \t");
+  return first == std::string::npos ? std::string() : line.substr(first);
+}
+
+bool has_parent_component(const fs::path& path) {
+  for (const auto& part : path) {
+    if (part == "..") return true;
+  }
+  return false;
+}
+
+std::optional<std::string> expand_shader_file(
+    const fs::path& path,
+    const fs::path& root,
+    std::vector<fs::path>& include_stack) {
+  const fs::path normalized = path.lexically_normal();
+  if (has_parent_component(normalized.lexically_relative(root))) {
+    CADLY_LOG_ERROR("Shader include escapes asset root: {}", path.string());
+    return std::nullopt;
+  }
+  for (const auto& active : include_stack) {
+    if (active == normalized) {
+      CADLY_LOG_ERROR("Shader include cycle detected at {}", path.string());
+      return std::nullopt;
+    }
+  }
+
+  auto contents = cadly::platform::read_text_file(normalized);
+  if (!contents) {
+    CADLY_LOG_ERROR("Could not read shader source: {}", normalized.string());
+    return std::nullopt;
+  }
+
+  include_stack.push_back(normalized);
+  std::istringstream input(*contents);
+  std::ostringstream output;
+  std::string line;
+  while (std::getline(input, line)) {
+    const std::string trimmed = trim_left(line);
+    if (trimmed.rfind("#include", 0) != 0) {
+      output << line << '\n';
+      continue;
+    }
+
+    const auto quote_begin = trimmed.find('"', 8);
+    const auto quote_end = quote_begin == std::string::npos
+      ? std::string::npos : trimmed.find('"', quote_begin + 1);
+    if (quote_begin == std::string::npos || quote_end == std::string::npos ||
+        quote_end == quote_begin + 1) {
+      CADLY_LOG_ERROR("Malformed shader include in {}: {}", path.string(), line);
+      include_stack.pop_back();
+      return std::nullopt;
+    }
+
+    const fs::path include_name = trimmed.substr(
+      quote_begin + 1, quote_end - quote_begin - 1);
+    if (include_name.is_absolute() || has_parent_component(include_name)) {
+      CADLY_LOG_ERROR("Shader include must stay below asset root: {}",
+                      include_name.string());
+      include_stack.pop_back();
+      return std::nullopt;
+    }
+    const auto included = expand_shader_file(
+      (normalized.parent_path() / include_name).lexically_normal(), root,
+      include_stack);
+    if (!included) {
+      include_stack.pop_back();
+      return std::nullopt;
+    }
+    output << *included;
+  }
+  include_stack.pop_back();
+  return output.str();
+}
 
 GLuint compile_stage(GLFunctions& gl,
                      GLenum stage,
@@ -128,12 +208,14 @@ GLuint GLProgram::uniform_block(GLFunctions& gl, const char* name) {
 std::optional<std::string> load_shader_source(const std::string& filename) {
   auto dir = cadly::platform::find_asset_dir("shaders/glsl");
   if (!dir) return std::nullopt;
-  const auto path = *dir / filename;
-  auto contents = cadly::platform::read_text_file(path);
-  if (!contents) {
-    CADLY_LOG_ERROR("Could not read shader source: {}", path.string());
+  const fs::path relative_name(filename);
+  if (relative_name.is_absolute() || has_parent_component(relative_name)) {
+    CADLY_LOG_ERROR("Shader path must stay below asset root: {}", filename);
+    return std::nullopt;
   }
-  return contents;
+  std::vector<fs::path> include_stack;
+  return expand_shader_file((*dir / relative_name).lexically_normal(), *dir,
+                            include_stack);
 }
 
 } // namespace cadly::renderer_gl::detail

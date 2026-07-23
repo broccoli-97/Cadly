@@ -6,9 +6,10 @@
 
 out vec2 v_uv;
 
+#include "common/fullscreen_triangle.glsl"
+
 void main() {
-  vec2 p = vec2((gl_VertexID == 1) ? 3.0 : -1.0,
-                (gl_VertexID == 2) ? 3.0 : -1.0);
+  vec2 p = fullscreen_triangle_position();
   gl_Position = vec4(p, 1.0, 1.0);
   v_uv = p * 0.5 + 0.5;
 }

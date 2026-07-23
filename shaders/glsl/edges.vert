@@ -10,19 +10,7 @@
 
 layout(location = 0) in vec3 a_position;
 
-layout(std140) uniform FrameBlock {
-  mat4 u_view;
-  mat4 u_proj;
-  mat4 u_view_proj;
-  vec4 u_camera_pos;
-  vec4 u_ambient;
-  vec4 u_key_dir;
-  vec4 u_key_color;
-  vec4 u_fill_dir;
-  vec4 u_fill_color;
-  vec4 u_rim_dir;
-  vec4 u_rim_color;
-};
+#include "common/frame_block.glsl"
 
 uniform mat4  u_model;
 uniform float u_view_bias;

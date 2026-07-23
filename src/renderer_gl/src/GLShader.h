@@ -49,7 +49,8 @@ private:
   std::unordered_map<std::string, GLuint> block_cache_;
 };
 
-// Look up a shader source file in the runtime asset tree.
+// Look up a shader source file in the runtime asset tree and recursively
+// expand quoted #include directives relative to the including file.
 std::optional<std::string> load_shader_source(const std::string& filename);
 
 } // namespace cadly::renderer_gl::detail

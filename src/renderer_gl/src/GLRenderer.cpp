@@ -558,49 +558,43 @@ void GLRendererImpl::initialize() {
 bool GLRendererImpl::build_programs() {
   bool all_ok = true;
 
-  auto build = [&](GLProgram& prog,
-                   const char* vert_name,
-                   const char* frag_name,
-                   const char* debug_name) {
-    auto vs = load_shader_source(vert_name);
-    auto fs = load_shader_source(frag_name);
-    if (!vs || !fs) {
-      CADLY_LOG_ERROR("Missing shader source for {}", debug_name);
-      all_ok = false;
-      return;
-    }
-    if (!prog.build(gl_, *vs, *fs, debug_name)) {
-      all_ok = false;
-    }
+  struct ShaderProgramSpec {
+    GLProgram* program;
+    const char* debug_name;
+    const char* vertex_name;
+    const char* geometry_name;
+    const char* fragment_name;
   };
+  // The manifest is the single source of truth for program composition. A
+  // geometry stage is optional; silhouette is the only three-stage pipeline.
+  const std::array<ShaderProgramSpec, 10> manifest{{
+    {&prog_pbr_,         "pbr",         "pbr.vert",         nullptr,             "pbr.frag"},
+    {&prog_background_,  "background",  "background.vert",  nullptr,             "background.frag"},
+    {&prog_pivot_,       "pivot",       "pivot.vert",       nullptr,             "pivot.frag"},
+    {&prog_overlay_,     "overlay",     "overlay.vert",     nullptr,             "overlay.frag"},
+    {&prog_edges_,       "edges",       "edges.vert",       nullptr,             "edges.frag"},
+    {&prog_silhouette_,  "silhouette",  "silhouette.vert",  "silhouette.geom",  "edges.frag"},
+    {&prog_env_capture_, "env_capture", "env_capture.vert", nullptr,            "env_capture.frag"},
+    {&prog_irradiance_,  "irradiance",  "irradiance.vert",  nullptr,             "irradiance.frag"},
+    {&prog_prefilter_,   "prefilter",   "prefilter.vert",   nullptr,             "prefilter.frag"},
+    {&prog_brdf_lut_,    "brdf_lut",    "brdf_lut.vert",    nullptr,             "brdf_lut.frag"},
+  }};
 
-  build(prog_pbr_,         "pbr.vert",         "pbr.frag",         "pbr");
-  build(prog_background_,  "background.vert",  "background.frag",  "background");
-  build(prog_pivot_,       "pivot.vert",       "pivot.frag",       "pivot");
-  build(prog_edges_,       "edges.vert",       "edges.frag",       "edges");
-  build(prog_env_capture_, "env_capture.vert", "env_capture.frag", "env_capture");
-  build(prog_irradiance_,  "irradiance.vert",  "irradiance.frag",  "irradiance");
-  build(prog_prefilter_,   "prefilter.vert",   "prefilter.frag",   "prefilter");
-  build(prog_brdf_lut_,    "brdf_lut.vert",    "brdf_lut.frag",    "brdf_lut");
-
-  // Silhouette program is the one three-stage pipeline (VS + GS + FS): the
-  // geometry stage turns surface triangles into view-dependent contour
-  // segments (see silhouette.geom). It shares the edge pass's fragment
-  // stage so silhouettes and BRep edges are drawn with the same pen and
-  // read as one line drawing.
-  {
-    auto vs = load_shader_source("silhouette.vert");
-    auto gs = load_shader_source("silhouette.geom");
-    auto fs = load_shader_source("edges.frag");
-    if (!vs || !gs || !fs) {
-      CADLY_LOG_ERROR("Missing shader source for silhouette");
+  for (const auto& spec : manifest) {
+    auto vertex = load_shader_source(spec.vertex_name);
+    auto geometry = spec.geometry_name
+      ? load_shader_source(spec.geometry_name) : std::optional<std::string>{};
+    auto fragment = load_shader_source(spec.fragment_name);
+    if (!vertex || (spec.geometry_name && !geometry) || !fragment) {
+      CADLY_LOG_ERROR("Missing shader source for {}", spec.debug_name);
       all_ok = false;
-    } else if (!prog_silhouette_.build(gl_, *vs, *gs, *fs, "silhouette")) {
-      all_ok = false;
+      continue;
     }
+    const bool built = spec.geometry_name
+      ? spec.program->build(gl_, *vertex, *geometry, *fragment, spec.debug_name)
+      : spec.program->build(gl_, *vertex, *fragment, spec.debug_name);
+    all_ok = built && all_ok;
   }
-
-  build(prog_overlay_,      "overlay.vert",      "overlay.frag",      "overlay");
   return all_ok;
 }
 

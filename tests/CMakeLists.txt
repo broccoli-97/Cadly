@@ -26,6 +26,19 @@ target_link_libraries(cadly_ibl_bake_plan_test PRIVATE Cadly::Warnings)
 target_compile_features(cadly_ibl_bake_plan_test PRIVATE cxx_std_17)
 add_test(NAME cadly_ibl_bake_plan COMMAND cadly_ibl_bake_plan_test)
 
+add_executable(cadly_shader_source_test shader_source_test.cpp)
+target_include_directories(cadly_shader_source_test
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/renderer_gl/src
+)
+target_compile_definitions(cadly_shader_source_test
+  PRIVATE
+    CADLY_TEST_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+target_link_libraries(cadly_shader_source_test PRIVATE Cadly::RendererGL)
+target_compile_features(cadly_shader_source_test PRIVATE cxx_std_17)
+add_test(NAME cadly_shader_source COMMAND cadly_shader_source_test)
+
 # The widget tests need Qt6::Test, which the vcpkg-built Qt deliberately
 # omits (qtbase is built without "testlib" to keep the Windows from-source
 # build down; see vcpkg.json). They also exercise pure widget logic, nothing
