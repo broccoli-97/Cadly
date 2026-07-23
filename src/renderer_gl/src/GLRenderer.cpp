@@ -600,30 +600,7 @@ bool GLRendererImpl::build_programs() {
     }
   }
 
-  const char* overlay_vs = R"glsl(
-#version 410 core
-layout(location = 0) in vec2 a_pos_px;
-layout(location = 1) in vec4 a_color;
-uniform vec2 u_viewport_px;
-out vec4 v_color;
-void main() {
-  vec2 ndc = vec2((a_pos_px.x / u_viewport_px.x) * 2.0 - 1.0,
-                  (a_pos_px.y / u_viewport_px.y) * 2.0 - 1.0);
-  gl_Position = vec4(ndc, 0.0, 1.0);
-  v_color = a_color;
-}
-)glsl";
-  const char* overlay_fs = R"glsl(
-#version 410 core
-in vec4 v_color;
-out vec4 frag_color;
-void main() {
-  frag_color = v_color;
-}
-)glsl";
-  if (!prog_overlay_.build(gl_, overlay_vs, overlay_fs, "overlay")) {
-    all_ok = false;
-  }
+  build(prog_overlay_,      "overlay.vert",      "overlay.frag",      "overlay");
   return all_ok;
 }
 
