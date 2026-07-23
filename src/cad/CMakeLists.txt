@@ -12,6 +12,7 @@ set(_occt_libs
   TKSTEPCAF
   TKIGES
   TKXSBase TKXCAF TKLCAF TKCAF TKCDF
+  TKV3d                                    # UV/surface-aware mesh normals
   TKMesh
   TKBRep TKShHealing TKTopAlgo TKGeomAlgo TKBO TKBool TKPrim
   TKGeomBase TKG3d TKG2d TKMath TKernel

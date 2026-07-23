@@ -11,6 +11,7 @@
 #include "cadly/scene/Scene.h"
 #include "cadly/scene/Transform.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -217,6 +218,58 @@ static void test_hammer_iges_visual_relative_import() {
 #endif
 }
 
+// Periodic CAD faces duplicate their seam vertices in the triangulation. A
+// triangle-only normal average gives those copies different normals, so a
+// silhouette aligned with the seam has no zero crossing and loses one
+// generator line. The local screw fixture is ignored by git, so this check is
+// conditional and remains useful on developer machines that have it.
+static void test_periodic_face_normals() {
+#ifdef CADLY_TEST_SOURCE_ROOT
+  const std::filesystem::path screw =
+    std::filesystem::path(CADLY_TEST_SOURCE_ROOT) / "test_files" / "screw.step";
+  if (!std::filesystem::exists(screw)) return;
+
+  c::ImportOptions opts;
+  opts.tessellation_mode = c::TessellationMode::Absolute;
+  opts.linear_deflection = 0.1;
+  const auto result = c::ImporterRegistry::instance().import(screw, opts);
+  CHECK(result.success);
+  if (!result.scene) return;
+
+  bool found_cylinder = false;
+  for (const auto& mesh : result.scene->meshes) {
+    if (!mesh) continue;
+    for (const auto& sub : mesh->submeshes) {
+      const s::vec3 extent = sub.bounds.max - sub.bounds.min;
+      if (extent.x < 9.0f || extent.x > 11.0f ||
+          extent.y < 9.0f || extent.y > 11.0f || extent.z < 30.0f) {
+        continue;
+      }
+
+      const float seam_x = sub.bounds.max.x;
+      const float seam_y = 0.5f * (sub.bounds.min.y + sub.bounds.max.y);
+      std::size_t seam_vertices = 0;
+      float worst_seam_normal_y = 0.0f;
+      const auto end = static_cast<std::size_t>(sub.index_offset) +
+                       static_cast<std::size_t>(sub.index_count);
+      for (std::size_t i = sub.index_offset; i < end; ++i) {
+        const auto& v = mesh->vertices[mesh->indices[i]];
+        if (std::fabs(v.position.x - seam_x) < 1e-3f &&
+            std::fabs(v.position.y - seam_y) < 1e-3f) {
+          ++seam_vertices;
+          worst_seam_normal_y = std::max(worst_seam_normal_y,
+                                         std::fabs(v.normal.y));
+        }
+      }
+      CHECK(seam_vertices >= 2);
+      CHECK(worst_seam_normal_y < 1e-3f);
+      found_cylinder = true;
+    }
+  }
+  CHECK(found_cylinder);
+#endif
+}
+
 // Importers must close their XCAF document on every return path; a document
 // left open keeps the whole OCAF graph alive in the process-wide application
 // session, so repeated imports ratchet memory upward. Exercise both the
@@ -341,6 +394,7 @@ int main() {
   test_tessellation_policy();
   test_tessellation_policy_unbounded();
   test_hammer_iges_visual_relative_import();
+  test_periodic_face_normals();
   test_xcaf_documents_closed_after_import();
   test_import_cancellation_flagged();
   test_step_colors_single_source();

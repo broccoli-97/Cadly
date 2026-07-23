@@ -14,6 +14,7 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
 #include <IMeshTools_Parameters.hxx>
@@ -22,6 +23,7 @@
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Version.hxx>
+#include <StdPrs_ToolTriangulatedShape.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <TDF_LabelSequence.hxx>
 #include <TDataStd_Name.hxx>
@@ -267,6 +269,30 @@ std::size_t append_face(scene::Mesh& mesh,
   // White — a neutral multiplier. Colour comes from the submesh material
   // only; see shape_to_mesh's doc comment.
   const std::uint32_t color_packed = 0xFFFFFFFFu;
+
+  // OCCT often leaves imported triangulations without nodal normals. A
+  // triangle-area average is a reasonable fallback for ordinary faces, but
+  // it is wrong at periodic seams: the duplicated seam vertices are averaged
+  // from only one side and acquire slightly different normals. When a view's
+  // silhouette lands on that seam, the GPU contour pass sees no sign change
+  // and drops the entire generator line. Use OCCT's surface/UV-aware normal
+  // computation first so periodic faces receive the same analytic normal at
+  // both copies; retain the triangle average below for triangulations that
+  // have no UV data.
+  if (!tri->HasNormals() && opts.compute_missing_normals && tri->HasUVNodes()) {
+    BRepAdaptor_Surface surface(face, Standard_False);
+    const bool periodic_surface =
+      surface.IsUClosed() || surface.IsVClosed() ||
+      surface.IsUPeriodic() || surface.IsVPeriodic();
+    if (periodic_surface) {
+      const auto normal_phase_start = clock::now();
+      StdPrs_ToolTriangulatedShape::ComputeNormals(face, tri);
+      if (opts.profile_timings) {
+        add_timing(stats, "surface normal generation",
+                   clock::now() - normal_phase_start);
+      }
+    }
+  }
 
 #if OCC_VERSION_HEX >= 0x070600
   const Standard_Integer node_count = tri->NbNodes();
