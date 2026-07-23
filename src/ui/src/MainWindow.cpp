@@ -1075,17 +1075,17 @@ void MainWindow::run_demo(const QString& name) {
     if (auto* document = active_document(); document && !importing_) {
       start_import(document, inspector_->import_options());
     }
-  } else if (name.startsWith(QLatin1String("hiddenline-orbit:")) ||
+  } else if (name.startsWith(QLatin1String("shaded-orbit:")) ||
+             name.startsWith(QLatin1String("hiddenline-orbit:")) ||
              name.startsWith(QLatin1String("wireframe-orbit:"))) {
-    // Line-mode display at an arbitrary orbit orientation
-    // (`<mode>-orbit:<yaw>,<pitch>[,persp]`, angles in degrees). The
-    // silhouette pass is view-dependent — a contour that renders fine from
-    // the seven standard views can still fail at an in-between azimuth (its
-    // zero crossing sweeps across the tessellation facets as the camera
-    // moves), so verifying it needs screenshots at exact arbitrary angles,
-    // not just the canned views.
-    set_surface_mode(name.startsWith(QLatin1String("wireframe"))
-                       ? SurfaceMode::Wireframe : SurfaceMode::HiddenLine);
+    // Drive an arbitrary orbit orientation for screenshot regressions. The
+    // line modes use this to exercise view-dependent silhouettes; shaded uses
+    // the same path to compare the inspection rig at exact camera angles.
+    const bool wire = name.startsWith(QLatin1String("wireframe"));
+    const bool hidden = name.startsWith(QLatin1String("hiddenline"));
+    set_surface_mode(wire ? SurfaceMode::Wireframe
+                          : hidden ? SurfaceMode::HiddenLine
+                                   : SurfaceMode::Shaded);
     const QStringList parts =
       name.section(QLatin1Char(':'), 1).split(QLatin1Char(','));
     bool ok_yaw = false, ok_pitch = false;

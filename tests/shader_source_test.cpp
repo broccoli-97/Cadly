@@ -16,6 +16,13 @@ int main() {
   assert(pbr->find("#include") == std::string::npos);
   assert(pbr->find("layout(std140) uniform FrameBlock") != std::string::npos);
 
+  const auto pbr_frag =
+    cadly::renderer_gl::detail::load_shader_source("pbr.frag");
+  assert(pbr_frag);
+  assert(pbr_frag->find("mat3(u_view)") != std::string::npos);
+  assert(pbr_frag->find("world_to_camera * N") != std::string::npos);
+  assert(pbr_frag->find("world_to_camera * R") != std::string::npos);
+
   const auto fullscreen =
     cadly::renderer_gl::detail::load_shader_source("prefilter.vert");
   assert(fullscreen);

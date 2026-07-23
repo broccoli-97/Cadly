@@ -14,22 +14,20 @@ namespace cadly::scene {
 // IMPORTANT — direction convention:
 //
 //   `*_direction` is the direction the light TRAVELS, expressed in
-//   WORLD space (Y-up; see Camera::kWorldUp).
+//   CAMERA-LOCAL space (Y-up; see Camera::kWorldUp).
 //
-// Lights are NOT rotated with the camera. A camera-locked ("headlight") rig
-// keeps L·N constant as the user orbits, which makes the model read as flat:
-// the only thing that changes between viewpoints is the projected area of
-// side walls, with no shading cue. World-fixed lights let the camera-relative
-// incidence change as the user inspects, which is what produces a sense of
-// relief and matches the standard "industrial inspection" rig used by
-// FreeCAD, SolidWorks, etc.
+// The renderer rotates these directions into world space for the analytical
+// lights and samples the IBL cubemaps in the same camera-local frame. This is
+// deliberate for CAD inspection: orbiting around a part changes the projected
+// geometry, but does not swap a bright studio softbox for a dark environment
+// hemisphere and make the part's base colour appear to change.
 //
 // All three directions are deliberately well off any major axis so no face
 // of an axis-aligned part ends up parallel to a light: face-on views always
 // receive at least one raking key/fill, never a perpendicular flood.
 struct LightEnvironment {
   // Key: warm dominant light from the upper-right-front quadrant of the
-  // world. Source roughly at (+5, +6, +4); light travels down-left-back.
+  // camera. Source roughly at (+5, +6, +4); light travels down-left-back.
   // Y component dominates slightly so vertical-walled parts get good
   // top-to-bottom shading.
   vec3 key_direction  {-0.57f, -0.69f, -0.45f};

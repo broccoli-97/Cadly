@@ -1002,16 +1002,15 @@ void GLRendererImpl::pump_ibl_bake() {
 void GLRendererImpl::update_frame_uniforms() {
   if (!scene_) return;
 
-  // Light directions live in WORLD space and are NOT rotated by the camera.
-  // The previous "headlight" pattern (rotate light dirs by camera orientation
-  // every frame) kept relative L·N constant as the user orbited, which made
-  // the model feel flat from the default view and only revealed relief
-  // through the geometric trick of side walls projecting wider at oblique
-  // angles. World-fixed lighting gives the user a proper directional cue:
-  // rotating the camera now actually changes how light grazes each face.
-  const scene::vec3 key_world  = scene_->environment.key_direction;
-  const scene::vec3 fill_world = scene_->environment.fill_direction;
-  const scene::vec3 rim_world  = scene_->environment.rim_direction;
+  // Keep the inspection rig camera-local. A world-fixed rig is physically
+  // plausible, but it makes a neutral CAD part change from bright studio
+  // reflection to dark ground reflection when the user orbits 180 degrees.
+  // Rotating these directions into world space preserves the relief cue while
+  // keeping the lighting condition, and therefore the base colour, stable.
+  const scene::quat cam_orient = scene_->camera.orientation;
+  const scene::vec3 key_world  = cam_orient * scene_->environment.key_direction;
+  const scene::vec3 fill_world = cam_orient * scene_->environment.fill_direction;
+  const scene::vec3 rim_world  = cam_orient * scene_->environment.rim_direction;
 
   FrameBlock fb{};
   fb.view       = scene_->camera.view();

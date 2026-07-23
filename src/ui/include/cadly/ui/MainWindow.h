@@ -52,7 +52,8 @@ public:
   void set_last_open_directory(const QString& dir);
 
   // Dev/test aid (paired with the app's --demo flag): drive a named UI state
-  // — "wireframe", "hiddenline", "shadedmenu", "light", "display",
+  // — "wireframe", "hiddenline", "shaded-orbit:<yaw>,<pitch>",
+  //   "shadedmenu", "light", "display",
   // "import", "views", "getinfo", "zerochrome" — without input injection,
   // so headless screenshot checks can exercise real action/popover code paths.
   void run_demo(const QString& name);

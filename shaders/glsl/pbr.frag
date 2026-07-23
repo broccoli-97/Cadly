@@ -174,11 +174,18 @@ void main() {
   vec3 ambient_fallback = u_ambient.rgb * base * (1.0 - metallic * 0.5);
   vec3 ambient = ambient_fallback;
   if (u_ibl_enabled != 0) {
-    vec3 irradiance  = texture(u_irradiance_cube, N).rgb;
+    // The procedural studio is an inspection light rig, not a world-space
+    // photograph. Sample it in camera space so orbiting keeps the same
+    // softbox/horizon relationship to the viewer and the object's base
+    // colour does not swing with the side of the model being inspected.
+    mat3 world_to_camera = mat3(u_view);
+    vec3 env_N = normalize(world_to_camera * N);
+    vec3 irradiance  = texture(u_irradiance_cube, env_N).rgb;
     vec3 diffuse_ibl = irradiance * base;
 
     vec3  R = reflect(-V, N);
-    vec3  prefiltered = textureLod(u_prefilter_cube, R,
+    vec3  env_R = normalize(world_to_camera * R);
+    vec3  prefiltered = textureLod(u_prefilter_cube, env_R,
                                    roughness * u_prefilter_max_lod).rgb;
     vec2  brdf = texture(u_brdf_lut, vec2(NoV, roughness)).rg;
     vec3  specular_ibl = prefiltered * (F_ibl * brdf.x + brdf.y);

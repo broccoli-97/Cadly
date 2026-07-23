@@ -105,7 +105,8 @@ int main(int argc, char** argv) {
   parser.addOption(shotOpt);
   QCommandLineOption demoOpt("demo",
     "Dev aid: drive a UI state before the screenshot "
-    "(wireframe|hiddenline|hiddenline-persp|hiddenline-nodim|"
+    "(wireframe|hiddenline|shaded-orbit:<yaw>,<pitch>|"
+    "hiddenline-persp|hiddenline-nodim|"
     "hiddenline-orbit:<yaw>,<pitch>[,persp]|wireframe-orbit:<yaw>,<pitch>"
     "[,persp]|wireframe-reopen|hiddenline-reopen|light|dark|"
     "display|import|views|getinfo|shadedmenu|hiddenmenu|zerochrome|deepzoom|"
