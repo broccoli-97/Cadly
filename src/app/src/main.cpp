@@ -110,8 +110,8 @@ int main(int argc, char** argv) {
     "hiddenline-orbit:<yaw>,<pitch>[,persp]|wireframe-orbit:<yaw>,<pitch>"
     "[,persp]|wireframe-reopen|hiddenline-reopen|light|dark|"
     "display|import|views|getinfo|shadedmenu|hiddenmenu|zerochrome|deepzoom|"
-    "highlight|highlight-wireframe|highlight-hiddenline|isolate|"
-    "isolate-wireframe|isolate-hiddenline).",
+    "highlight|highlight:<node>|highlight-wireframe|highlight-hiddenline|"
+    "isolate|isolate-wireframe|isolate-hiddenline).",
     "state");
   parser.addOption(demoOpt);
   parser.addPositionalArgument("file", "Optional CAD file to open at startup.");

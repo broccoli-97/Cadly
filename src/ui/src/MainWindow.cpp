@@ -1136,10 +1136,14 @@ void MainWindow::run_demo(const QString& name) {
     }
   } else if (name == QLatin1String("highlight") ||
              name == QLatin1String("highlight-wireframe") ||
-             name == QLatin1String("highlight-hiddenline")) {
+             name == QLatin1String("highlight-hiddenline") ||
+             name.startsWith(QLatin1String("highlight:"))) {
     // Select the first geometry-bearing node the way a tree click would, so
     // the screenshot shows the accent highlight over the part — with
     // surface-mode variants to eyeball the wash in every draw path.
+    // `highlight:<node>` selects an explicit scene-node index instead: the
+    // occluded-selection treatment only shows on a part that sits partly
+    // BEHIND another, and the first node (usually the base body) never does.
     if (name.endsWith(QLatin1String("wireframe"))) {
       set_surface_mode(SurfaceMode::Wireframe);
     } else if (name.endsWith(QLatin1String("hiddenline"))) {
@@ -1148,10 +1152,22 @@ void MainWindow::run_demo(const QString& name) {
     if (const auto* document = active_document();
         document && document->scene) {
       const auto& nodes = document->scene->nodes;
-      for (std::uint32_t i = 0; i < nodes.size(); ++i) {
-        if (nodes[i].mesh_index) {
-          sidebar_->select_node(i);
-          break;
+      bool selected_explicit = false;
+      if (name.contains(QLatin1Char(':'))) {
+        bool ok = false;
+        const std::uint32_t idx =
+          name.section(QLatin1Char(':'), 1).toUInt(&ok);
+        if (ok && idx < nodes.size() && nodes[idx].mesh_index) {
+          sidebar_->select_node(idx);
+          selected_explicit = true;
+        }
+      }
+      if (!selected_explicit) {
+        for (std::uint32_t i = 0; i < nodes.size(); ++i) {
+          if (nodes[i].mesh_index) {
+            sidebar_->select_node(i);
+            break;
+          }
         }
       }
     }
