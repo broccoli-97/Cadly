@@ -61,15 +61,17 @@ struct DisplayMode {
   // rim-weighted lit tint read as the selection colour itself changing
   // while orbiting), and the sub-1 opacity keeps the part's own shading
   // visible through the film so it still reads as 3D geometry. Selected
-  // edges draw in the colour outright with a slightly heavier
-  // stroke in every display mode; occluded selected edges remain visible at
-  // reduced opacity, while the face wash stays normally depth-tested. Nodes
-  // with Node::ghosted (isolate mode) render as a translucent veil at
-  // `ghost_opacity` — full-detail geometry, but faded so the focused part
-  // carries the frame. The default colour matches the dark theme's
-  // viewport_highlight token: a saturated signal orange, chosen over the
-  // accent blue because nothing else in a typical CAD scene is orange (the
-  // UI overwrites per theme).
+  // edges draw in the colour outright with a slightly heavier stroke in
+  // every display mode; selected edges hidden behind geometry stay visible
+  // only as a thinner, much fainter ghost — enough to locate a buried part,
+  // but clearly subordinate to the visible outline so occlusion still
+  // reads and the part keeps its depth. The face wash stays normally
+  // depth-tested. Nodes with Node::ghosted (isolate mode) render as a
+  // translucent veil at `ghost_opacity` — full-detail geometry, but faded
+  // so the focused part carries the frame. The default colour matches the
+  // dark theme's viewport_highlight token: a saturated signal orange,
+  // chosen over the accent blue because nothing else in a typical CAD
+  // scene is orange (the UI overwrites per theme).
   scene::vec3 selection_color  {1.0f, 0.478f, 0.149f};
   float       selection_opacity{0.65f};
   float       ghost_opacity    {0.12f};

@@ -323,7 +323,13 @@ void emit_stroke(std::vector<OverlayVertex>& out, const PxStroke& s,
 constexpr scene::vec3 kEdgeInk{0.05f, 0.06f, 0.08f};
 constexpr float kEdgeLineWidthPx             = 1.2f;
 constexpr float kSelectionLineWidthPx        = 1.8f;
-constexpr float kOccludedSelectionOpacity    = 0.38f;
+// Occluded selected edges are a locator cue, not an outline. They must stay
+// clearly subordinate to the visible selection stroke — same hue at nearly
+// the same strength reads as "no depth ordering at all" and flattens the
+// selected part into a 2D x-ray drawing. The occluded pass therefore drops
+// to the base pen width AND a whisper of alpha; the pen-weight contrast
+// against the 1.8 px visible stroke is as strong a depth cue as the fade.
+constexpr float kOccludedSelectionOpacity    = 0.18f;
 constexpr float kSelectionContourOutwardPx   = 0.90f;
 
 // Dimmed ink for the hidden-line mode's occluded-line pass: the visible ink
@@ -1346,7 +1352,10 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
   //
   // `hidden_pass` inverts the depth test (GL_GREATER): normal hidden-line
   // rendering uses it for dimmed drafting ink, while the selection-only
-  // variant uses it for the translucent, through-object selection edge.
+  // variant uses it for the faint, thin ghost of selected structure hidden
+  // behind geometry (visible selected edges are a separate LEQUAL pass at
+  // full strength — the contrast between the two is what keeps the selected
+  // part reading as a solid instead of an x-ray drawing).
   // Lines on their own visible face cannot double-draw here: the face was
   // pushed back by glPolygonOffset, so the line's true depth is nearer than
   // the stored value and GL_GREATER rejects it. Untouched background depth
@@ -1401,10 +1410,13 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
   // pixels translucent and the desktop would bleed through the lines.
   gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
                           GL_ZERO,      GL_ONE);
-  // A selected edge gets a restrained weight increase, matching the solid
-  // orange outline + faint occluded structure used by commercial CAD tools.
-  // Drivers restricted to 1 px core lines simply clamp this harmlessly.
-  gl_.glLineWidth(selection_only ? kSelectionLineWidthPx : kEdgeLineWidthPx);
+  // Only the VISIBLE selection stroke gets the restrained weight increase;
+  // the occluded selection pass stays on the base pen so hidden structure
+  // sits behind the visible outline in both weight and opacity. Drivers
+  // restricted to 1 px core lines simply clamp this harmlessly (the alpha
+  // contrast still carries the depth ordering there).
+  gl_.glLineWidth(selection_only && !hidden_pass ? kSelectionLineWidthPx
+                                                 : kEdgeLineWidthPx);
 
   // Primitive restart lets a single GL_LINE_STRIP draw cover the whole edge
   // buffer: each polyline is a contiguous run of indices, separated by the
@@ -1572,7 +1584,10 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
   gl_.glUniform2fv(loc_viewport, 1, &viewport_px.x);
   // Move contours half their pen width outside the surface so at least one
   // covered sample remains visible. This is a raster-space contract, not a
-  // geometry deformation.
+  // geometry deformation. Both selection sub-passes (occluded + visible)
+  // share one shift even though the occluded pen is thinner: a per-pass
+  // shift would kink the reconstructed contour at every occlusion boundary,
+  // and the occluded pass has no own-surface coverage fight to win anyway.
   gl_.glUniform1f(loc_outward,
                   selection_only
                     ? kSelectionContourOutwardPx
@@ -1599,7 +1614,10 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
   gl_.glEnable(GL_BLEND);
   gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
                           GL_ZERO,      GL_ONE);
-  gl_.glLineWidth(selection_only ? kSelectionLineWidthPx : kEdgeLineWidthPx);
+  // Same pen split as draw_edges: heavier stroke for the visible selection
+  // pass only, base pen for occluded selection ink.
+  gl_.glLineWidth(selection_only && !hidden_pass ? kSelectionLineWidthPx
+                                                 : kEdgeLineWidthPx);
 
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;
@@ -1984,9 +2002,13 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   }
 
   // Selection edges are intentionally the final model pass. GL_GREATER
-  // first reveals occluded selected edges at low opacity; the normal depth
-  // pass then restores visible edges at full colour and a slightly heavier
-  // line weight. Selected faces never use this x-ray path.
+  // first sketches the occluded selected edges as a thin, faint ghost; the
+  // normal depth pass then draws the visible edges at full colour and the
+  // heavier selection weight on top. The deliberate gap between the two —
+  // in alpha AND pen width — is what keeps depth order legible: occlusion
+  // visibly dims a selected edge, so the part reads as a solid sitting
+  // among others rather than a flat x-ray overlay. Selected faces never
+  // use this through-geometry path.
   if (any_selected) {
     draw_edges(mode, /*hidden_pass=*/true, /*selection_only=*/true);
     draw_silhouettes(mode, /*hidden_pass=*/true,
