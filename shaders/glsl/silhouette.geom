@@ -34,13 +34,6 @@ in vec3 v_world_normal[];
 
 #include "common/frame_block.glsl"
 
-// Perspective: .xyz = eye position, .w = 1 (toward-eye varies per vertex).
-// Orthographic: .xyz = unit vector from surface toward the eye (-camera
-// forward), .w = 0. Kept separate from FrameBlock's u_camera_pos because the
-// facing function must match the PROJECTION, not the eye point: under ortho
-// all view rays are parallel, and using the eye point instead would bow the
-// contour of a long cylinder toward the eye's perpendicular foot.
-uniform vec4 u_view_ref;
 uniform vec2 u_viewport_px;
 uniform float u_outward_px;
 

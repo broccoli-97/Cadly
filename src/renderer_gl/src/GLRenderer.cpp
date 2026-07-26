@@ -39,7 +39,7 @@ struct alignas(16) FrameBlock {
   scene::mat4 view;
   scene::mat4 proj;
   scene::mat4 view_proj;
-  scene::vec4 camera_pos;
+  scene::vec4 view_ref;
   scene::vec4 ambient;
   scene::vec4 key_dir;
   scene::vec4 key_color;
@@ -1028,7 +1028,13 @@ void GLRendererImpl::update_frame_uniforms() {
   fb.view       = scene_->camera.view();
   fb.proj       = scene_->camera.projection();
   fb.view_proj  = fb.proj * fb.view;
-  fb.camera_pos = scene::vec4(scene_->camera.position(), 1.0f);
+  // A finite eye is meaningful only in perspective. Orthographic shading and
+  // view-dependent geometry need one constant surface-to-viewer direction;
+  // letting them derive rays from the nominal eye creates a singularity when
+  // deep zoom moves that point onto or through the model.
+  fb.view_ref = scene_->camera.projection_mode == scene::Projection::Perspective
+    ? scene::vec4(scene_->camera.position(), 1.0f)
+    : scene::vec4(-scene_->camera.forward(), 0.0f);
   fb.ambient    = scene::vec4(scene_->environment.ambient, 1.0f);
   fb.key_dir    = scene::vec4(glm::normalize(key_world),  0.0f);
   fb.key_color  = scene::vec4(scene_->environment.key_color, 1.0f);
@@ -1563,22 +1569,9 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
   const GLint loc_model    = prog_silhouette_.uniform(gl_, "u_model");
   const GLint loc_normal_m = prog_silhouette_.uniform(gl_, "u_normal_matrix");
   const GLint loc_color    = prog_silhouette_.uniform(gl_, "u_color");
-  const GLint loc_view_ref = prog_silhouette_.uniform(gl_, "u_view_ref");
   const GLint loc_viewport = prog_silhouette_.uniform(gl_, "u_viewport_px");
   const GLint loc_outward  = prog_silhouette_.uniform(gl_, "u_outward_px");
 
-  // The facing function must match the projection, not just the eye point:
-  // under orthographic projection all view rays are parallel, so the shader
-  // gets a direction (w=0); under perspective it gets the eye position
-  // (w=1) and derives a per-vertex direction. Using the eye point in ortho
-  // would bow a long cylinder's contour toward the eye's perpendicular
-  // foot.
-  const auto& cam = scene_->camera;
-  const scene::vec4 view_ref =
-    cam.projection_mode == scene::Projection::Perspective
-      ? scene::vec4(cam.position(), 1.0f)
-      : scene::vec4(-cam.forward(), 0.0f);
-  gl_.glUniform4fv(loc_view_ref, 1, &view_ref.x);
   const scene::vec2 viewport_px{static_cast<float>(viewport_w_),
                                 static_cast<float>(viewport_h_)};
   gl_.glUniform2fv(loc_viewport, 1, &viewport_px.x);

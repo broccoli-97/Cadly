@@ -137,7 +137,13 @@ void main() {
   // the surface), so fall back to the historical normal-flip so the
   // interior receives diffuse light at all.
   vec3 N_raw = normalize(v_world_normal);
-  vec3 V     = normalize(u_camera_pos.xyz - v_world_pos);
+  // A perspective camera has a finite eye, so its view direction varies over
+  // the surface. Orthographic rays are parallel: using the nominal eye point
+  // here makes V collapse to zero where deep zoom moves that point onto a
+  // face, producing a radial dark singularity in lighting and Fresnel.
+  vec3 V = u_view_ref.w > 0.5
+    ? normalize(u_view_ref.xyz - v_world_pos)
+    : u_view_ref.xyz;
   vec3 N;
   if (gl_FrontFacing) {
     float NoV_raw = dot(N_raw, V);

@@ -19,6 +19,11 @@ int main() {
   const auto pbr_frag =
     cadly::renderer_gl::detail::load_shader_source("pbr.frag");
   assert(pbr_frag);
+  assert(pbr_frag->find("u_view_ref.w > 0.5") != std::string::npos);
+  assert(pbr_frag->find("normalize(u_view_ref.xyz - v_world_pos)") !=
+         std::string::npos);
+  assert(pbr_frag->find(": u_view_ref.xyz") != std::string::npos);
+  assert(pbr_frag->find("u_camera_pos") == std::string::npos);
   assert(pbr_frag->find("mat3(u_view)") != std::string::npos);
   assert(pbr_frag->find("world_to_camera * N") != std::string::npos);
   assert(pbr_frag->find("world_to_camera * R") != std::string::npos);
