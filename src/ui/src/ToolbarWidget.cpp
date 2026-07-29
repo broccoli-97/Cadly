@@ -109,15 +109,8 @@ ToolbarWidget::ToolbarWidget(const Actions& a, QWidget* parent)
   segments_->set_segment_menu(1, hidden_menu);
   layout->addWidget(segments_);
 
-  layout->addWidget(new ToolbarSeparator(this));
-
-  layout->addWidget(make_button(a.perspective, this, false,
-                                ToolbarButton::Emphasis::Accent));
-  views_btn_ = new ToolbarButton(this);
-  views_btn_->setToolTip(tr("Standard views (1–7)"));
-  layout->addWidget(views_btn_);
-  layout->addWidget(make_button(a.fit, this));
-
+  // Camera controls (Views / Fit / projection) and zero-chrome are HUD-only —
+  // see the header comment. The toolbar's right side is appearance + panels.
   layout->addWidget(new ToolbarSeparator(this));
 
   theme_btn_ = make_button(a.theme, this);
@@ -128,7 +121,6 @@ ToolbarWidget::ToolbarWidget(const Actions& a, QWidget* parent)
   layout->addWidget(make_button(a.toggle_inspector, this));
   strip_btn_ = make_button(a.toggle_strip, this);
   layout->addWidget(strip_btn_);
-  layout->addWidget(make_button(a.zero_chrome, this));
 
   connect(&ThemeManager::instance(), &ThemeManager::changed,
           this, QOverload<>::of(&QWidget::update));

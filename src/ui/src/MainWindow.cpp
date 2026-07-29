@@ -600,15 +600,12 @@ void MainWindow::build_shell() {
   ToolbarWidget::Actions ta;
   ta.open             = act_open_;
   ta.recents_menu     = recents_menu_;
-  ta.fit              = act_fit_;
   ta.edges            = act_edges_;
   ta.triangle_mesh    = act_triangle_mesh_;
   ta.hidden_dimmed    = act_hidden_dimmed_;
-  ta.perspective      = act_perspective_;
   ta.toggle_sidebar   = act_toggle_sidebar_;
   ta.toggle_inspector = act_toggle_inspector_;
   ta.toggle_strip     = act_toggle_strip_;
-  ta.zero_chrome      = act_zero_chrome_;
   ta.theme            = act_theme_dark_;
   toolbar_ = new ToolbarWidget(ta, this);
 
@@ -656,11 +653,13 @@ void MainWindow::build_shell() {
   v->addWidget(split_h_, 1);
   setCentralWidget(central);
 
-  // Floating HUD over the viewport's top-right; mirrors Views/Fit/projection
-  // and the zero-chrome toggle so they survive zero-chrome — the toolbar
-  // hides in that mode, and the HUD copy of the toggle is the visible way
-  // back (Esc/^. still work, but need to be known). Child widgets composite
-  // fine over QOpenGLWidget (Qt renders the GL surface into an FBO first).
+  // Floating HUD over the viewport's top-right: the sole home of Views / Fit /
+  // projection and the zero-chrome toggle (the toolbar deliberately does not
+  // duplicate them — they act on the drawing area, so they sit on it). Being
+  // on the viewport also means they survive zero-chrome, where the toolbar
+  // hides and the HUD copy of the toggle is the visible way back (Esc/^.
+  // still work, but need to be known). Child widgets composite fine over
+  // QOpenGLWidget (Qt renders the GL surface into an FBO first).
   auto* hud = new ViewportHud(viewport_);
   hud_views_ = new ToolbarButton(hud);
   hud_views_->setToolTip(tr("Standard views (1–7)"));
@@ -701,8 +700,6 @@ void MainWindow::build_shell() {
           this, [this](int idx) {
             set_surface_mode(static_cast<SurfaceMode>(idx));
           });
-  connect(toolbar_->views_button(), &QAbstractButton::clicked, this,
-          [this]() { show_views_popover(toolbar_->views_button()); });
 
   connect(sidebar_, &SidebarWidget::node_selected,
           inspector_, &InspectorWidget::show_node);
@@ -842,7 +839,6 @@ void MainWindow::refresh_theme() {
   act_about_->setIcon(themed_icon(QStringLiteral("misc/info")));
   act_theme_dark_->setIcon(themed_icon(
     dark ? QStringLiteral("misc/moon") : QStringLiteral("misc/sun")));
-  toolbar_->views_button()->setIcon(themed_icon(QStringLiteral("shape/cube")));
   if (hud_views_) {
     hud_views_->setIcon(themed_icon(QStringLiteral("shape/cube")));
   }
@@ -1121,7 +1117,7 @@ void MainWindow::run_demo(const QString& name) {
   } else if (name == QLatin1String("dark")) {
     ThemeManager::instance().set_dark(true);
   } else if (name == QLatin1String("views")) {
-    show_views_popover(toolbar_->views_button());
+    show_views_popover(hud_views_);
   } else if (name == QLatin1String("zerochrome")) {
     act_zero_chrome_->setChecked(true);
   } else if (name == QLatin1String("deepzoom")) {

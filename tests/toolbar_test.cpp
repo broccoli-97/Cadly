@@ -40,14 +40,11 @@ private slots:
 
 void ToolbarTest::shaded_menu_contains_overlay_actions() {
   QAction open;
-  QAction fit;
   QAction edges;
   QAction mesh;
-  QAction perspective;
   QAction sidebar;
   QAction inspector;
   QAction strip;
-  QAction zero_chrome;
   QAction theme;
   QMenu recents;
 
@@ -58,14 +55,11 @@ void ToolbarTest::shaded_menu_contains_overlay_actions() {
   ToolbarWidget::Actions actions;
   actions.open = &open;
   actions.recents_menu = &recents;
-  actions.fit = &fit;
   actions.edges = &edges;
   actions.triangle_mesh = &mesh;
-  actions.perspective = &perspective;
   actions.toggle_sidebar = &sidebar;
   actions.toggle_inspector = &inspector;
   actions.toggle_strip = &strip;
-  actions.zero_chrome = &zero_chrome;
   actions.theme = &theme;
 
   ToolbarWidget toolbar(actions);
