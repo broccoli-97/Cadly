@@ -221,7 +221,28 @@ switches. Panels are fixed-position and toggle visibility only; the old
   input-injection tool). `--demo hiddenline-orbit:<yaw>,<pitch>[,persp]` (and
   the `wireframe-orbit:` twin) screenshots a line mode at an exact arbitrary
   orientation — the silhouette pass is view-dependent, so regressions hide at
-  in-between azimuths the seven standard views never hit.
+  in-between azimuths the seven standard views never hit. `--lang zh_CN|en`
+  overrides the UI language for one run without touching the persisted setting
+  (how translated screenshots are taken).
+
+## Localization
+
+UI language is Qt i18n: catalogs live in `translations/cadly_*.ts` (zh_CN
+today), compiled by lrelease and embedded under the `:/i18n` resource prefix,
+loaded in `main.cpp` before any widget exists — the shell sets its strings
+once at construction, so a language change applies on the next launch (the
+View ▸ Language menu offers the relaunch). The choice persists as
+`ui/language` (`system|en|zh_CN`); language display names in the menu are
+deliberately not translated (each language names itself). Qt6 LinguistTools
+is an **optional** dependency: without it the build succeeds English-only
+(vcpkg gets lrelease via qttools' `linguist` feature). After adding or
+changing `tr()` strings, refresh catalogs with the `update_translations`
+build target (or `/usr/lib/qt6/bin/lupdate -locations none src/ui/src
+src/ui/include src/app/src src/app/include -ts translations/cadly_zh_CN.ts`)
+and fill in the new entries. Strings in tables must be marked `QT_TR_NOOP`
+(see InspectorWidget's tab specs); classes without `Q_OBJECT` must use
+`QCoreApplication::translate` with an explicit context, never inherited
+`tr()` (see IsolateBanner).
 
 ## Assets & logging
 
