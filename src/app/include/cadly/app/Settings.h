@@ -20,6 +20,12 @@ public:
   bool dark_theme() const;
   void set_dark_theme(bool dark);
 
+  // UI language: "system" (follow QLocale::system()), or a locale code with
+  // a shipped catalog ("en", "zh_CN"). Read once at startup, before any
+  // widget is constructed — changing it takes effect on the next launch.
+  QString language() const;
+  void    set_language(const QString& code);
+
   // Window geometry is stored as an opaque blob. (The old window *state*
   // blob — QMainWindow dock/toolbar layout — died with the QDockWidget
   // shell; panel layout now persists as explicit keys written by MainWindow.)

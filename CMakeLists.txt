@@ -76,6 +76,16 @@ endif()
 if(CADLY_BUILD_GUI)
   find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Concurrent)
 
+  # Linguist tools (lupdate/lrelease) compile translations/*.ts into the .qm
+  # catalogs embedded in the app. Optional on purpose: a Qt install without
+  # qttools still builds and runs, just English-only (QTranslator::load on
+  # the missing :/i18n resource fails quietly). vcpkg gets the tools via the
+  # qttools dependency's "linguist" feature (see vcpkg.json).
+  find_package(Qt6 QUIET COMPONENTS LinguistTools)
+  if(NOT Qt6LinguistTools_FOUND)
+    message(STATUS "Qt6 LinguistTools not found - building without translations")
+  endif()
+
   # qlementine-icons — MIT, 350+ desktop-app SVG icons compiled into a Qt
   # resource library and exposed as the "qlementine" QIcon theme. Pulled via
   # FetchContent (pinned tag) rather than a system package because no distro

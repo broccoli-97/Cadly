@@ -100,11 +100,14 @@ InspectorWidget::InspectorWidget(QWidget* parent) : QWidget(parent) {
   auto* group = new QButtonGroup(this);
   group->setExclusive(true);
 
+  // QT_TR_NOOP marks the literals for lupdate; the actual lookup happens at
+  // the tr(specs[i].tip) call sites below, which a bare table entry would
+  // hide from extraction.
   struct TabSpec { const char* icon; const char* tip; };
   const TabSpec specs[3] = {
-    {"document/properties",            "Properties"},
-    {"navigation/sliders-horizontal",  "Display"},
-    {"action/download",                "Import"},
+    {"document/properties",            QT_TR_NOOP("Properties")},
+    {"navigation/sliders-horizontal",  QT_TR_NOOP("Display")},
+    {"action/download",                QT_TR_NOOP("Import")},
   };
   tabs->addStretch();
   for (int i = 0; i < 3; ++i) {

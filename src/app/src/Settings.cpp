@@ -35,6 +35,16 @@ void Settings::set_dark_theme(bool dark) {
   s.setValue("ui/dark_theme", dark);
 }
 
+QString Settings::language() const {
+  auto s = settings_handle();
+  return s.value("ui/language", QStringLiteral("system")).toString();
+}
+
+void Settings::set_language(const QString& code) {
+  auto s = settings_handle();
+  s.setValue("ui/language", code);
+}
+
 QByteArray Settings::window_geometry() const {
   auto s = settings_handle();
   return s.value("window/geometry").toByteArray();

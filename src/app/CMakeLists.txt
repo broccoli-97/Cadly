@@ -38,4 +38,26 @@ set_target_properties(cadly PROPERTIES
   MACOSX_BUNDLE ON
 )
 
+# Translations. The .ts catalogs live in <root>/translations and are compiled
+# by lrelease into .qm files embedded under the ":/i18n" resource prefix
+# (qt_add_translations' default), where main.cpp's QTranslator looks for
+# them. Most tr() strings live in the cadly_ui static library, not this
+# target, so lupdate must be pointed at both modules' sources explicitly —
+# the glob only feeds the dev-time "update_translations" target, never the
+# build itself, so a stale glob can't break a build. Refresh catalogs with:
+#   cmake --build --preset linux-release --target update_translations
+if(Qt6LinguistTools_FOUND)
+  file(GLOB_RECURSE cadly_i18n_sources
+    ${CMAKE_SOURCE_DIR}/src/ui/src/*.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/src/*.h
+    ${CMAKE_SOURCE_DIR}/src/ui/include/*.h
+    ${CMAKE_SOURCE_DIR}/src/app/src/*.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/include/*.h
+  )
+  qt_add_translations(cadly
+    TS_FILES ${CMAKE_SOURCE_DIR}/translations/cadly_zh_CN.ts
+    SOURCES ${cadly_i18n_sources}
+  )
+endif()
+
 install(TARGETS cadly RUNTIME DESTINATION ${CADLY_INSTALL_BINDIR})

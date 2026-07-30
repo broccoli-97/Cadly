@@ -51,6 +51,12 @@ public:
   void set_recent_files(const QStringList& paths);
   void set_last_open_directory(const QString& dir);
 
+  // Reflects the persisted UI-language choice ("system", "en", "zh_CN") in
+  // the View ▸ Language menu. Persistence is app-side, like recents; a menu
+  // selection is reported via language_selected() and only takes effect on
+  // the next launch (the shell offers a relaunch).
+  void set_language(const QString& code);
+
   // Dev/test aid (paired with the app's --demo flag): drive a named UI state
   // — "wireframe", "hiddenline", "shaded-orbit:<yaw>,<pitch>",
   //   "shadedmenu", "light", "display",
@@ -61,6 +67,7 @@ public:
 signals:
   void file_imported(const QString& path);  // emitted on successful import
   void recents_clear_requested();
+  void language_selected(const QString& code);  // "system" | "en" | "zh_CN"
 
 public slots:
   void open_file();                         // file dialog
@@ -158,6 +165,9 @@ private:
   QAction* act_toggle_strip_{nullptr};
   QAction* act_zero_chrome_{nullptr};
   QAction* act_theme_dark_{nullptr};
+  QAction* act_lang_system_{nullptr};
+  QAction* act_lang_english_{nullptr};
+  QAction* act_lang_chinese_{nullptr};
   QAction* act_about_{nullptr};
   QList<QAction*> view_actions_;   // Front…Iso + Fit, for the Views popover
   QMenu* recents_menu_{nullptr};
@@ -166,6 +176,7 @@ private:
   std::vector<std::unique_ptr<DocumentState>> documents_;
   QString     last_open_dir_;
   QStringList recent_files_;
+  QString     language_code_{QStringLiteral("system")};
 
   bool importing_{false};
   DocumentState* importing_document_{nullptr};

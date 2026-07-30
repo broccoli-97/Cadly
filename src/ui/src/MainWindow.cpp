@@ -21,6 +21,7 @@
 
 #include <QAction>
 #include <QAbstractButton>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDialog>
@@ -38,6 +39,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QProcess>
 #include <QProgressBar>
 #include <QSettings>
 #include <QShortcut>
@@ -129,8 +131,12 @@ public:
 
   void set_part_name(const QString& name) {
     const QFontMetrics fm(label_->font());
-    label_->setText(tr("Isolating %1").arg(
-      fm.elidedText(name, Qt::ElideMiddle, 240)));
+    // Not tr(): without Q_OBJECT this class inherits QWidget's tr(), whose
+    // runtime context ("QWidget") would never match what lupdate extracts.
+    // translate() pins the context explicitly instead of adding moc churn
+    // for one string.
+    label_->setText(QCoreApplication::translate("IsolateBanner", "Isolating %1")
+      .arg(fm.elidedText(name, Qt::ElideMiddle, 240)));
     adjustSize();
   }
 
@@ -567,6 +573,44 @@ void MainWindow::build_actions() {
     ThemeManager::instance().set_dark(on);
   });
 
+  // Language switcher. Only the System entry is tr()'d: each language names
+  // itself, so whatever language is active by accident or default, every
+  // entry — and the way back — stays readable. Translators install once at
+  // startup (the shell sets all its strings while being built, so a swap
+  // now would only reach widgets created later); the honest offer is a
+  // relaunch, not a half-translated window.
+  act_lang_system_  = new QAction(tr("&System Language"), this);
+  act_lang_english_ = new QAction(QStringLiteral("English"), this);
+  act_lang_chinese_ = new QAction(QStringLiteral("简体中文"), this);
+  act_lang_system_->setData(QStringLiteral("system"));
+  act_lang_english_->setData(QStringLiteral("en"));
+  act_lang_chinese_->setData(QStringLiteral("zh_CN"));
+  auto* lang_group = new QActionGroup(this);
+  for (QAction* a : {act_lang_system_, act_lang_english_, act_lang_chinese_}) {
+    a->setCheckable(true);
+    lang_group->addAction(a);
+  }
+  act_lang_system_->setChecked(true);
+  connect(lang_group, &QActionGroup::triggered, this, [this](QAction* a) {
+    const QString code = a->data().toString();
+    if (code == language_code_) return;  // re-picking the active language
+    language_code_ = code;
+    // Direct connection in main.cpp persists the choice before question()
+    // spins the event loop, so "Restart Now" relaunches into the new value.
+    emit language_selected(code);
+    QMessageBox box(QMessageBox::Question, tr("Change Language"),
+                    tr("The new language will be used the next time Cadly "
+                       "starts."),
+                    QMessageBox::NoButton, this);
+    auto* restart = box.addButton(tr("Restart Now"), QMessageBox::AcceptRole);
+    box.addButton(tr("Later"), QMessageBox::RejectRole);
+    box.exec();
+    if (box.clickedButton() == restart) {
+      QProcess::startDetached(QCoreApplication::applicationFilePath(), {});
+      close();
+    }
+  });
+
   act_about_ = new QAction(tr("About Cadly"), this);
   connect(act_about_, &QAction::triggered, this, &MainWindow::on_about);
 }
@@ -578,7 +622,7 @@ void MainWindow::build_shell() {
   connect(viewport_, &ViewportWidget::frame_timed, this, [this](float ms) {
     if (status_frame_) {
       status_frame_->setText(
-        QStringLiteral("frame %1 ms").arg(static_cast<double>(ms), 0, 'f', 1));
+        tr("frame %1 ms").arg(static_cast<double>(ms), 0, 'f', 1));
     }
   });
 
@@ -766,6 +810,10 @@ void MainWindow::build_menus() {
   for (auto* a : view_actions_) views_menu->addAction(a);
   view_menu->addSeparator();
   view_menu->addAction(act_theme_dark_);
+  auto* lang_menu = view_menu->addMenu(tr("&Language"));
+  lang_menu->addAction(act_lang_system_);
+  lang_menu->addAction(act_lang_english_);
+  lang_menu->addAction(act_lang_chinese_);
   auto* panels_menu = view_menu->addMenu(tr("&Panels"));
   panels_menu->addAction(act_toggle_sidebar_);
   panels_menu->addAction(act_toggle_inspector_);
@@ -1382,6 +1430,16 @@ void MainWindow::set_last_open_directory(const QString& dir) {
   last_open_dir_ = dir;
 }
 
+void MainWindow::set_language(const QString& code) {
+  language_code_ = code;
+  // setChecked never re-emits QActionGroup::triggered (that only fires on
+  // user interaction), so no blockers needed. An unknown persisted code
+  // simply leaves nothing checked.
+  for (QAction* a : {act_lang_system_, act_lang_english_, act_lang_chinese_}) {
+    if (a) a->setChecked(a->data().toString() == code);
+  }
+}
+
 void MainWindow::rebuild_recents_menu() {
   if (!recents_menu_) return;
   recents_menu_->clear();
@@ -1633,7 +1691,7 @@ void MainWindow::update_status_for_scene() {
   const int msaa = viewport_->display_mode().msaa_samples;
   const QString msaa_text =
     msaa > 1 ? QStringLiteral("MSAA %1×").arg(msaa) : tr("MSAA off");
-  status_stats_->setText(QStringLiteral("%1 · %2 nodes · %3 tris · %4 verts")
+  status_stats_->setText(tr("%1 · %2 nodes · %3 tris · %4 verts")
     .arg(msaa_text)
     .arg(scene.nodes.size())
     .arg(triangles)

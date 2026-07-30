@@ -141,13 +141,13 @@ void DiagnosticsStrip::show_summary(const cad::ImportSummary& s) {
   val_tris_->setText(QString::number(s.triangle_count));
   val_verts_->setText(QString::number(s.vertex_count));
 
-  log_->appendPlainText(QStringLiteral("Parse time   : %1 ms").arg(s.parse_time.count()));
-  log_->appendPlainText(QStringLiteral("Mesh time    : %1 ms").arg(s.mesh_time.count()));
-  log_->appendPlainText(QStringLiteral("Total time   : %1 ms").arg(s.total_time.count()));
-  log_->appendPlainText(QStringLiteral("Shapes/nodes : %1").arg(s.shape_count));
-  log_->appendPlainText(QStringLiteral("Faces        : %1").arg(s.face_count));
-  log_->appendPlainText(QStringLiteral("Triangles    : %1").arg(s.triangle_count));
-  log_->appendPlainText(QStringLiteral("Vertices     : %1").arg(s.vertex_count));
+  log_->appendPlainText(tr("Parse time   : %1 ms").arg(s.parse_time.count()));
+  log_->appendPlainText(tr("Mesh time    : %1 ms").arg(s.mesh_time.count()));
+  log_->appendPlainText(tr("Total time   : %1 ms").arg(s.total_time.count()));
+  log_->appendPlainText(tr("Shapes/nodes : %1").arg(s.shape_count));
+  log_->appendPlainText(tr("Faces        : %1").arg(s.face_count));
+  log_->appendPlainText(tr("Triangles    : %1").arg(s.triangle_count));
+  log_->appendPlainText(tr("Vertices     : %1").arg(s.vertex_count));
   log_->appendPlainText(QString());
   for (const auto& d : s.diagnostics) {
     const char* tag =

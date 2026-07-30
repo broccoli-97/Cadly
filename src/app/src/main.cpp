@@ -15,9 +15,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QIcon>
+#include <QLibraryInfo>
+#include <QLocale>
 #include <QScreen>
 #include <QSurfaceFormat>
 #include <QTimer>
+#include <QTranslator>
 
 int main(int argc, char** argv) {
   // Request a 4.1 core context before QApplication exists; QOpenGLWidget will
@@ -114,6 +117,10 @@ int main(int argc, char** argv) {
     "isolate|isolate-wireframe|isolate-hiddenline).",
     "state");
   parser.addOption(demoOpt);
+  QCommandLineOption langOpt("lang",
+    "Override the UI language for this run only (system|en|zh_CN); "
+    "does not touch the persisted setting.", "code");
+  parser.addOption(langOpt);
   parser.addPositionalArgument("file", "Optional CAD file to open at startup.");
   parser.process(app);
 
@@ -121,6 +128,34 @@ int main(int argc, char** argv) {
     cadly::platform::init_logging(parser.value(logOpt).toUtf8().constData());
   }
   CADLY_LOG_INFO("Cadly {} starting", "0.1.0");
+
+  // UI language, before any widget is constructed — the shell sets all its
+  // strings once at build time, so a translator installed later would only
+  // affect newly created widgets. "system" follows the OS locale; explicit
+  // "en" installs nothing (source strings are English). Both loads fail
+  // quietly when the catalog is absent (LinguistTools not found at configure
+  // time, or a Qt install without qtbase_*.qm) and the app stays English —
+  // translations are an enhancement, never a startup dependency.
+  {
+    QString lang = settings.language();
+    if (parser.isSet(langOpt)) lang = parser.value(langOpt);
+    const QLocale locale = (lang == QLatin1String("system"))
+                             ? QLocale::system() : QLocale(lang);
+    QLocale::setDefault(locale);
+    // Qt's own strings first (QFileDialog, QMessageBox buttons, context
+    // menus), from the Qt installation; ours override on top from the
+    // ":/i18n" resource qt_add_translations embeds.
+    auto* qt_translator = new QTranslator(&app);
+    if (qt_translator->load(locale, QStringLiteral("qtbase"), QStringLiteral("_"),
+                            QLibraryInfo::path(QLibraryInfo::TranslationsPath))) {
+      app.installTranslator(qt_translator);
+    }
+    auto* app_translator = new QTranslator(&app);
+    if (app_translator->load(locale, QStringLiteral("cadly"), QStringLiteral("_"),
+                             QStringLiteral(":/i18n"))) {
+      app.installTranslator(app_translator);
+    }
+  }
 
   cadly::ui::MainWindow window;
 
@@ -143,6 +178,16 @@ int main(int argc, char** argv) {
   });
   QObject::connect(&window, &cadly::ui::MainWindow::recents_clear_requested,
                    &recents, &cadly::app::RecentFiles::clear);
+
+  // Language menu: the shell displays the persisted choice and reports
+  // selections; persistence stays app-side (same split as recents/theme).
+  // The connection is direct, so the new value is on disk before the
+  // shell's restart prompt can relaunch the process.
+  window.set_language(settings.language());
+  QObject::connect(&window, &cadly::ui::MainWindow::language_selected,
+                   &app, [&settings](const QString& code) {
+    settings.set_language(code);
+  });
 
   if (auto blob = settings.window_geometry(); !blob.isEmpty()) {
     window.restoreGeometry(blob);
