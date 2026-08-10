@@ -555,6 +555,18 @@
         <source>&lt;b&gt;Cadly&lt;/b&gt;&lt;br&gt;Native C++ CAD viewer.&lt;br&gt;STEP/IGES via OCCT, OpenGL 4.1 PBR renderer.&lt;br&gt;Qt %1.</source>
         <translation>&lt;b&gt;Cadly&lt;/b&gt;&lt;br&gt;原生 C++ CAD 查看器。&lt;br&gt;通过 OCCT 导入 STEP/IGES，OpenGL 4.1 PBR 渲染器。&lt;br&gt;Qt %1。</translation>
     </message>
+    <message>
+        <source>&amp;Hide Other Parts</source>
+        <translation>隐藏其他零件(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Hide Others</source>
+        <translation>隐藏其他</translation>
+    </message>
+    <message>
+        <source>Hide the other parts entirely instead of ghosting them</source>
+        <translation>完全隐藏其他零件，而不是将其显示为半透明虚影</translation>
+    </message>
 </context>
 <context>
     <name>cadly::ui::PinnedCard</name>

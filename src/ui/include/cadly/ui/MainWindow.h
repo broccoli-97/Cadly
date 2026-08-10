@@ -160,6 +160,10 @@ private:
   // Hidden + disabled outside isolate mode; the banner's Back button and the
   // View menu entry both drive it.
   QAction* act_exit_isolate_{nullptr};
+  // Isolate's one option: the parts outside the focus as a translucent ghost
+  // veil (unchecked, default) or hidden outright (checked). Checkbox state is
+  // the persisted preference itself; only enabled/visible track isolate mode.
+  QAction* act_isolate_hide_others_{nullptr};
   QAction* act_toggle_sidebar_{nullptr};
   QAction* act_toggle_inspector_{nullptr};
   QAction* act_toggle_strip_{nullptr};

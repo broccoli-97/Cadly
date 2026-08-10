@@ -188,9 +188,16 @@ switches. Panels are fixed-position and toggle visibility only; the old
   picking, not yet implemented); double-click **isolates** it — everything
   else ghosts translucent (`Node::ghosted`) and grays in the tree, with a
   floating Back banner over the viewport as the exit (Esc works too; isolate
-  unwinds before zero-chrome). Isolate persists per tab via
-  `DocumentState::isolate_node`; the flags live in the scene's nodes but the
-  sidebar wipes them on every scene handover and the shell re-applies.
+  unwinds before zero-chrome). The banner also holds the mode's one option, a
+  "Hide Others" toggle (View menu twin next to Exit Isolate): checked, the
+  parts outside the focus disappear outright instead of ghosting
+  (`DisplayMode::hide_ghosted` — `Node::ghosted` still marks them; only the
+  renderer's treatment changes). Like Dimmed Hidden Lines, the checkbox is
+  the preference itself (`display/isolate_hide_others`), never
+  force-cleared, enabled/visible only while isolate is active. Isolate
+  persists per tab via `DocumentState::isolate_node`; the flags live in the
+  scene's nodes but the sidebar wipes them on every scene handover and the
+  shell re-applies.
 - Shortcuts: `F` fit, `W` wireframe, `H` hidden line, `E` edges, `T` triangle mesh, `P`
   perspective toggle (ortho is default for CAD). Standard views `1`-`7`
   (Front/Back/Right/Left/Top/Bottom/Iso, Blender-style numbering). `⌃.` toggles
@@ -216,7 +223,7 @@ switches. Panels are fixed-position and toggle visibility only; the old
   scrollbars. Do not install a second app-wide stylesheet from the UI module.
   Reuse the existing Fusion style instance on theme changes: replacing it can
   recreate `QOpenGLWidget`'s backing surface and invalidate renderer resources.
-- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|shadedmenu|hiddenmenu|zerochrome|highlight|isolate]`
+- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|shadedmenu|hiddenmenu|zerochrome|highlight|isolate|isolate-hide]`
   drives a UI state and grabs it headlessly (used to verify the shell without an
   input-injection tool). `--demo hiddenline-orbit:<yaw>,<pitch>[,persp]` (and
   the `wireframe-orbit:` twin) screenshots a line mode at an exact arbitrary

@@ -1472,6 +1472,11 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;
     if (selection_only && !node.selected) continue;
+    // The "hide others" isolate style removes ghosted parts outright: no
+    // wireframe ink, and no selection strokes either — floating selection
+    // edges on a part with no surfaces would read as present (see
+    // DisplayMode::hide_ghosted).
+    if (node.ghosted && mode.hide_ghosted) continue;
     // Ghosted (isolate) parts draw no edge ink in the surface modes: their
     // faces are a translucent veil, and full-strength edges on top would
     // read as more present than the focused part. Wireframe has no surfaces
@@ -1615,6 +1620,9 @@ void GLRendererImpl::draw_silhouettes(const renderer::DisplayMode& mode,
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;
     if (selection_only && !node.selected) continue;
+    // "Hide others" isolate style: ghosted parts vanish contour and all,
+    // selection strokes included — mirrors draw_edges.
+    if (node.ghosted && mode.hide_ghosted) continue;
     // Ghost/selection handling mirrors draw_edges: surface modes leave
     // ghosted parts as a clean veil; wireframe carries both cues in the
     // ink itself.
@@ -1978,7 +1986,9 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   // is off — the veil must not punch holes for later ghosts or the pivot
   // pass. No sorting between ghosts: at veil opacity the order error is
   // invisible, and the alpha-preserving blend keeps the compositor safe.
-  if (any_ghosted) {
+  // The "hide others" isolate style skips the pass wholesale — that is the
+  // entire difference between the two styles on the surface side.
+  if (any_ghosted && !mode.hide_ghosted) {
     gl_.glUseProgram(prog_pbr_.id());
     gl_.glEnable(GL_BLEND);
     gl_.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,

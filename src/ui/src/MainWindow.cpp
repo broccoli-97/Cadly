@@ -103,13 +103,17 @@ struct DocumentState {
 };
 
 // Floating capsule pinned over the viewport's top-centre while isolate mode
-// is active: part glyph + "Isolating <name>" + the Back button. This is the
-// mode's one guaranteed exit affordance (menus and panels can all be hidden,
-// e.g. in zero-chrome), so it lives on the viewport itself, painted with the
-// same capsule recipe as the HUD cluster so the two read as one family.
+// is active: part glyph + "Isolating <name>" + the Hide Others style toggle
+// + the Back button. This is the mode's one guaranteed exit affordance
+// (menus and panels can all be hidden, e.g. in zero-chrome), so it lives on
+// the viewport itself, painted with the same capsule recipe as the HUD
+// cluster so the two read as one family. The style toggle rides along for
+// the same reason: it only means anything while isolate is on, so its home
+// is the isolate chrome, not the toolbar.
 class IsolateBanner final : public QWidget {
 public:
-  IsolateBanner(QAction* back_action, QWidget* parent) : QWidget(parent) {
+  IsolateBanner(QAction* back_action, QAction* hide_others_action,
+                QWidget* parent) : QWidget(parent) {
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(11, 4, 5, 4);
     lay->setSpacing(7);
@@ -119,6 +123,14 @@ public:
     label_ = new QLabel(this);
     label_->setFont(ui_font(12, QFont::DemiBold));
     lay->addWidget(label_);
+    // Checkable chip, accent-filled while the "hide others" style is on —
+    // the same checked treatment as the toolbar's display-mode chips, so
+    // the active style is readable at a glance.
+    auto* hide_others = new ToolbarButton(this);
+    hide_others->setDefaultAction(hide_others_action);
+    hide_others->set_show_text(true);
+    hide_others->set_emphasis(ToolbarButton::Emphasis::Accent);
+    lay->addWidget(hide_others);
     auto* back = new ToolbarButton(this);
     back->setDefaultAction(back_action);
     back->set_show_text(true);
@@ -456,6 +468,23 @@ void MainWindow::build_actions() {
     if (sidebar_) sidebar_->set_isolate(scene::Node::kInvalid);
   });
 
+  // Isolate's one option, mirroring the Dimmed Hidden Lines pattern: the
+  // checkbox IS the persisted preference (display/isolate_hide_others) and
+  // is never force-cleared — the renderer ignores it while nothing is
+  // ghosted — so only the enabled/visible state tracks isolate mode (see
+  // on_isolate_changed). Checked hides the parts outside the isolate focus
+  // outright; unchecked (default) keeps them as the translucent ghost veil.
+  act_isolate_hide_others_ = new QAction(tr("&Hide Other Parts"), this);
+  act_isolate_hide_others_->setIconText(tr("Hide Others"));
+  act_isolate_hide_others_->setCheckable(true);
+  act_isolate_hide_others_->setChecked(false);
+  act_isolate_hide_others_->setToolTip(
+    tr("Hide the other parts entirely instead of ghosting them"));
+  act_isolate_hide_others_->setEnabled(false);   // follows isolate mode
+  act_isolate_hide_others_->setVisible(false);
+  connect(act_isolate_hide_others_, &QAction::toggled,
+          this, [this](bool) { update_display_mode(); });
+
   act_wireframe_ = new QAction(tr("&Wireframe"), this);
   act_wireframe_->setCheckable(true);
   act_wireframe_->setShortcut(Qt::Key_W);
@@ -725,7 +754,8 @@ void MainWindow::build_shell() {
   hud_ = hud;
 
   // Isolate banner: hidden until the sidebar reports an isolate focus.
-  isolate_banner_ = new IsolateBanner(act_exit_isolate_, viewport_);
+  isolate_banner_ = new IsolateBanner(act_exit_isolate_,
+                                      act_isolate_hide_others_, viewport_);
   isolate_banner_->hide();
 
   // --- wiring ------------------------------------------------------------
@@ -798,6 +828,7 @@ void MainWindow::build_menus() {
   auto* view_menu = menuBar()->addMenu(tr("&View"));
   view_menu->addAction(act_fit_);
   view_menu->addAction(act_exit_isolate_);
+  view_menu->addAction(act_isolate_hide_others_);
   view_menu->addSeparator();
   view_menu->addAction(act_wireframe_);
   view_menu->addAction(act_hidden_line_);
@@ -873,6 +904,10 @@ void MainWindow::refresh_theme() {
   act_fit_->setIcon(themed_icon(QStringLiteral("action/zoom-fit")));
   act_exit_isolate_->setIcon(
     themed_icon(QStringLiteral("navigation/arrow-left")));
+  // Same crossed-eye the sidebar rows use for "hidden", tying the isolate
+  // style to the visibility vocabulary the tree already taught.
+  act_isolate_hide_others_->setIcon(
+    themed_icon(QStringLiteral("action/eye-crossed")));
   act_wireframe_->setIcon(themed_icon(QStringLiteral("shape/cube")));
   act_hidden_line_->setIcon(themed_icon(QStringLiteral("shape/borders")));
   act_perspective_->setIcon(
@@ -948,6 +983,10 @@ void MainWindow::update_display_mode() {
   mode.show_edges         = mode.hidden_line || act_edges_->isChecked();
   mode.show_triangle_mesh = act_triangle_mesh_->isChecked();
   mode.show_hidden_edges  = act_hidden_dimmed_->isChecked();
+  // Like show_hidden_edges, fed unconditionally: the renderer only consults
+  // it while nodes are ghosted, so the preference survives isolate
+  // round-trips without any force-clearing here.
+  mode.hide_ghosted       = act_isolate_hide_others_->isChecked();
   if (mode.wireframe || mode.hidden_line) {
     mode.show_edges         = mode.hidden_line;
     mode.show_triangle_mesh = false;
@@ -1069,6 +1108,11 @@ void MainWindow::on_isolate_changed(std::uint32_t isolate_node) {
   }
   act_exit_isolate_->setEnabled(active);
   act_exit_isolate_->setVisible(active);
+  // The style toggle follows the same lifecycle: outside isolate it is a
+  // no-op, so the menu entry vanishes with Exit Isolate. Its checked state
+  // is left alone — it is the preference (see build_actions).
+  act_isolate_hide_others_->setEnabled(active);
+  act_isolate_hide_others_->setVisible(active);
   if (active && isolate_banner_) {
     QString name;
     if (const auto* document = active_document();
@@ -1217,15 +1261,23 @@ void MainWindow::run_demo(const QString& name) {
     }
   } else if (name == QLatin1String("isolate") ||
              name == QLatin1String("isolate-wireframe") ||
-             name == QLatin1String("isolate-hiddenline")) {
+             name == QLatin1String("isolate-hiddenline") ||
+             name == QLatin1String("isolate-hide") ||
+             name == QLatin1String("isolate-hide-wireframe") ||
+             name == QLatin1String("isolate-hide-hiddenline")) {
     // Isolate a mid-assembly part (the first is often the base body, which
     // would leave nothing meaningful to ghost) — with surface-mode variants
-    // to exercise the ghost handling in every draw path.
+    // to exercise the ghost handling in every draw path. The -hide names
+    // drive the "hide others" isolate style; both spellings set the toggle
+    // explicitly so screenshots never depend on the persisted preference.
     if (name.endsWith(QLatin1String("wireframe"))) {
       set_surface_mode(SurfaceMode::Wireframe);
     } else if (name.endsWith(QLatin1String("hiddenline"))) {
       set_surface_mode(SurfaceMode::HiddenLine);
     }
+    act_isolate_hide_others_->setChecked(
+      name == QLatin1String("isolate-hide") ||
+      name.startsWith(QLatin1String("isolate-hide-")));
     if (const auto* document = active_document();
         document && document->scene) {
       const auto& nodes = document->scene->nodes;
@@ -1745,6 +1797,9 @@ void MainWindow::load_settings() {
   mode.show_axes      = s.value("axes", mode.show_axes).toBool();
   act_hidden_dimmed_->setChecked(
     s.value("dimmed_hidden", act_hidden_dimmed_->isChecked()).toBool());
+  act_isolate_hide_others_->setChecked(
+    s.value("isolate_hide_others",
+            act_isolate_hide_others_->isChecked()).toBool());
   s.endGroup();
   inspector_->load_display(mode);
 
@@ -1778,6 +1833,7 @@ void MainWindow::save_settings() const {
   s.setValue("scale_bar",      mode.show_scale_bar);
   s.setValue("axes",           mode.show_axes);
   s.setValue("dimmed_hidden",  act_hidden_dimmed_->isChecked());
+  s.setValue("isolate_hide_others", act_isolate_hide_others_->isChecked());
   s.endGroup();
 
   s.beginGroup(QStringLiteral("ui"));

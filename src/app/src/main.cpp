@@ -114,7 +114,8 @@ int main(int argc, char** argv) {
     "[,persp]|wireframe-reopen|hiddenline-reopen|light|dark|"
     "display|import|views|getinfo|shadedmenu|hiddenmenu|zerochrome|deepzoom|"
     "highlight|highlight:<node>|highlight-wireframe|highlight-hiddenline|"
-    "isolate|isolate-wireframe|isolate-hiddenline).",
+    "isolate|isolate-wireframe|isolate-hiddenline|"
+    "isolate-hide|isolate-hide-wireframe|isolate-hide-hiddenline).",
     "state");
   parser.addOption(demoOpt);
   QCommandLineOption langOpt("lang",

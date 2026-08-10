@@ -75,6 +75,14 @@ struct DisplayMode {
   scene::vec3 selection_color  {1.0f, 0.478f, 0.149f};
   float       selection_opacity{0.65f};
   float       ghost_opacity    {0.12f};
+  // Isolate's second presentation style: when set, nodes with Node::ghosted
+  // are omitted from the frame entirely — no veil, no wireframe's faded
+  // lines, not even selection strokes (a hidden part with floating
+  // selection ink would read as present). The flag lives here rather than
+  // in the scene so the UI can flip veil <-> hidden per frame without
+  // re-walking the node hierarchy; Node::ghosted keeps marking "outside
+  // the isolate focus" either way. Ignored while nothing is ghosted.
+  bool        hide_ghosted     {false};
 
   // Anti-aliasing. Off (0 or 1) renders directly to the host's default
   // framebuffer; any other value asks the renderer to allocate an offscreen

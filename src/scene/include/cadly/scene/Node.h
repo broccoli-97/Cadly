@@ -32,8 +32,9 @@ struct Node {
   // tints those surfaces with DisplayMode::selection_color so the user can
   // match a tree row to its geometry. `ghosted` marks everything OUTSIDE the
   // isolate focus (sidebar double-click): those nodes draw as a translucent
-  // veil at DisplayMode::ghost_opacity instead of full surfaces. Importers
-  // leave both at their defaults.
+  // veil at DisplayMode::ghost_opacity instead of full surfaces — or are
+  // omitted from the frame entirely when DisplayMode::hide_ghosted asks for
+  // the "hide others" isolate style. Importers leave both at their defaults.
   bool selected{false};
   bool ghosted{false};
 
