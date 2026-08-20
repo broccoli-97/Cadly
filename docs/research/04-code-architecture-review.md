@@ -1,385 +1,443 @@
-# Cadly 代码、模块和架构详细审查
-
-**审查基线：** commit `6b85a4e`（2026-07-18）  
-**规模：** 约 10,800 行 C++，核心大文件为 `GLRenderer.cpp` 1,704 行、`MainWindow.cpp`
-1,452 行、`OcctShapeToMesh.cpp` 879 行。  
-**方法：** 阅读全部公共头、核心实现、CMake、shader 和测试；Debug 构建、CTest、8 个 CAD
-样本导入；未修改产品代码。
-
-## 总体判断
-
-模块名和最初的依赖方向是合理的，尤其值得保留的是：
-
-- `scene` 没有 Qt/OCCT/OpenGL 头，作为 importer 和 renderer 之间的 DTO 边界是正确的；
-- 只有 `cad` 链接 OCCT toolkit；
-- `renderer_gl` 通过宿主提供函数地址，代码没有 Qt 依赖；
-- overlay、scale bar、axes 和 edge 都在 renderer 中，不用 QPainter 覆盖 viewport；
-- import 在 QtConcurrent worker 运行，UI 没把 98 秒的导入放到 GUI thread；
-- STEP/IGES 都使用 XCAF，能保留基础 assembly/name/color，而不是只读一个 compound；
-- 诊断、分阶段计时、tessellation policy 和公共 CLI 是后续优化的重要基础。
-
-但当前“模块边界正确”更多体现在 CMake 目标名，运行时职责已经向三个 God Object 聚集：
-
-```text
-MainWindow (UI + document model + import coordinator + persistence + workflow)
-       |                         |
-       v                         v
-OcctShapeToMesh             GLRendererImpl
-(XCAF traversal + mesh +    (resources + IBL bake + PBR + every pass + HUD font)
- colors + edge LOD)
-```
-
-这三个文件分别同时拥有策略、数据转换、资源生命周期和呈现。当前体量仍能维护，但选择、
-测量、截面、缓存、透明材质或 Vulkan 任意一项都会继续放大耦合。建议保留模块，重划模块内
-的职责，而不是再增加一层“Manager”名字。
-
-## 依赖审查
-
-实际依赖图：
-
-```text
-app executable
-  -> ui -> cad -> scene -> glm
-       |     -> platform
-       -> renderer (interface) -> scene
-       -> renderer_gl -> renderer + scene + platform + OpenGL
-  -> platform
-```
-
-### 合理处
-
-- `cad -> scene` 和 `renderer_gl -> renderer -> scene` 没有反向依赖。
-- `app` 是 composition root，创建 QApplication、theme、settings、recents 和 MainWindow。
-- `platform` 只承担 log/path；没有把 GUI 或系统窗口塞进去。
-
-### 边界偏移
-
-- `ui::MainWindow` 的公共头直接包含 `cad/ICadImporter.h`，实现中创建 importer job、持有
-  `ImportResult/ImportSummary`、写 QSettings。UI 已成为 application service。
-- `Cadly::Ui` 将 `Cadly::RendererGL` 和 `Cadly::Cad` 作为 `PUBLIC` link dependency；
-  RendererGL 只在 `ViewportWidget.cpp` 用，应是 private implementation detail。
-- `scene` 在 CMake 中 private link `Cadly::Platform`，但 scene 源没有使用 platform；这是小的
-  依赖噪声。
-- `IRenderer` 的注释和生命周期仍以 GL context 描述，接口只有 initialize/resize/attach/render/
-  shutdown，缺少 capabilities、错误结果、异步资源上传、selection/section render data；未来
-  Vulkan 实现会被迫模仿 OpenGL host，而不是实现真正后端中立的 contract。
-
-## Findings
-
-以下按风险排序。`P0` 是会破坏正确性、可取消性、内存或大模型可用性的项；`P1` 是在扩展
-核心功能前应解决的结构/行为问题；`P2` 是长期质量债务。
-
-### P0-1：OCCT document 没有 Close，导入会在应用 session 中滞留
-
-**证据：** STEP 在
-[OcctStepImporter.cpp](../../src/cad/src/OcctStepImporter.cpp#L75) 调 `NewDocument`，IGES 在
-[OcctIgesImporter.cpp](../../src/cad/src/OcctIgesImporter.cpp#L54) 做相同操作；所有返回路径都
-没有 `app->Close(doc)`。OCCT `TDocStd_Application::Close` 的 contract 是让 document 不再由
-application session 管理。
-
-**影响：** re-import 或多文档会保留 OCAF graph 和 triangulation，内存峰值逐次上升；失败/
-取消路径同样泄漏 session ownership。本机 RC 模型单次峰值约 426 MB，同进程顺序导入三次
-峰值约 633 MB；allocator cache 会干扰数值，但 API 生命周期问题本身确定。
-
-**建议：** 建一个仅存在于 `cad` 内部的 RAII `XcafDocumentLease`，析构时 Close；在返回 scene
-前 scene 必须已经复制完所需数据，不持有 TDF/TopoDS 引用。用同进程循环导入 20 次的 RSS
-平台测试验收。
-
-### P0-2：取消在最耗时阶段不可达
-
-**证据：** STEP 只在 `ReadFile` 后检查一次
-[progress.cancelled](../../src/cad/src/OcctStepImporter.cpp#L101)，随后 `Transfer(doc)` 可单段
-执行 53.5 秒；批量 `tessellate(all)` 也不接 cancel。assembly walk 才再次轮询。IGES 同样。
-
-**影响：** 用户点击取消或关闭窗口时，`MainWindow::closeEvent` 会
-`waitForFinished()`；窗口可能冻结数十秒。API caller 取消后还可能收到一个 `success=true` 的
-部分 scene，因为 importer 只检查 nodes 是否为空。
-
-**建议：** 将 atomic sink 适配为 `Message_ProgressIndicator`，传给 Transfer 和 mesher；每个
-阶段结束再检查 cancel，并返回明确 `ImportStatus::Cancelled`，不要用 `success=false` 猜测。
-
-### P0-3：逐 CAD face 的 draw call 在大模型上不可扩展
-
-**证据：** `append_face` 每个成功 face push 一个
-[Submesh](../../src/cad/src/OcctShapeToMesh.cpp#L228)；PBR pass 在
-[GLRenderer.cpp](../../src/renderer_gl/src/GLRenderer.cpp#L1621) 遍历 submeshes 并逐个
-`glDrawElements`。231 MB 样本有 60,185 faces。
-
-**影响：** 单帧可能产生约 60k surface draw calls，edge/mesh passes 另算。GPU buffer 虽复用，
-driver submission 和 uniform update 会让旋转性能崩溃。为 future picking 保留 face range，
-不等于每帧必须逐 face draw。
-
-**建议：** 导入后按 material 合并 index batch；face id 放 integer vertex attribute/SSBO 或
-selection pass；重复零件 instancing；renderer 记录 draw-call telemetry 和 GPU time。
-
-### P0-4：颜色合成存在二次 tint 和 face/submesh 错位
-
-**证据：** `shape_to_mesh` 把 shape/instance fallback color 烘进每个 vertex；随后
-`build_mesh_for` 又给每个 submesh 分配同色或 face color material。PBR shader 使用
-`u_base_color.rgb * v_vertex_color.rgb`。同一个颜色会平方，face override 也会被 fallback
-再次相乘。
-
-另外 `append_face` 在 triangulation 为空或面积太小时不 push submesh，但
-[material assignment loop](../../src/cad/src/OcctShapeToMesh.cpp#L773) 对每个源 face 都增加
-`sub_index`。任何被跳过的前序 face 都会让后续材料错位。
-
-**影响：** STEP/IGES 颜色变暗、偏色或落到错误面，直接破坏查看器可信度和“默认材质不好看”
-问题的判断。
-
-**建议：** 只保留一个 base-color source；`append_face` 返回 emitted face id/submesh index
-映射，材料按映射赋值。增加“shape color + face override + skipped tiny face + instance color”
-fixture 和像素/scene assertions。
-
-### P0-5：mesh cache 会丢实例级颜色
-
-**证据：** mesh cache 只以 `shape.TShape().get()` 为 key。第一次 component 调
-`build_mesh_for(shape, proto, instanceColor)` 后，后续同 prototype 不论实例颜色如何都直接
-返回缓存 mesh；`Node::material_override` 没有被设置。OCCT 还提供专门的
-`GetInstanceColor`，当前没有调用。
-
-**影响：** 同一个螺栓/零件原型在不同 occurrence 使用不同颜色时，所有实例显示为第一个
-实例的颜色。
-
-**建议：** geometry cache 与 appearance 分离；Mesh 只缓存 prototype geometry/face style，
-instance style 写 Node override 或 per-instance material table。缓存 key 不能混入 occurrence
-颜色来复制几何。
-
-### P0-6：第一帧同步上传全部 mesh，导入完成后仍可能卡 UI
-
-**证据：** `ViewportWidget::paintGL` attach scene 后，GL renderer 在 node loop 内
-`ensure_mesh_upload`，内部多次同步 `glBufferData`，还上传三级 edge LOD。
-
-**影响：** 进度条到 100% 后首帧停顿；3.45 GB 峰值样本可能在 GUI thread 复制数百 MB 数据。
-用户将其感知为“导入假完成”或窗口无响应。
-
-**建议：** 明确 CPU-ready/GPU-ready 两阶段；每帧 upload budget、可见节点优先、共享 context
-worker 或持久映射 staging。把 first interactive frame 纳入测试。
-
-### P1-1：`load_hierarchy` 是用户可见的 no-op
-
-**证据：** 字段在 `ImportOptions`、Import UI 和 settings 中存在，`src/cad` 没有任何读取。
-
-**影响：** 用户取消勾选后得到完全相同结果，破坏设置可信度。此前 healing/welding 的 no-op
-已经在 `fd9cafc` 删除，这个选项存在相同问题。
-
-**建议：** 要么暂时删除，要么定义 geometry-only flatten contract，并用 assembly fixture
-测试 node/mesh count 和 metadata loss。
-
-### P1-2：mesher 被重复执行和重复检查
-
-**证据：** 当前版本 OCCT 的参数构造函数自动 Perform，代码随后又 `mesher.Perform()`；整文档
-批量 mesh 后，每个 unique shape 的 `shape_to_mesh` 又调用 `tessellate`。大模型 profile 中
-`shape safety tessellation=4.45 s`。
-
-**影响：** 导入尾段浪费 CPU，且让“parallel mesh”收益被串行小任务抵消。
-
-**建议：** 只调用一次 Perform；批量后检查 missing/outdated triangulation 再局部补 mesh。
-
-### P1-3：单位与来源元数据不可靠
-
-**证据：** STEP 从全局 `Interface_Static::CVal("xstep.cascade.unit")` 推断比例，却始终把
-`source_unit` 写成 `mm`；IGES `unit_to_m` 硬编码 `0.001f`，不读 `IGESData_GlobalSection` 或
-XCAF document length unit。
-
-**影响：** scale bar 和未来测量可能错误；“文件单位”和“OCCT transfer 后系统单位”被混成
-一个字段。当前 `bearing.iges` header 明确是 MM，但代码无法验证其他 unit flag。
-
-**建议：** 分开存 `file_unit`, `working_unit`, `file_to_working`, `working_to_meter`；从 reader
-model/document API 读取并在 diagnostics 显示。使用 mm/in/m 三个 fixture 验收 bbox 和测量。
-
-### P1-4：名称和路径不支持完整 Unicode
-
-**证据：** `read_label_name` 逐个 `ExtendedCharacter` 转 char，非 ASCII 直接替换 `?`；UI
-worker 把 QString path 转 `toStdString()` 再构造 filesystem path，Windows narrow path 和 OCCT
-7.6 filename API 对非 ASCII 路径存在风险。
-
-**影响：** 中文/日文零件名冲突、树不可读、source_label 不唯一；中文 Windows 路径可能无法
-打开。
-
-**建议：** scene string 统一 UTF-8，使用 OCCT/Qt 可支持的宽路径或 UTF-8 bridge；新增中文
-文件名、装配名和 emoji/补充平面的明确支持策略（不支持也要诊断）。
-
-### P1-5：`MainWindow` 同时承担四种职责
-
-**证据：** 1,452 行文件包含 DocumentState、import worker/sink、recent menu、QSettings schema、
-所有 QAction、panel 构建、display state machine、drag/drop、demo hook 和 close/cancel。
-
-**影响：** 测量/截面/标注会继续堆 action/state；import lifecycle 只能通过完整 QWidget 测试，
-多文件队列或 headless service 很难复用。
-
-**建议拆分：**
-
-- `app::DocumentSession`：documents、active id、camera/display/review state；
-- `app::ImportCoordinator`：queue、cancel、progress、cache、result replacement；
-- `app::SettingsStore`：schema/version/migration；
-- `ui::MainWindow`：只 bind QAction/widget 和上述 signals；
-- dev screenshot/demo 放独立 `DemoController` 或 test-only 编译开关。
-
-这里的 `app` 应成为可测试 library，再由 `cadly` executable 做 composition root。
-
-### P1-6：`GLRendererImpl` 是渲染单体，`IRenderer` contract 太薄
-
-**证据：** 1,704 行实现包含 GL resource cache、shader build、IBL bake、PBR、edges、wireframe、
-background、MSAA、scale-bar vector font、axes 和 selection stub。接口 `pick()` 默认返回 invalid，
-没有 capabilities/error/upload/section/selection contract。
-
-**影响：** Vulkan 或测试 backend 无法复用 render graph/feature policy；任何 pass 状态修改都在
-一个类里隐式依赖前序 GL state，增加状态泄漏风险。
-
-**建议拆分：**
-
-- backend-neutral `RenderSceneView`, `RenderSettings`, `RenderCapabilities`；
-- GL `GpuMeshCache`, `FrameTargets`, `PbrPass`, `EdgePass`, `OverlayPass`, `PostProcessPass`；
-- renderer-owned `SelectionBuffer`/ID pass；
-- initialize/upload/render 返回 result/error，不用日志作为唯一错误通道；
-- 先完成 OpenGL 内部拆分，再判断 Vulkan 是否真的有产品需求。
-
-### P1-7：IBL 初始化失败检测不完整
-
-**证据：** `bake_env_cube/irradiance/prefilter/brdf_lut` 创建和 attach FBO 后不调用
-`glCheckFramebufferStatus`；`bake_ibl()` 在 shader 有效时总返回 true。只有 MSAA FBO 做了
-complete check。
-
-**影响：** 某 GPU/format 不支持时 IBL 静默变黑，日志仍说初始化成功；用户看到的就是“材质
-很差”。启动时数亿次 shader sample 也没有缓存或 GPU tier。
-
-**建议：** 每个 bake target 校验并返回错误；将 BRDF LUT/HDRI prefilter 离线资产化或缓存；
-记录 GPU/driver/format 和 fallback 状态到 diagnostics。
-
-### P1-8：选择数据结构存在但完整链路未实现
-
-**证据：** `SelectionId`、`Submesh::source_face_id`、`Node::selected` 都存在；renderer `pick`
-仍是 stub，Viewport left click 只交给 base widget，tree selection 只更新 PropertiesPanel。
-
-**影响：** 用户无法从 3D 选择、同步树、highlight、Fit Selection、测量和截面。它是市场 P0，
-也是多个后续功能的共同基础。
-
-**建议：** 先做 node/face integer ID pass 和 async readback，定义 ID 稳定性、hidden/transparent
-规则和 DPI coordinate contract；tree/viewport 通过 selection service 双向同步。
-
-### P1-9：source identity 以名称路径构造，不唯一
-
-**证据：** `source_label = path + "/" + node.name`；同名 siblings 会得到相同字符串，
-`find_node_by_label` 线性返回第一个。
-
-**影响：** 标注/测量/review state 无法可靠回放；非 ASCII 名称都变 `?` 后更严重。
-
-**建议：** 保存 XCAF label entry、prototype id、occurrence path/index 和 file hash；显示名称只用于
-UI，不作为 identity。Scene 内增加 id->index map。
-
-### P1-10：变换 TRS 分解会丢镜像符号并可能除零
-
-**证据：** `Transform::from_matrix` 用三列长度作为全为正的 scale，再 `quat_cast`；没有检查
-determinant、负 scale 或零 scale。
-
-**影响：** mirrored occurrence 可能方向错误；normal matrix/culling 也可能不一致。gp_Trsf 能表达
-mirror/uniform scale，导入器不能假设全是纯旋转平移。
-
-**建议：** scene node 保留原始 affine matrix，动画需要时再使用经过验证的 decomposition；对
-negative determinant 调整 winding/cull，新增 mirror fixture。
-
-### P1-11：float 世界坐标对大偏置模型不稳
-
-**证据：** OCCT double point 在导入时直接 cast 为 float；scene transform/camera 也为 float。
-
-**影响：** 很大坐标或离原点很远的工厂/船舶/地理模型出现抖动、Z fighting、测量误差。
-
-**建议：** importer 保留 double bounds/provenance；renderer 采用 model-origin rebasing（每个
-mesh local origin + camera-relative world），测量在 double B-Rep/scene 空间完成。
-
-### P1-12：进度值可能回退且阶段不真实
-
-**证据：** outer importer 先 update 0.40，document conversion update 0.45，随后 free-shape loop
-直接使用 `i / labels.Length()`，第一个 shape 可能回到很小百分比；XCAF Transfer 内没有更新。
-
-**影响：** 进度条倒退、长时间卡在固定百分比、用户误判死锁。
-
-**建议：** 阶段 progress scopes 映射到固定区间，并使用历史阶段权重；indeterminate 用 busy
-状态，不伪造精确百分比。
-
-### P2-1：importer 声称 extension/content probe，实际只有扩展名
-
-`ImporterRegistry` 注释写 extension/probe，但 CanRead 只比较 suffix。GUI 过滤没有 `.p21`，
-虽然 STEP importer 支持。错误扩展名或 extensionless 文件不会识别。
-
-### P2-2：metadata 读取与 scene 能力不对称
-
-STEP reader 打开 LayerMode/MatMode，scene 目前不填 `Node::layer`，也不提取
-`XCAFDoc_VisMaterial`、alpha、PMI/validation properties。应避免 UI 显示“load metadata”让用户
-误以为全部保留；为每类 metadata 输出 imported/dropped 诊断。
-
-### P2-3：可见性、bounds 和 selection semantics 未集中定义
-
-Sidebar 递归修改 visible；renderer 只检查当前 node 的 visible，不检查 ancestor；world_bounds
-仍包含 hidden nodes。Solo 后 Fit 会把隐藏模型也算进去。将 effective visibility、visible bounds、
-selection bounds 放进 scene query/service，避免每个 UI 操作自己递归。
-
-### P2-4：构建 warning baseline 被第三方 OCCT 头污染
-
-Debug build通过，但出现 OCCT header 的 `-Woverloaded-virtual/-Wpedantic` warning。first-party
-warning 可能被噪声淹没。将 OCCT include 作为 SYSTEM 或 target-local 抑制第三方 warning，
-保持 Cadly 自己的 `Cadly::Warnings` 严格。
-
-### P2-5：设置没有 schema version/migration
-
-UI 和 app 分别直接构造同一个 QSettings handle，key 分散在 MainWindow、Settings、RecentFiles。
-控件删除/重命名后旧 key 永久存在。集中 settings schema、版本和 migration，并测试旧版本
-配置升级。
-
-## 功能缺口
-
-这些不是代码 bug，但直接阻断“CAD 查看器”核心任务：
-
-| 功能 | 当前证据 | 建议依赖顺序 |
+# Cadly 架构、UI 与功能改进评审
+
+**评审基线：** commit `fb56f40`（2026-08-13）。上一版基线 `6b85a4e`（2026-07-18），
+其间落地 30 个 commit。
+**规模：** 约 14,800 行 C++/GLSL（含 shader 与测试）。最大的三个文件是
+`GLRenderer.cpp` 2,077 行、`MainWindow.cpp` 1,859 行、`OcctShapeToMesh.cpp` 995 行
+——比上一版分别增长 22% / 28% / 13%。
+**方法：** 通读全部公共头、核心实现、shader、CMake、CI 与测试；`linux-release`
+构建、`ctest` 全绿（8/8，1.8 秒）；用 `cad_import_cli` 对仓库内样件做了导入与
+tessellation 对照实验。未修改产品代码。验证记录见文末附录。
+
+> 本文件取代同路径下 2026-07-18 的《代码、模块和架构详细审查》。范围从"代码/模块/
+> 架构"扩展到 **架构 + UI 设计 + 功能**三条线，因为当前阻碍产品前进的问题已经不
+> 只在代码结构里。
+
+---
+
+## 0. 上一版评审的处理结果
+
+先对账。上一版 24 条 finding 中已解决 9 条，其中包括全部 6 条 P0 里的 4 条：
+
+| 上版编号 | 内容 | 状态 | 证据 |
+| --- | --- | --- | --- |
+| P0-1 | OCAF document 泄漏 | **已修** | RAII [`XcafDocumentLease`](../../src/cad/src/XcafDocumentLease.h)，并有 [`open_xcaf_document_count()`](../../src/cad/include/cadly/cad/XcafSession.h) 作为可断言的诊断缝 |
+| P0-2 | 取消在最耗时阶段不可达 | **已修** | [`OcctProgressBridge`](../../src/cad/src/OcctProgressBridge.h) 把 sink 桥到 `Message_ProgressIndicator`，Transfer 与批量 mesh 都可中断；`ImportResult::cancelled` 明确区分取消与失败 |
+| P0-4 | 颜色二次 tint / face 错位 | **已修** | 顶点色恒为白，材质是唯一来源（[OcctShapeToMesh.h:35](../../src/cad/src/OcctShapeToMesh.h#L35)）；材质按 `source_face_id` 配对而非位置（[OcctShapeToMesh.cpp:883](../../src/cad/src/OcctShapeToMesh.cpp#L883)） |
+| P0-5 | mesh cache 丢实例颜色 | **已修** | prototype 几何与 occurrence 外观分离，实例色走 `Node::material_override`（[OcctShapeToMesh.cpp:957](../../src/cad/src/OcctShapeToMesh.cpp#L957)） |
+| P1-1 | `load_hierarchy` 是 no-op | **已修** | 选项已删除 |
+| P1-2 | mesher 重复执行 | **已修** | 参数构造即 Perform，批量后用 `fully_triangulated()` 跳过安全网 |
+| P1-7 | IBL 失败静默 | **已修** | 每个 bake target 都过 `glCheckFramebufferStatus`；bake 改为分帧增量（`IblBakePlan`），不再阻塞首帧 |
+| — | GPU mesh 泄漏 | **已修** | `attach_scene` 增加驱逐 pass，`MeshGpu::source` 消除 ABA |
+| — | 大文件二次解析 | **已修** | geometry-only fallback 改为惰性，只在 XDE walk 空场景时才跑 |
+
+仍然成立的：**P0-3**（逐 face draw call）、**P0-6**（首帧同步上传）、**P1-3**（单位
+元数据）、**P1-4**（非 ASCII 名称）、**P1-5**（MainWindow 职责）、**P1-6**（renderer
+单体 + 接口太薄）、**P1-8**（picking 未实现）、**P1-9**（source identity 不唯一）、
+**P1-10**（镜像分解）、**P1-11**（float 世界坐标）、**P1-12**（进度倒退）、以及全部
+P2。下文只重述仍然成立的部分，并补充这一个月新出现的问题。
+
+---
+
+## 1. 总体判断
+
+**三条架构不变量依然守得很好**，这是这个代码库最值钱的东西，任何重构都不要动它：
+`scene` 不含 Qt/OCCT/GL、`cad` 是唯一链接 OCCT 的 target、`renderer_gl` 无 Qt 依赖
+（overlay/scale bar/坐标轴都在 GL 里画，没有退回 QPainter）。
+
+**问题的重心变了。** 上一版说"运行时职责在向三个 God Object 聚集"——这一个月里这
+三个文件各自又长了 13–28%，没有一个被拆过。同时，这个月新增的功能（selection
+highlight、isolate、hide others、i18n）全部是 **UI 状态直接写进 `scene::Node` 标志位**
+的模式，于是"UI 拥有场景可变状态"从一个小便利变成了架构事实：现在有三处独立代码
+（sidebar 写、MainWindow 记忆并重放、renderer 读）共同维护同一份视图状态，且每次
+tab 切换都要"擦掉再重放"（[MainWindow.cpp:1399](../../src/ui/src/MainWindow.cpp#L1399)）。
+测量、剖切、批注一旦进来，这个模式会立刻崩掉。
+
+**产品层面，Cadly 现在是一个非常漂亮的"看"，还不是"查"。** 三种显示模式、silhouette、
+hidden line、isolate、highlight 的完成度已经高于很多开源查看器；但左键至今不能拾取
+（[IRenderer.h:47](../../src/renderer/include/cadly/renderer/IRenderer.h#L47) 仍是
+stub），因此选择只能从树里发起，测量/剖切/爆炸/PMI 全部无从谈起。上一版把 picking
+列为"第一优先、是多个功能的共同基础"，这一个月的投入却都花在了它的**上层表现**
+（高亮、遮挡幽灵线、隔离样式）上——这些工作本身质量很高，但它们都在为一个还没有
+入口的交互做视觉打磨。
+
+**性能架构仍然是缺席的，而不是不够好。** 没有 draw call 批处理、没有视锥剔除、没有
+LOD、没有上传预算、没有任何 GPU 侧计数器。样件规模下（39–213 个面）完全看不出来，
+所以这件事很容易一直不做，直到用户打开第一个真实装配。
+
+---
+
+## 2. 架构
+
+按风险排序。`P0` 会在真实规模模型上直接破坏可用性；`P1` 是在扩功能之前应当解决的
+结构问题；`P2` 是长期债务。
+
+### A1（P0）渲染按 CAD face 逐 draw call，且没有任何剔除或批处理
+
+**证据：** 每个成功的 face 产生一个 `Submesh`；PBR pass 对每个 node 的每个 submesh
+发一次 `glDrawElements`，并在同一循环里更新 6 个 uniform
+（[GLRenderer.cpp:1925-1954](../../src/renderer_gl/src/GLRenderer.cpp#L1925)）。node
+循环没有视锥剔除、没有距离 LOD、没有实例化——`scene->nodes` 有多少就画多少
+（[:1960](../../src/renderer_gl/src/GLRenderer.cpp#L1960)）。
+
+线模式更重：`draw_silhouettes` 每个 node 把**整个三角形索引缓冲**再送一次几何着色器
+（[GLRenderer.cpp:1658](../../src/renderer_gl/src/GLRenderer.cpp#L1658)）。hidden-line +
+dimmed hidden + 有选中部件时，一帧里 edge 与 silhouette 各跑 4 趟（遮挡趟、可见趟、
+选中遮挡趟、选中可见趟），合计 8 次整场景 node 遍历，其中 4 趟 silhouette 每趟都要
+把全部三角形重新过一遍几何着色器
+（[:1975-2022](../../src/renderer_gl/src/GLRenderer.cpp#L1975)）。
+
+**影响：** draw call 数量 = CAD 面数，与三角形数无关。上一版实测的 231 MB 样件有
+60,185 个面——单帧约 6 万次 surface draw call，加上线模式的多趟遍历。仓库内样件
+（as1 39 面 / bearing 213 面）完全掩盖了这一点。
+
+**建议：** 导入后按材质合并 index batch，face 边界改为存 range 表供 picking 用（保留
+`source_face_id` 不等于每帧必须逐面 draw）；重复 prototype 走实例化；per-draw uniform
+换成 UBO/SSBO 数组 + `gl_DrawID`；先把 draw-call / 三角形 / GPU 时间做成 renderer 自
+己的 counter 并显示在诊断条上——**没有计数器就没有优化闭环**，这一条应当最先做。
+
+### A2（P0，新增）首帧同步上传，且切换标签页会整批驱逐并重传
+
+**证据：** GPU 上传只发生在绘制循环内部的 `ensure_mesh_upload`（三处调用：
+[:1499](../../src/renderer_gl/src/GLRenderer.cpp#L1499)、
+[:1636](../../src/renderer_gl/src/GLRenderer.cpp#L1636)、
+[:1913](../../src/renderer_gl/src/GLRenderer.cpp#L1913)），每个 mesh 一次性
+`glBufferData` 顶点 + 索引 + edge strip + 三级 edge LOD，没有任何每帧预算。
+
+更严重的是 `attach_scene` 的驱逐 pass：它以**新场景引用的 mesh 集合**为白名单，把不
+在其中的 GPU buffer 全部删除（[:618-640](../../src/renderer_gl/src/GLRenderer.cpp#L618)）。
+而 `activate_document` 在每次标签页切换时都会 `viewport_->set_scene(...)`
+（[MainWindow.cpp:1403](../../src/ui/src/MainWindow.cpp#L1403)），下一帧即触发一次
+attach——**于是 A/B 两个文档来回切，每次都把对方的全部几何从显存删掉再重传**。
+
+**影响：** 进度条到 100% 之后仍有一次"假死"首帧；多文档工作流（这是本月刚做的核心
+UI 能力）在大模型上每次切页都要付一次全量上传。
+
+**建议：** 明确 CPU-ready / GPU-ready 两个阶段；`attach_scene` 改为"标记非活跃"而不是
+删除，配合一个按字节数的 LRU 驱逐；上传做成每帧预算 + 可见节点优先，用已经存在的
+`needs_redraw()` 机制驱动续帧（IBL 已经是这个模式，照抄即可）。首帧可交互时间应当
+进测试。
+
+### A3（P1）`IRenderer` contract 太薄，`GLRendererImpl` 是 2,077 行单体
+
+**证据：** 接口只有 initialize/resize/attach_scene/render/needs_redraw/pick/shutdown，
+全部返回 `void`，没有 capabilities、没有错误结果、没有上传/剖切/选择缓冲的概念，
+`pick()` 是默认 stub。实现类一个人承担 GL 资源缓存、shader 构建、IBL bake、PBR、
+edges、silhouette、triangle mesh、background、MSAA、矢量字体、scale bar、坐标轴、
+isolate ghost pass 与 selection pass。
+
+**影响：** 想加剖切就得改 `DisplayMode`（已经是 20 个字段的杂货铺）+ 改单体内部若干
+pass 的隐式状态顺序；Vulkan 后端只能照抄 OpenGL 宿主的假设；错误只能通过日志出口，
+UI 无法告诉用户"你的 GPU 不支持 X，已降级"。
+
+**建议：** 先做 OpenGL 内部拆分（`GpuMeshCache` / `FrameTargets` / `PbrPass` /
+`LinePass` / `OverlayPass`），再把 backend-neutral 的 `RenderSceneView`、
+`RenderSettings`、`RenderCapabilities`、`RenderStats` 提到 `renderer`；
+initialize/upload 返回 result。Vulkan 是否真的要做，等拆完再判断。
+
+### A4（P1）`MainWindow` 仍是 application service，且测试代码进入产品二进制
+
+**证据：** 1,859 行里包含 `DocumentState` 模型、import worker 与 sink、进度轮询、
+recents 菜单、QSettings schema、全部 QAction、面板构建、显示状态机、拖放、isolate
+状态记忆、关闭时的取消等待。
+
+新问题：`run_demo()` 是一段 170 行的截图驱动逻辑
+（[MainWindow.cpp:1139-1308](../../src/ui/src/MainWindow.cpp#L1139)），列举了 20 多个
+demo 名字，**编译进发布二进制**并通过 `--demo` 暴露给最终用户。它是很好的验证手段
+（这也是这个项目能无人值守验证 UI 的原因），但它应当在 test-only 编译开关后面，或
+拆成独立的 `DemoController`。
+
+**建议（与上一版一致，优先级上调）：** 抽出 `app::DocumentSession`（文档集合、活动
+文档、每文档的相机/显示/视图状态）、`app::ImportCoordinator`（队列、取消、进度、
+结果替换）、`app::SettingsStore`（schema + 版本 + 迁移），`ui::MainWindow` 只负责把
+QAction/widget 绑到这些 signal 上。`app` 应当变成可测试的 library，`cadly` 可执行文件
+只做 composition root。
+
+### A5（P1）视图状态寄生在 `scene` 里，没有 selection/visibility service
+
+**证据：** `Node::visible / selected / ghosted` 是场景数据，由 sidebar 直接递归写入
+（[SidebarWidget.cpp:374-396](../../src/ui/src/SidebarWidget.cpp#L374)），场景交接时
+再全部清零（[:324](../../src/ui/src/SidebarWidget.cpp#L324)），然后由 shell 从
+`DocumentState::isolate_node` 重放（[MainWindow.cpp:1402-1409](../../src/ui/src/MainWindow.cpp#L1402)）。
+renderer 只检查当前 node 的 `visible`，不检查祖先；`world_bounds` 也包含隐藏节点。
+
+**影响：**
+- 语义分散：有效可见性（含祖先）、可见包围盒、选择包围盒三个概念没有任何一处集中
+  定义，于是 `Fit` 会把隐藏和 ghosted 的部件也框进去（见 U2）。
+- 每次 solo/isolate 都要 O(n) 递归写场景 + O(n) 递归同步 item roles
+  （[:398](../../src/ui/src/SidebarWidget.cpp#L398)）。
+- 一旦支持并发导入或后台重算，"UI 线程正在改 renderer 正在读的 scene"就是数据竞争。
+
+**建议：** 把视图状态从 `scene` 移到每文档的 `ViewState`（可见/选择/隔离/未来的剖切
+与批注），以稳定 id 为键；renderer 每帧收一个只读的 `RenderSceneView{scene, view_state}`。
+`scene` 回到纯粹的导入产物——这恰好是它当初被设计成"稳定契约"的原因。
+
+### A6（P1）身份与元数据仍然不可用于持久化
+
+- **`source_label` 不唯一：** `path + "/" + name`
+  （[OcctShapeToMesh.cpp:911](../../src/cad/src/OcctShapeToMesh.cpp#L911)），同名兄弟
+  节点得到同一字符串，`find_node_by_label` 线性返回第一个
+  （[Scene.cpp:74](../../src/scene/src/Scene.cpp#L74)）。
+- **非 ASCII 名称变 `?`：** `read_label_name` 逐字符丢弃 >127 的码位
+  （[OcctShapeToMesh.cpp:512](../../src/cad/src/OcctShapeToMesh.cpp#L512)）。产品刚刚
+  加了简体中文 UI，却读不出中文零件名——这个反差用户会立刻注意到。
+- **元数据未落库：** `Node::layer` 全仓库无人写入（reader 却开了 `SetLayerMode(true)`），
+  `XCAFDoc_VisMaterial`、透明度、PMI/validation properties 一概不提取。
+- **镜像分解丢符号：** `Transform::from_matrix` 用三列长度当作全正 scale，不检查
+  determinant（[Transform.h:21](../../src/scene/include/cadly/scene/Transform.h#L21)），
+  镜像 occurrence 会朝向错误。
+
+**建议：** 保存 XCAF label entry + prototype id + occurrence index + 文件 hash 作为
+identity，显示名只用于 UI；scene 字符串统一 UTF-8；node 保留原始 affine 矩阵，需要
+时再做经过校验的分解；为每类元数据输出 imported/dropped 诊断，避免 UI 上写着
+"Load names/colours" 却悄悄丢东西。
+
+### A7（P1）单位是"假的"，并且已经在破坏 tessellation 质量
+
+这一条上一版列为 P1-3，但当时没有量化。本次实测把它坐实了：
+
+**证据：** IGES 的 `unit_to_meters` 硬编码 `0.001f`
+（[OcctIgesImporter.cpp:114](../../src/cad/src/OcctIgesImporter.cpp#L114)）；STEP 从
+进程级全局 `Interface_Static::CVal("xstep.cascade.unit")` 猜，且无论结果如何
+`source_unit` 一律写死 `"mm"`（[OcctStepImporter.cpp:132](../../src/cad/src/OcctStepImporter.cpp#L132)）。
+
+`test_files/bearing.iges` 的 IGES 全局段声明单位 MM、最大坐标 1000，导入后 scene
+的包围盒却只有 `0.101 × 0.122 × 0.031`。于是：
+
+1. scale bar 用 `world × unit_to_meters` 计算，会把这个轴承标成约 0.12 mm 宽——差
+   1000 倍；未来的测量功能会继承同一个错误。
+2. 更隐蔽的是 tessellation：visual-relative 算出的弦高被 `min_linear_deflection`
+   （默认 0.01，**单位是模型单位**）夹上去，最终 deflection = 0.01 = 整个模型尺寸的
+   8.2%。实测同一文件把下限调到 1e-5 后三角形数从 **5,730 涨到 27,306（4.8 倍）**，
+   代价只是 mesh 时间 66 ms → 100 ms。也就是说，任何非 mm 尺度的模型都会被默认参数
+   静默地欠细分。
+3. `min_face_area`（默认 1e-8）同样是模型单位量纲，同样会随尺度失真。
+
+**建议：** 分开存 `file_unit` / `working_unit` / `file_to_working` / `working_to_meter`，
+从 reader model 与 XCAF document 的长度单位读取而不是猜；把 tessellation 的绝对量纲
+参数（min deflection、min face area）改为相对于模型 extent 表达，或在解析出真实单位
+后归一化；诊断里显示单位来源。用 mm/inch/m 三个 fixture 做验收。
+
+### A8（P2）依赖与构建细节
+
+- `Cadly::Ui` 把 `Cadly::RendererGL` 和 `Cadly::Cad` 列为 **PUBLIC** 链接依赖
+  （[src/ui/CMakeLists.txt:48](../../src/ui/CMakeLists.txt#L48)），但 RendererGL 只在
+  `ViewportWidget.cpp` 用到，应当是 private implementation detail。
+- `cadly_scene` private link `Cadly::Platform`，而 scene 的三个源文件不使用 platform
+  的任何东西——依赖噪声，且会让"scene 只依赖 glm"的不变量在 CMake 层面读起来不成立。
+- OCCT 头以普通 `target_include_directories(... PRIVATE ...)` 引入
+  （[src/cad/CMakeLists.txt:68](../../src/cad/CMakeLists.txt#L68)），不是 `SYSTEM`，
+  第三方警告会淹没自家的 `-Wall -Wextra -Wpedantic` 基线。
+- `CADLY_WARNINGS_AS_ERRORS` 默认 OFF，且没有任何 preset 打开它——警告基线目前没有
+  强制力。建议 CI 的 Linux debug 配置打开。
+- `ImporterRegistry` 是单例（`instance()`），无法注入 fake importer，导入生命周期只能
+  用真实 OCCT 跑，直接影响 A4 拆分后的可测试性。
+
+### A9（P2）设置没有 schema 与迁移，且有两个所有者
+
+`app::Settings`、`app::RecentFiles` 各自 `QSettings(IniFormat, ...)`，`MainWindow`
+又自建一个同名 handle（[MainWindow.cpp:187](../../src/ui/src/MainWindow.cpp#L187)），
+键分散在三处、没有版本号、控件删改后旧键永久残留。`Settings` 头注释写着"把直接
+QSettings 调用挡在 MainWindow 之外"——这个约定实际上已经被绕过了。
+
+---
+
+## 3. UI 与交互设计
+
+Graphite 外壳本身的完成度很高（token 表、自绘控件、暗/亮双主题、zero-chrome、
+非模态导入、popover），下面这些不是"不好看"，是**交互闭环上的缺口**。
+
+### U1（P0）左键仍然不能拾取，整条选择链路只有单向入口
+
+viewport 的每一次左键都当作"点到空白"上报
+（[ViewportWidget.cpp:168-171](../../src/ui/src/ViewportWidget.cpp#L168)），唯一作用是
+取消高亮。用户在三维视图里看到一个零件，无法点它、无法知道它是谁、无法从它跳到树。
+所有已经做好的 highlight/isolate 视觉效果都只能从左侧树发起。
+
+**建议：** renderer 侧做一个 integer ID pass（node id + face id）+ 异步 readback，
+定义 ID 稳定性、隐藏/半透明部件的命中规则、DPI 坐标契约；UI 侧建立 selection
+service 做树 ↔ 视口双向同步。这是测量、剖切、批注、Fit Selection 的共同前置。
+
+### U2（P1）Fit 不理会可见性、隔离与选择
+
+`fit_view()` 直接用 `scene_->world_bounds`
+（[ViewportWidget.cpp:151](../../src/ui/src/ViewportWidget.cpp#L151)），而 world_bounds
+包含隐藏与 ghosted 节点。**用户 solo 或 isolate 一个零件后按 F，取景框回到整个装配**
+——这与该模式的全部意图相反。也没有"缩放到选中"（Fit Selection），而这是 CAD 查看器
+里使用频率最高的操作之一。
+
+### U3（P1）模型树在真实装配规模下会成为瓶颈，且交互面太窄
+
+- 每个 scene node 建一个 `QStandardItem`（[SidebarWidget.cpp:336](../../src/ui/src/SidebarWidget.cpp#L336)），
+  没有虚拟化；几万节点的装配意味着几万个堆对象与一次全量构建。
+- 每次眼睛/隔离操作都递归遍历整棵 item 树同步 role
+  （[:398](../../src/ui/src/SidebarWidget.cpp#L398)），`select_node` 也是递归线性查找。
+- 单选、无右键上下文菜单、无键盘可达的隐藏/隔离/展开全部、无"只显示有几何的节点"
+  过滤、隐藏状态不跨重导入保留。
+
+**建议：** 换成直接读 `scene::nodes` 的自定义 `QAbstractItemModel`（0 拷贝、O(1) 内存），
+按 QModelIndex 精确发 `dataChanged` 而不是全树同步；补多选与上下文菜单。
+
+### U4（P1）Inspector 的信息与控制密度远低于工具定位
+
+- Display 面板只有 4 个旋钮：edge intensity、MSAA、scale bar、坐标轴
+  （[InspectorWidget.cpp:161](../../src/ui/src/InspectorWidget.cpp#L161)）。没有材质
+  预设/覆盖、没有环境与曝光、没有背景、没有剖切、没有边线颜色。
+- Properties 面板只有 7 行（源文件/节点/label/mesh/材质/三角形/包围盒）
+  （[PropertiesPanel.cpp:70](../../src/ui/src/PropertiesPanel.cpp#L70)）：**没有单位、
+  没有体积/表面积/质心等质量属性、没有变换、没有 layer/颜色来源**。检查场景里
+  这些恰恰是最常被问的问题。
+- 诊断条的 "Log" 标签其实只有导入摘要；应用日志只走 stdout，没有文件 sink 也没有
+  内存 ring buffer（[Log.cpp:22](../../src/platform/src/Log.cpp#L22)）——从桌面图标或
+  打包版启动时，用户与支持人员都拿不到日志。
+
+### U5（P1）导入体验的边界情况
+
+- **一次只能导一个文件**：第二次 Open 只会在状态栏闪一句"An import is already running"
+  （[MainWindow.cpp:1525](../../src/ui/src/MainWindow.cpp#L1525)）。多文档 tab 已经在
+  了，导入队列却没有。（注意：并发导入还被 `cad` 里的进程级全局 `Interface_Static`
+  单位读取挡着，属于 A7 的连带问题。）
+- **拖放只取第一个 URL**（[:1766](../../src/ui/src/MainWindow.cpp#L1766)），多选拖入
+  会静默丢弃其余文件。
+- **`.p21` 进不来**：importer 支持 `.p21`（[OcctStepImporter.cpp:53](../../src/cad/src/OcctStepImporter.cpp#L53)），
+  但文件对话框过滤器（[:1519](../../src/ui/src/MainWindow.cpp#L1519)）和拖放白名单
+  （[:201](../../src/ui/src/MainWindow.cpp#L201)）都没有它；`ImporterRegistry` 也仍是
+  纯扩展名匹配，注释里承诺的 content probe 不存在。
+- **进度条会跳到 100% 然后停住（或倒退）**：批量 tessellation 映射到 [0.45, 0.70]
+  （[OcctShapeToMesh.cpp:799](../../src/cad/src/OcctShapeToMesh.cpp#L799)），紧接着的
+  装配遍历直接用 `i / labels.Length()` 上报
+  （[:977](../../src/cad/src/OcctShapeToMesh.cpp#L977)）。绝大多数 STEP 只有一个 free
+  shape，于是进度立刻变成 100% 并卡在那里走完整个遍历（顶点提取 + 三级 edge LOD
+  采样，是第二重的阶段）；多 root 文件则从 0.70 掉回 1/N。
+- 已打开的文件在磁盘上更新后没有重载提示，也没有文件监视。
+
+### U6（P2）状态与反馈的可信度
+
+状态栏的 `frame X ms` 是 `paintGL` 的 CPU 提交耗时，不是 GPU 帧时间
+（[ViewportWidget.cpp:112](../../src/ui/src/ViewportWidget.cpp#L112)，注释里说清楚
+了，但 UI 上没有）。没有 draw call 数、没有显存占用、没有 GPU timer query。诊断条
+只在导入后有内容，运行期是空的。
+
+### U7（P2）输入与可达性
+
+- 只处理 `angleDelta`，不处理触控板的 `pixelDelta`，也没有捏合手势
+  （[ViewportWidget.cpp:191](../../src/ui/src/ViewportWidget.cpp#L191)）——笔记本用户
+  的缩放会是跳变的。
+- 右键被 orbit 占用且禁用了系统菜单，视口里因此没有任何上下文菜单入口（未来
+  "隐藏/隔离/缩放到此"最自然的位置）。
+- 快捷键全部硬编码，不可自定义；无视口键盘导航；自绘控件没有 accessible name。
+
+---
+
+## 4. 功能缺口
+
+不是 bug，但它们决定 Cadly 能不能进入"检查"这个使用场景。按依赖排序：
+
+| 功能 | 现状证据 | 依赖 |
 | --- | --- | --- |
-| 3D picking/高亮 | `IRenderer::pick` stub | 第一优先；是测量/截面/标注基础 |
-| 测量 | 无 edge/face query 或 UI | picking -> double geometry query -> result persistence |
-| 剖切/盒裁剪 | shader/RenderTypes 无 clipping plane | RenderSettings -> cap/stencil -> UI manipulator |
-| Fit selection/isolate restore | 只有 whole scene Fit、可见眼睛 | selection/bounds service 后实现 |
-| 爆炸视图 | 无 occurrence offset state | 稳定 occurrence id 后实现 |
-| PMI/GD&T | STEP XCAF scene 不存 | importer metadata model -> renderer overlay/tree |
-| Revision compare | 无 stable provenance/diff | stable id + cache 后实现 |
-| 导出审阅结果 | 无 annotation/review model | selection/measurement persistence 后实现 |
-| 透明材质 | 单一 opaque PBR pass | material semantics + sorted/OIT pass |
-| 大装配 LOD/culling | 每 node/submesh 全画 | draw batching -> culling -> LOD/streaming |
+| 3D 拾取 / 视口选择 | `IRenderer::pick` 为 stub | **第一优先**，下面几项的共同前置 |
+| Fit Selection / 缩放到零件 | 只有整场景 `world_bounds` | 选择 + 可见包围盒服务 |
+| 测量（点/边/面/距离/角度） | 无任何几何查询接口 | 拾取 → double 精度 B-Rep 查询 → 结果持久化 |
+| 剖切 / 盒裁剪 | `DisplayMode` 与 shader 里没有 clipping plane | `RenderSettings` → cap/stencil → 视口 manipulator |
+| 质量属性（体积/面积/质心） | Properties 面板无此项 | `cad` 侧 `BRepGProp` + 单位正确性（A7） |
+| 爆炸视图 | 无 occurrence 偏移状态 | 稳定 occurrence id（A6） |
+| 透明材质 | 单一不透明 pass，XCAF alpha 未读取 | 材质语义 + 排序/OIT pass |
+| PMI / GD&T | 导入不保存 | importer 元数据模型 → renderer overlay |
+| 版本对比 | 无 stable provenance/diff | 稳定 id + 缓存 |
+| 导出审阅结果（截图/批注/报告） | 无 annotation/review 模型 | 选择/测量持久化 |
+| 大装配 LOD / 流式加载 | 无剔除无 LOD | A1 + A2 |
+| 视觉质量：地面/接触阴影/AO、HDRI、曝光与色调控制 | 程序化环境 + 固定 tonemap，无后处理 | renderer pass 拆分（A3） |
 
-## 测试审查
+---
 
-当前 CTest 包含 scene/cad smoke、popover、toolbar 和 inspector reset。2026-07-18 的
-`linux-debug` 构建通过，测试在当时全部通过。覆盖有价值但范围很窄：
+## 5. 测试与工程基线
 
-- 没有 STEP fixture 的端到端 import assertions；现有 smoke 只对 hammer IGES 做可选实测；
-- 没有 hierarchy/instance transform/instance color/face color/layer/unit/Unicode/cancel fixture；
-- 没有 malformed/partial/unbounded/tiny-face 后材料映射测试；
-- renderer 没有 offscreen image/golden、GL state、draw-call budget、pick 或 context-loss 测试；
-- MainWindow 没有 import cancel、close-during-import、多 tab/reimport/failed document 状态测试；
-- 没有 release benchmark gate、ASan/UBSan、long-running memory regression。
+`ctest` 目前 8 个用例全绿，且比上一版实质性变强：新增了 XCAF document 归零断言、
+取消语义断言、颜色单一来源断言、周期面法线断言、tessellation policy 的无穷大回退
+断言。但有一个必须立刻处理的问题：
 
-推荐测试金字塔：
+### T1（P0）CI 里几乎没有真正跑到的导入断言
 
-1. 纯 scene/cad unit：tessellation policy、matrix/mirror、unit conversion、identity map。
-2. 小型公开 CAD fixtures：每个 fixture 只验证一个语义，二进制/文本来源和许可证记录在清单。
-3. importer contract：success/cancel/error、diagnostics、stable IDs、scene checksum。
-4. offscreen renderer：固定 Mesa/llvmpipe 或 CI GPU，验证 selection ID、depth、material reference
-   pixels 和 draw-call counters；视觉 golden 允许小容差。
-5. benchmark 非阻塞 dashboard：8 个当前模型的 P50、RSS、TTFP、draw calls，不以一次波动让 CI
-   失败，但对显著回归报警。
-6. 20 次循环 import/reimport + tab switch + close 的 memory/cancellation soak。
+`.gitignore` 只放行了一个样件：
 
-## 推荐重构顺序
+```
+test_files/*
+!test_files/as1-ug-214.stp
+```
 
-不建议一开始“大重写”。按风险和功能依赖：
+`git ls-files test_files/` 确认仓库里只有 `as1-ug-214.stp`。而 smoke test 里所有导入
+相关的用例都写成"fixture 不存在就 return"：hammer.iges（visual-relative 导入）、
+screw.step（周期面法线）、hammer.iges（XCAF 归零的成功路径、取消语义）、
+`KR600_R2830-4.stp`（颜色单一来源）——**在 CI 上全部静默跳过**，只剩下"垃圾文件导入
+失败"那半个用例。本机因为有未跟踪的样件才会真的执行（这也是本地全套只跑 1.8 秒的
+原因之一）。
 
-1. **正确性修复：** document RAII、cancel/status、单位、颜色/instance style、face mapping、
-   `load_hierarchy` no-op。
-2. **性能闭环：** 去重复 mesh、material batch/draw calls、GPU upload budget、profile counters、
-   release benchmark。
-3. **应用职责：** 提取 DocumentSession + ImportCoordinator + SettingsStore，MainWindow 只绑定 UI。
-4. **选择基础：** stable occurrence/face ID、ID pass、selection service、树/viewport 同步。
-5. **renderer 内部分 pass：** mesh cache/targets/PBR/edge/overlay/postprocess，增加 capabilities。
-6. **用户功能：** Fit Selection -> measure -> section -> annotation/review pack。
-7. **材质/视觉：** HDR post、studio environment、ground/AO/shadow、XCAF material、transparency。
+也就是说：本月修掉的 P0-4/P0-5 颜色回归、P0-1 文档泄漏的成功路径，**在 CI 上没有任何
+防线**。CI 现在真正的导入闸门只有一句 `cad_import_cli test_files/as1-ug-214.stp` 的
+退出码。
 
-每一步保持 `scene` 不依赖 Qt/OCCT/GL、`cad` 是唯一 OCCT owner、renderer overlay 不回到
-QPainter。这三条现有边界是架构中最有价值的部分。
+**建议：** 建一组小体积、许可证明确的自制 fixture（一个带实例颜色的装配、一个带
+面颜色的实体、一个镜像 occurrence、一个非 mm 单位模型、一个中文零件名模型、一个
+IGES 曲面 quilt），几十 KB 级别、随仓库跟踪；把"fixture 缺失就跳过"改成"缺失即
+失败"，需要大模型的用例单独标 label 并允许本地跑。
 
+### T2–T4（P1）其余空白
+
+- **渲染层零测试**：没有 offscreen/llvmpipe golden image、没有 GL 状态断言、没有
+  draw-call 预算测试、没有 context-loss 测试。silhouette 这类视角相关效果目前只靠
+  人眼看截图。
+- **无导入生命周期测试**：取消、导入中关闭标签页、多 tab 重导入、失败文档状态，
+  全部只能手工验证——这正是 A4 拆分之后可以自动化的部分。
+- **无性能与内存回归**：没有 benchmark dashboard、没有 20 次循环导入的 RSS soak、
+  没有 ASan/UBSan 任务。
+- **警告基线无强制**：见 A8。
+
+---
+
+## 6. 建议顺序
+
+不建议大重写。按"先让现有东西可信，再让它可扩展，最后加功能"排：
+
+1. **止血（几天量级）**：CI fixture 落库并去掉静默跳过（T1）；进度阶段修正（U5）；
+   `.p21` 与多文件拖放（U5）；Fit 尊重可见性/隔离（U2）；OCCT 头改 SYSTEM + 打开
+   warnings-as-errors（A8）。
+2. **单位与身份的正确性**：真实单位读取 + 量纲相关参数归一化（A7）；UTF-8 名称与
+   稳定 occurrence id（A6）。这两条是测量、审阅回放、版本对比的地基，越晚改代价越大。
+3. **性能闭环**：先加 renderer counters（draw call / 三角形 / 上传字节 / GPU 时间）
+   并显示在诊断条；再做材质批处理与视锥剔除（A1）；再做上传预算与 LRU 显存缓存
+   （A2）。有了计数器，后两步才有验收标准。
+4. **应用层职责拆分**：`DocumentSession` + `ImportCoordinator` + `SettingsStore`，
+   demo hook 移出产品二进制（A4、A9）；视图状态移出 `scene`（A5）。
+5. **拾取基础设施**：ID pass + 异步 readback + selection service + 树/视口双向同步
+   （U1）。完成后立刻能兑现 Fit Selection、视口上下文菜单、"点谁看谁"。
+6. **renderer 内部分 pass 并加 capabilities**（A3），为剖切与透明留出位置。
+7. **用户功能**：测量 → 剖切 → 质量属性 → 批注/审阅导出；视觉侧的地面/AO/接触阴影
+   与曝光控制可以并行推进（依赖第 6 步）。
+
+全程保持三条不变量：`scene` 不依赖 Qt/OCCT/GL、`cad` 是唯一 OCCT owner、renderer
+overlay 不退回 QPainter。
+
+---
+
+## 附录：本次验证记录
+
+```bash
+cmake --build --preset linux-release          # ninja: no work to do（树是干净的）
+ctest --preset linux-release                  # 8/8 passed, 1.79s
+
+build/linux-release/bin/cad_import_cli test_files/as1-ug-214.stp
+#   28 nodes / 39 faces / 2,096 tris / 58 ms / extent 200 / deflection 0.075
+build/linux-release/bin/cad_import_cli test_files/linkrods.step
+#   1 node / 37 faces / 5,522 tris / 590 ms（其中 parse 563 ms）
+build/linux-release/bin/cad_import_cli test_files/bearing.iges
+#   1 node / 213 faces / 5,730 tris / extent 0.121977 / deflection 0.01（= 8.2% extent）
+build/linux-release/bin/cad_import_cli test_files/bearing.iges --min-deflection 0.00001
+#   27,306 tris / deflection 4.57e-05 / mesh 66→100 ms   ← A7 的量化证据
+
+git ls-files test_files/                      # 仅 as1-ug-214.stp        ← T1 的证据
+head -c 1400 test_files/bearing.iges          # IGES 全局段：单位 MM、最大坐标 1000
+```
+
+硬件与环境：WSL2（Linux 6.18）、系统 Qt 6.4 + OCCT 7.6.3、`linux-release`
+(RelWithDebInfo)。所有结论要么来自源码引用，要么来自上述命令输出；引用上一版报告
+的数字（231 MB 样件 60,185 面、98.3 秒导入）在本次未复测，已在正文标注来源。
