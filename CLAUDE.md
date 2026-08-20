@@ -37,9 +37,12 @@ image). `windows-ninja-release` pins the release-only `x64-windows-release`
 triplet — a release build never links the debug deps, so vcpkg skips building
 debug Qt/OCCT (half the cold dependency build). The debug and VS presets keep
 stock `x64-windows`; the VS one because its multi-config generator can still
-build a Debug config. CI (`.github/workflows/ci.yml`) builds, tests, and
-packages on Linux + Windows; the smoke test and a headless STEP import are
-the gates.
+build a Debug config. The build/test/package pipeline lives once, in the
+reusable `.github/workflows/build-package.yml`; `ci.yml` calls it on every
+push/PR and `release.yml` calls it on `v*` tags (or a manual run) and attaches
+the packages to a draft GitHub Release. Keep packaging changes in
+`build-package.yml` so both paths ship the same thing; the smoke test and a
+headless STEP import are the gates.
 
 `cad_import_cli` is the fastest way to validate an import change without a GL
 context or display — prefer it when touching `src/cad`.

@@ -1,0 +1,83 @@
+# Release: build the shippable packages and attach them to a GitHub Release
+# so testers can download without logging in to Actions.
+#
+# Triggers:
+#   - pushing a `v*` tag (the normal path: `git tag v0.1.0 && git push --tags`)
+#   - a manual run from the Actions tab, picking an existing tag as the ref —
+#     use this to rebuild a release's assets without moving the tag.
+#
+# The build itself is build-package.yml, the same pipeline CI runs on every
+# push; only the Linux release preset is built here (the debug preset is a
+# correctness gate, not something we ship). The release is created as a draft
+# so the notes can be edited before it goes out — publish it from the
+# Releases page when the assets look right.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build-package.yml
+    with:
+      linux-presets: '["linux-release"]'
+    permissions:
+      contents: read
+      packages: write
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # A manual run against a branch would produce a release named after the
+      # branch and silently overwrite nothing useful. Fail early instead.
+      - name: Require a tag ref
+        run: |
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "::error::This workflow must run on a tag ref (got ${{ github.ref_type }} '${{ github.ref_name }}'). Re-run it and pick a v* tag."
+            exit 1
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      # download-artifact extracts the Windows artifact into a directory
+      # tree; re-zip it so the release asset is one downloadable file.
+      - name: Repack Windows artifact
+        run: (cd dist/cadly-windows-x64 && zip -qr ../cadly-windows-x64.zip cadly)
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ inputs.prerelease && '--prerelease' || '' }}
+        run: |
+          assets="dist/cadly-linux-x64/cadly-linux-x64.tar.gz dist/cadly-windows-x64.zip"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber $assets
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cadly $GITHUB_REF_NAME" \
+              --generate-notes \
+              --draft \
+              $PRERELEASE \
+              $assets
+          fi

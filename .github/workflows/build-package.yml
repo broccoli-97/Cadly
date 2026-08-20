@@ -1,0 +1,268 @@
+# Reusable build + test + package pipeline, called by ci.yml (every push/PR)
+# and release.yml (tags and manual runs). Keeping it in one place means the
+# artifacts a release ships are byte-for-byte the same recipe CI exercises
+# continuously — no second, quietly-drifting copy of the packaging steps.
+#
+# Two build flavors, matching the two supported dependency strategies:
+#   - Linux: system Qt6 + OCCT from apt (the primary dev configuration), then
+#     bundled with their runtime closure into a portable tarball.
+#     Pinned to ubuntu-24.04 (Qt 6.4, OCCT 7.6) so a runner-image bump can't
+#     silently change the toolchain the way `ubuntu-latest` would.
+#   - Windows: vcpkg manifest build (Qt 6.11, OCCT 8.0 at the pinned
+#     baseline), packaged self-contained (applocal DLL closure + a manual
+#     Qt plugin copy — see the Package step). Built with Ninja
+#     against whatever MSVC toolset the runner image provides (vcvars via
+#     msvc-dev-cmd) — deliberately NOT a year-pinned Visual Studio generator,
+#     which breaks whenever the hosted image rotates VS versions.
+#
+# Packages land as workflow artifacts (Actions tab -> run -> Artifacts) under
+# the names `cadly-linux-x64` and `cadly-windows-x64`.
+
+name: Build & package
+
+on:
+  workflow_call:
+    inputs:
+      linux-presets:
+        description: 'JSON array of Linux presets to build (debug adds coverage, not artifacts)'
+        type: string
+        default: '["linux-debug", "linux-release"]'
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.preset }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: ${{ fromJSON(inputs.linux-presets) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # libtbb-dev + libfontconfig-dev: OCCT's exported CMake targets
+      # (INTERFACE_LINK_LIBRARIES) reference /usr/lib/x86_64-linux-gnu/
+      # libtbb{,malloc}.so by absolute path and fontconfig by bare -l name,
+      # but the libocct-*-dev packages only depend on the *runtime* libs
+      # (libtbb12, libfontconfig1), not on the -dev packages that own the
+      # .so linker symlinks. Without them the build fails at link (ninja:
+      # "libtbb.so ... missing and no known rule", ld: "cannot find
+      # -lfontconfig"). Every other external token in those targets
+      # (freetype, freeimage, GL, X11) is covered transitively via
+      # libocct-visualization-dev.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build \
+            qt6-base-dev qt6-svg-dev qt6-wayland \
+            libocct-foundation-dev libocct-modeling-data-dev \
+            libocct-modeling-algorithms-dev libocct-data-exchange-dev \
+            libocct-ocaf-dev \
+            libtbb-dev libfontconfig-dev \
+            libglm-dev libfmt-dev libspdlog-dev \
+            libgl1-mesa-dev \
+            patchelf
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+      # End-to-end import check on a real STEP assembly — exercises the OCCT
+      # reader + tessellation without needing a GL context or display.
+      - name: Import smoke check (STEP)
+        run: ./build/${{ matrix.preset }}/bin/cad_import_cli test_files/as1-ug-214.stp
+
+      - name: Package
+        if: matrix.preset == 'linux-release'
+        run: |
+          packaging/linux/package-portable.sh \
+            build/${{ matrix.preset }} stage/cadly
+          # Exercise both entry points through the packaged RPATH/plugin
+          # layout. --help exits before the GUI needs a display or GL context.
+          QT_QPA_PLATFORM=offscreen ./stage/cadly/bin/cadly --help >/dev/null
+          ./stage/cadly/bin/cad_import_cli \
+            stage/cadly/sample-files/as1-ug-214.stp
+          # Tar before upload: artifact zips don't preserve the exec bit.
+          tar -czf cadly-linux-x64.tar.gz -C stage cadly
+
+      - name: Upload package artifact
+        if: matrix.preset == 'linux-release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cadly-linux-x64
+          path: cadly-linux-x64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows (windows-ninja-release)
+    runs-on: windows-latest
+    # First run builds Qt + OCCT from source via vcpkg — release-only, via
+    # the preset's x64-windows-release triplet, since nothing here ever
+    # links the debug variants — later runs restore per-package binaries
+    # from the Actions cache and take minutes. A full rebuild recurs only
+    # when something that feeds vcpkg's ABI hash actually changes —
+    # baseline bump, or the hosted image rotating its MSVC toolset.
+    timeout-minutes: 350
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      # Binary caching via a NuGet feed on GitHub Packages: one package per
+      # vcpkg binary artifact, keyed by vcpkg's own ABI hash (compiler
+      # version, triplet, features, port tree all included). The previous
+      # `x-gha` Actions-cache backend was removed from the vcpkg tool
+      # (bootstrap always fetches the latest tool, whatever the port-tree
+      # baseline), after which caching silently no-opped and every run
+      # rebuilt all dependencies from source (~3 h).
+      #
+      # Deliberately NOT actions/cache over VCPKG_DEFAULT_BINARY_CACHE: that
+      # tarball's key (hash of vcpkg.json) didn't include the MSVC version,
+      # but the ABI hashes inside it do. Every few weeks windows-latest
+      # rotates MSVC, after which the stale tarball still *hit* exactly —
+      # vcpkg could reuse none of it, everything rebuilt (~2 h), and the
+      # save step (conditioned on a cache miss) threw the fresh binaries
+      # away. Result: a full rebuild on every push until vcpkg.json next
+      # changed. Per-package ABI-keyed entries cannot go stale-but-hitting,
+      # and each package uploads right after it builds, so even a timed-out
+      # run keeps its progress.
+      VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+      VCPKG_BINARY_SOURCES: clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite
+    steps:
+      - uses: actions/checkout@v4
+
+      # Put MSVC (cl.exe) + the Windows SDK on PATH and export the associated
+      # env (INCLUDE/LIB/...). The Ninja generator picks the compiler up from
+      # this environment, sidestepping the "could not find any instance of
+      # Visual Studio" failure the Visual Studio generator hits when it can't
+      # locate an install via COM on the hosted image.
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # vcvars in recent VS (18/2026 on the image) exports VCPKG_ROOT pointing
+      # at the copy of vcpkg bundled inside the VS install, and msvc-dev-cmd
+      # faithfully re-exports the whole vcvars environment — which overrides
+      # the job-level `env:` value for all later steps. Re-pin our pinned-
+      # baseline checkout; a later GITHUB_ENV write wins over vcvars' value.
+      - name: Re-pin VCPKG_ROOT (vcvars exports the VS-bundled vcpkg)
+        shell: pwsh
+        run: Add-Content $env:GITHUB_ENV 'VCPKG_ROOT=${{ github.workspace }}/vcpkg'
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+
+      # Check out vcpkg at exactly the manifest's builtin-baseline so the
+      # dependency set is fully pinned by vcpkg.json (single source of truth).
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+          Write-Host "vcpkg baseline: $baseline"
+          git init $env:VCPKG_ROOT
+          git -C $env:VCPKG_ROOT remote add origin https://github.com/microsoft/vcpkg.git
+          git -C $env:VCPKG_ROOT fetch --depth 1 origin $baseline
+          git -C $env:VCPKG_ROOT checkout FETCH_HEAD
+          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+
+      # Point vcpkg's bundled NuGet client at the GitHub Packages feed.
+      # GITHUB_TOKEN can publish packages to the repository's namespace once
+      # the job requests `packages: write` (fork PRs get a read-only token —
+      # restores still work there; failed uploads are non-fatal warnings).
+      - name: Configure NuGet binary cache feed
+        shell: pwsh
+        run: |
+          $nuget = (& "$env:VCPKG_ROOT/vcpkg" fetch nuget) | Select-Object -Last 1
+          & $nuget sources add -Source $env:VCPKG_NUGET_FEED -Name GitHubPackages `
+            -UserName "${{ github.repository_owner }}" -Password "${{ secrets.GITHUB_TOKEN }}" `
+            -StorePasswordInClearText
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source $env:VCPKG_NUGET_FEED
+
+      - name: Configure (builds vcpkg dependencies)
+        run: cmake --preset windows-ninja-release
+
+      - name: Build
+        run: cmake --build --preset windows-ninja-release
+
+      - name: Test
+        run: ctest --preset windows-ninja-release
+
+      - name: Import smoke check (STEP)
+        shell: pwsh
+        run: |
+          & "build/windows-ninja-release/bin/cad_import_cli.exe" test_files/as1-ug-214.stp
+          if ($LASTEXITCODE -ne 0) { throw "cad_import_cli failed ($LASTEXITCODE)" }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --install build/windows-ninja-release --prefix package/cadly
+          if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
+          # FetchContent'd deps (qlementine, qlementine-icons) install dev
+          # files into the prefix; the viewer package only needs bin/ + share/.
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue package/cadly/include, package/cadly/lib
+
+          # Non-Qt runtime DLLs (OCCT TK*, fmt, freetype, ...): vcpkg's
+          # applocal post-build step already computed the exact closure next
+          # to the built executables — reuse it instead of re-deriving.
+          Copy-Item "build/windows-ninja-release/bin/*.dll" "package/cadly/bin/" -Force
+
+          # Qt runtime-loaded plugins (platforms, imageformats, iconengines,
+          # styles), copied straight from the target triplet's plugin tree.
+          # windeployqt is deliberately NOT used here: with the release-only
+          # x64-windows-release target triplet, Qt's ports treat the build as
+          # a cross build (host triplet stays x64-windows) and only install
+          # tools for the host — the release tree has no windeployqt/qtpaths
+          # at all, and the host copy's qt.conf resolves against the host
+          # prefix, which has no Qt6Svg or plugins to deploy from. The Qt
+          # DLLs the executables link are already applocal-deployed (copied
+          # above); plugins are the only piece windeployqt added.
+          $qtRel = "build/windows-ninja-release/vcpkg_installed/x64-windows-release"
+          if (-not (Test-Path "$qtRel/Qt6/plugins")) { throw "Qt plugin tree not found at $qtRel/Qt6/plugins" }
+          foreach ($d in @('platforms', 'imageformats', 'iconengines', 'styles')) {
+            if (Test-Path "$qtRel/Qt6/plugins/$d") {
+              Copy-Item "$qtRel/Qt6/plugins/$d" "package/cadly/bin/" -Recurse -Force
+            }
+          }
+          # The svg plugins load Qt6Svg.dll at runtime; nothing links it
+          # directly, so the applocal closure copied above doesn't include it.
+          Copy-Item "$qtRel/bin/Qt6Svg.dll" "package/cadly/bin/" -Force
+
+          # Fail loudly if the deploy silently missed the plugins the app
+          # can't run without (window platform, SVG icon theme rendering).
+          foreach ($f in @('platforms/qwindows.dll', 'imageformats/qsvg.dll', 'iconengines/qsvgicon.dll')) {
+            if (-not (Test-Path "package/cadly/bin/$f")) { throw "packaged Qt deploy is missing $f" }
+          }
+
+          New-Item -ItemType Directory -Force package/cadly/sample-files | Out-Null
+          Copy-Item test_files/as1-ug-214.stp package/cadly/sample-files/
+          @'
+          Cadly — Windows x64 build (self-contained)
+
+          Run:
+            bin\cadly.exe sample-files\as1-ug-214.stp     (GUI viewer)
+            bin\cad_import_cli.exe sample-files\as1-ug-214.stp   (headless import stats)
+
+          Requires the Microsoft Visual C++ Redistributable (x64), which most
+          systems already have. Latest installer:
+          https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist
+          Requires a GPU/driver with OpenGL 4.1+.
+          '@ | Set-Content package/cadly/README.txt
+
+          # Validate the package's own DLL closure by running it in place.
+          & "package/cadly/bin/cad_import_cli.exe" test_files/as1-ug-214.stp
+          if ($LASTEXITCODE -ne 0) { throw "packaged cad_import_cli failed ($LASTEXITCODE) - DLL closure incomplete?" }
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cadly-windows-x64
+          path: package
+          if-no-files-found: error
