@@ -80,6 +80,18 @@ cp "$build_dir/bin/cad_import_cli" "$app/Contents/MacOS/"
   -executable="$app/Contents/MacOS/cad_import_cli" \
   -verbose=1 || echo "macdeployqt exited $? (continuing; re-signed below)" >&2
 
+# macdeployqt ships only the cocoa platform plugin. Add offscreen too: it is
+# tiny, references Qt purely via @rpath (resolved against the bundled
+# frameworks like cocoa's), and lets the packaged app run headless —
+# QT_QPA_PLATFORM=offscreen — which CI's smoke step and any scripted use of
+# --screenshot depend on.
+qt_plugins="$(dirname "$(dirname "$macdeployqt")")/share/qt/plugins"
+if [[ ! -f "$qt_plugins/platforms/libqoffscreen.dylib" ]]; then
+  qt_plugins="$(brew --prefix qt)/share/qt/plugins"
+fi
+cp "$qt_plugins/platforms/libqoffscreen.dylib" \
+   "$app/Contents/PlugIns/platforms/"
+
 # The OCCT dylibs reference each other as @rpath/libTK*.dylib, and both
 # executables still carry the build-time LC_RPATH /opt/homebrew/lib — which
 # dyld searches first, quietly loading a SECOND copy of every OCCT toolkit
