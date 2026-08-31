@@ -25,8 +25,11 @@ to the renderer, never `QPainter`.
 
 Use `linux-release` for RelWithDebInfo, `linux-qt68-*` with local Qt 6.8.3, and
 `linux-vcpkg-debug` with `VCPKG_ROOT`. Windows contributors use a
-`windows-ninja-*` or `windows-msvc-*` preset. CI builds, tests, imports the
-fixture, and packages on both platforms.
+`windows-ninja-*` or `windows-msvc-*` preset. macOS contributors run
+`scripts/setup-macos.sh` (Homebrew deps) and use `macos-{debug,release}`; the
+GUI binary is `bin/cadly.app/Contents/MacOS/cadly`, and deliberate
+per-platform differences are recorded in `docs/platform-divergence.md`. CI
+builds, tests, imports the fixture, and packages on Linux and Windows.
 
 ## Coding Style & Naming Conventions
 

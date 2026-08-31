@@ -17,7 +17,8 @@ as the north star, not a status report; the code has moved past parts of it.
 ## Build & run
 
 Uses CMake presets (Ninja). System Qt6 + OCCT on Linux; vcpkg manifest
-(`vcpkg.json`) for Windows/portable builds.
+(`vcpkg.json`) for Windows/portable builds; Homebrew on macOS
+(`scripts/setup-macos.sh` installs/verifies the formulae).
 
 ```bash
 cmake --preset linux-release          # configure (RelWithDebInfo)
@@ -30,6 +31,9 @@ build/linux-release/bin/cad_import_cli f.step  # headless import, prints geo sta
 
 Presets: `linux-debug`, `linux-release`, `linux-qt68-{debug,release}` (Qt 6.8
 from `~/Qt/6.8.3/gcc_64`, enables the qlementine style), `linux-vcpkg-debug`,
+`macos-{debug,release}` (Homebrew Qt ≥ 6.8 + OCCT; the GUI builds as
+`bin/cadly.app`, so the binary is `bin/cadly.app/Contents/MacOS/cadly` —
+per-platform behaviour differences live in `docs/platform-divergence.md`),
 `windows-msvc-{debug,release}` (VS solution), `windows-ninja-{debug,release}`
 (single-config Ninja; expects MSVC in the environment, i.e. a VS dev prompt —
 what CI uses, since it can't pin a VS-year generator to a rotating runner
