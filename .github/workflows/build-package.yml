@@ -41,7 +41,7 @@ jobs:
       matrix:
         preset: ${{ fromJSON(inputs.linux-presets) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # libtbb-dev + libfontconfig-dev: OCCT's exported CMake targets
       # (INTERFACE_LINK_LIBRARIES) reference /usr/lib/x86_64-linux-gnu/
@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload package artifact
         if: matrix.preset == 'linux-release'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cadly-linux-x64
           path: cadly-linux-x64.tar.gz
@@ -109,7 +109,7 @@ jobs:
     # hours a vcpkg source build costs).
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Homebrew dependencies
         run: scripts/setup-macos.sh
@@ -140,7 +140,7 @@ jobs:
             -ov -format UDZO cadly-macos-arm64.dmg
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cadly-macos-arm64
           path: cadly-macos-arm64.dmg
@@ -182,7 +182,7 @@ jobs:
       VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
       VCPKG_BINARY_SOURCES: clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Put MSVC (cl.exe) + the Windows SDK on PATH and export the associated
       # env (INCLUDE/LIB/...). The Ninja generator picks the compiler up from
@@ -309,7 +309,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "packaged cad_import_cli failed ($LASTEXITCODE) - DLL closure incomplete?" }
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cadly-windows-x64
           path: package
