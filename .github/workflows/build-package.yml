@@ -3,7 +3,7 @@
 # artifacts a release ships are byte-for-byte the same recipe CI exercises
 # continuously — no second, quietly-drifting copy of the packaging steps.
 #
-# Two build flavors, matching the two supported dependency strategies:
+# Three build flavors, matching the supported dependency strategies:
 #   - Linux: system Qt6 + OCCT from apt (the primary dev configuration), then
 #     bundled with their runtime closure into a portable tarball.
 #     Pinned to ubuntu-24.04 (Qt 6.4, OCCT 7.6) so a runner-image bump can't
@@ -14,9 +14,13 @@
 #     against whatever MSVC toolset the runner image provides (vcvars via
 #     msvc-dev-cmd) — deliberately NOT a year-pinned Visual Studio generator,
 #     which breaks whenever the hosted image rotates VS versions.
+#   - macOS: Homebrew Qt + OCCT on the Apple Silicon runner, deployed into a
+#     self-contained ad-hoc-signed Cadly.app via packaging/macos/package-app.sh
+#     and shipped as a .dmg (unsigned-developer distribution: users right-click
+#     -> Open on first launch; notarization would need a Developer ID secret).
 #
 # Packages land as workflow artifacts (Actions tab -> run -> Artifacts) under
-# the names `cadly-linux-x64` and `cadly-windows-x64`.
+# the names `cadly-linux-x64`, `cadly-windows-x64`, and `cadly-macos-arm64`.
 
 name: Build & package
 
@@ -96,6 +100,50 @@ jobs:
         with:
           name: cadly-linux-x64
           path: cadly-linux-x64.tar.gz
+          if-no-files-found: error
+
+  macos:
+    name: macOS (macos-release)
+    # macos-14 = Apple Silicon. Homebrew supplies current Qt + OCCT as
+    # bottles (the macOS analogue of the Linux apt path — minutes, not the
+    # hours a vcpkg source build costs).
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Homebrew dependencies
+        run: scripts/setup-macos.sh
+
+      - name: Configure
+        run: cmake --preset macos-release
+
+      - name: Build
+        run: cmake --build --preset macos-release
+
+      - name: Test
+        run: ctest --preset macos-release
+
+      - name: Import smoke check (STEP)
+        run: ./build/macos-release/bin/cad_import_cli test_files/as1-ug-214.stp
+
+      - name: Package
+        run: |
+          packaging/macos/package-app.sh build/macos-release stage/cadly-macos
+          # Exercise both entry points through the deployed bundle (the
+          # script already ran cad_import_cli in place; --help exits before
+          # a display or GL context is needed).
+          QT_QPA_PLATFORM=offscreen \
+            ./stage/cadly-macos/Cadly.app/Contents/MacOS/cadly --help >/dev/null
+          ./stage/cadly-macos/Cadly.app/Contents/MacOS/cad_import_cli \
+            stage/cadly-macos/sample-files/as1-ug-214.stp
+          hdiutil create -volname Cadly -srcfolder stage/cadly-macos \
+            -ov -format UDZO cadly-macos-arm64.dmg
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cadly-macos-arm64
+          path: cadly-macos-arm64.dmg
           if-no-files-found: error
 
   windows:

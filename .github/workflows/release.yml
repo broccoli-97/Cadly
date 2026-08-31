@@ -69,7 +69,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PRERELEASE: ${{ inputs.prerelease && '--prerelease' || '' }}
         run: |
-          assets="dist/cadly-linux-x64/cadly-linux-x64.tar.gz dist/cadly-windows-x64.zip"
+          assets="dist/cadly-linux-x64/cadly-linux-x64.tar.gz dist/cadly-windows-x64.zip dist/cadly-macos-arm64/cadly-macos-arm64.dmg"
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber $assets
           else

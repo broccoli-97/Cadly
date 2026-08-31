@@ -29,7 +29,7 @@ Use `linux-release` for RelWithDebInfo, `linux-qt68-*` with local Qt 6.8.3, and
 `scripts/setup-macos.sh` (Homebrew deps) and use `macos-{debug,release}`; the
 GUI binary is `bin/cadly.app/Contents/MacOS/cadly`, and deliberate
 per-platform differences are recorded in `docs/platform-divergence.md`. CI
-builds, tests, imports the fixture, and packages on Linux and Windows.
+builds, tests, imports the fixture, and packages on all three platforms.
 
 ## Coding Style & Naming Conventions
 

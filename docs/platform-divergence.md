@@ -71,7 +71,7 @@ file typed with different casing.
 |---|---|---|---|
 | Dependency source | apt (system Qt 6.4/OCCT 7.6) or vcpkg | vcpkg manifest | Homebrew (`scripts/setup-macos.sh`) |
 | Qt style | Fusion fallback (Qt < 6.8) unless `linux-qt68-*` | qlementine (vcpkg Qt 6.11) | qlementine (Homebrew Qt ≥ 6.8) |
-| App artifact | portable tarball (`patchelf`, `$ORIGIN` rpaths) | self-contained dir (applocal DLLs + plugin copy) | `.app` bundle (`MACOSX_BUNDLE`; macdeployqt packaging planned) |
+| App artifact | portable tarball (`patchelf`, `$ORIGIN` rpaths) | self-contained dir (applocal DLLs + plugin copy) | `.dmg` with self-contained, ad-hoc-signed `Cadly.app` (`packaging/macos/package-app.sh`: macdeployqt + rpath/install-name rewrite; assets in `Contents/Resources`) |
 | Presets | `linux-*` | `windows-*` | `macos-{debug,release}` |
 
 On macOS the `cadly` target builds as `bin/cadly.app`; the GUI binary lives
