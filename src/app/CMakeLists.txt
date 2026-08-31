@@ -60,4 +60,9 @@ if(Qt6LinguistTools_FOUND)
   )
 endif()
 
-install(TARGETS cadly RUNTIME DESTINATION ${CADLY_INSTALL_BINDIR})
+# On macOS the target is a .app bundle (MACOSX_BUNDLE above), which installs
+# via the BUNDLE rule; RUNTIME still covers the plain executable elsewhere.
+install(TARGETS cadly
+  RUNTIME DESTINATION ${CADLY_INSTALL_BINDIR}
+  BUNDLE  DESTINATION ${CADLY_INSTALL_BINDIR}
+)

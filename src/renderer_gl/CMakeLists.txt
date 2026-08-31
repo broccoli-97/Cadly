@@ -19,9 +19,15 @@ target_include_directories(cadly_renderer_gl
 
 target_compile_features(cadly_renderer_gl PUBLIC cxx_std_17)
 
-# OpenGL::GL contributes the include path for <GL/glcorearb.h> on the platforms
-# where it lives next to <GL/gl.h>. No actual GL symbols are linked — every
-# entry point is resolved at runtime through the host-supplied loader.
+# <GL/glcorearb.h> is vendored (third_party/khronos) rather than taken from
+# the system: macOS's OpenGL.framework has no glcorearb.h at all, and on other
+# platforms the system copy's vintage varies. Only declarations are consumed —
+# no GL library is linked; every entry point is resolved at runtime through
+# the host-supplied loader.
+target_include_directories(cadly_renderer_gl SYSTEM PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/khronos
+)
+
 target_link_libraries(cadly_renderer_gl
   PUBLIC
     Cadly::Renderer
@@ -29,5 +35,4 @@ target_link_libraries(cadly_renderer_gl
   PRIVATE
     Cadly::Platform
     Cadly::Warnings
-    OpenGL::GL
 )
