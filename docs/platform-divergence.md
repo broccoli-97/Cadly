@@ -20,6 +20,12 @@ Only Zero Chrome needs an explicit per-platform binding.
 | Fit, display modes, views | `F W H E T P` `1`–`7` | same | unmodified keys, no divergence |
 | Exit isolate / restore chrome | Esc | same | |
 
+Viewport navigation is likewise shared: right-drag orbits and middle-drag
+pans on every platform, and Alt+left-drag orbits / Alt+Ctrl+left-drag pans
+(rendered ⌥-drag / ⌥⌘-drag on macOS). The modifier bindings exist chiefly
+for trackpads — no middle button, and a held two-finger click is a poor
+orbit — but they are deliberately identical everywhere.
+
 Zero Chrome is the one case the automatic mapping gets wrong: `Qt::CTRL |
 Qt::Key_Period` would surface as **⌘.**, which macOS reserves as the
 system-wide Cancel idiom (`QKeySequence::Cancel` — what users press to abort

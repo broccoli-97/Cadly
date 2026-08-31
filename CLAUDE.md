@@ -182,8 +182,10 @@ and import summary; the OpenGL viewport is shared and re-attached on tab
 switches. Panels are fixed-position and toggle visibility only; the old
 `QDockWidget` shell is gone. Layout persists as explicit `QSettings` keys.
 
-- Mouse: **right-drag orbits, middle-drag pans**, left is reserved for picking
-  (not yet implemented, passed through). Wheel zoom anchors on the point under
+- Mouse: **right-drag orbits, middle-drag pans**; **Alt+left-drag orbits,
+  Alt+Ctrl+left-drag pans** (⌥ / ⌥⌘ on macOS — the trackpad path; trackpads
+  have no middle button). *Plain* left stays reserved for picking (not yet
+  implemented, passed through). Wheel zoom anchors on the point under
   the cursor. Orbit uses a quaternion camera around a pluggable
   `RotationPivotResolver` (default: camera target).
 - Sidebar tree: click selects and **highlights** the part in the viewport

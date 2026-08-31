@@ -155,12 +155,20 @@ void ViewportWidget::fit_view() {
 void ViewportWidget::mousePressEvent(QMouseEvent* e) {
   using DM = CameraController::DragMode;
   DM mode = DM::None;
-  // Right-button orbits, middle-button pans. Left-button is reserved for
-  // picking; until a pick handler lands, every left press is reported as a
-  // background click so the shell can drop the selection highlight (the
-  // one thing a left-click can mean while nothing is pickable).
+  // Right-button orbits, middle-button pans — the three-button-mouse layout.
+  // Alt+left-drag orbits and Alt+Ctrl+left-drag pans (⌥ / ⌥⌘ on macOS, the
+  // Fusion/Onshape-style convention): trackpads have no middle button at
+  // all, and holding a two-finger click through an orbit is miserable.
+  // A *plain* left press stays reserved for picking; until a pick handler
+  // lands it is reported as a background click so the shell can drop the
+  // selection highlight (the one thing a bare left-click can mean while
+  // nothing is pickable).
+  const bool alt = e->modifiers() & Qt::AltModifier;
   if      (e->button() == Qt::RightButton)  mode = DM::Orbit;
   else if (e->button() == Qt::MiddleButton) mode = DM::Pan;
+  else if (e->button() == Qt::LeftButton && alt) {
+    mode = (e->modifiers() & Qt::ControlModifier) ? DM::Pan : DM::Orbit;
+  }
   if (mode != DM::None) {
     camera_->begin_drag(mode, e->pos());
     setCursor(Qt::ClosedHandCursor);
