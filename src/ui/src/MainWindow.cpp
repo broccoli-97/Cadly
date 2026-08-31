@@ -587,8 +587,16 @@ void MainWindow::build_actions() {
 
   act_zero_chrome_ = new QAction(tr("&Zero Chrome"), this);
   act_zero_chrome_->setCheckable(true);
+#if defined(Q_OS_MACOS)
+  // Qt swaps CTRL<->META on macOS, so Qt::CTRL|Period would surface as ⌘. —
+  // the system-wide Cancel idiom (QKeySequence::Cancel). Qt::META binds the
+  // physical Control key, giving the intended ⌃. without shadowing Cancel.
+  act_zero_chrome_->setShortcut(
+    QKeySequence(Qt::META | Qt::Key_Period));
+#else
   act_zero_chrome_->setShortcut(
     QKeySequence(Qt::CTRL | Qt::Key_Period));
+#endif
   act_zero_chrome_->setToolTip(
     tr("Hide all panels; press Esc to restore them"));
   connect(act_zero_chrome_, &QAction::toggled,
@@ -1317,7 +1325,9 @@ DocumentState* MainWindow::active_document() const {
 DocumentState* MainWindow::find_document(const QString& path) const {
   QString wanted = QFileInfo(path).canonicalFilePath();
   if (wanted.isEmpty()) wanted = QFileInfo(path).absoluteFilePath();
-#if defined(Q_OS_WIN)
+  // NTFS and the default APFS/HFS+ volumes are case-insensitive; treating
+  // Part.step and part.step as distinct would open two tabs on one file.
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
   constexpr auto sensitivity = Qt::CaseInsensitive;
 #else
   constexpr auto sensitivity = Qt::CaseSensitive;
