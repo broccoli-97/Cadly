@@ -65,6 +65,10 @@ private:
   // previous version did against the IRenderer contract.
   bool                  scene_dirty_{false};
   renderer::DisplayMode display_mode_{};
+  // True while a camera drag is in flight (begin_drag .. end_drag). Lets
+  // mouseMoveEvent promote a modifier-less left drag to orbit/pan when Alt
+  // arrives mid-gesture (see the comment there).
+  bool                  camera_drag_active_{false};
 
   // Frame-time readout state: exponential moving average + emit throttle.
   float         frame_ms_avg_{0.0f};
