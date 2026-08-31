@@ -45,6 +45,13 @@ if(APPLE)
   set(MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.broccoli-97.cadly")
   set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
   set(MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
+  # cadly.icns is committed, generated from cadly-icon.svg by
+  # packaging/macos/make-icns.sh (rerun it after editing the SVG).
+  set(MACOSX_BUNDLE_ICON_FILE "cadly.icns")
+  target_sources(cadly PRIVATE
+    ${CMAKE_SOURCE_DIR}/packaging/macos/cadly.icns)
+  set_source_files_properties(${CMAKE_SOURCE_DIR}/packaging/macos/cadly.icns
+    PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
   set_target_properties(cadly PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST
       ${CMAKE_SOURCE_DIR}/packaging/macos/Info.plist.in
