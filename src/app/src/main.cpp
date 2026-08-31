@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileOpenEvent>
 #include <QIcon>
 #include <QLibraryInfo>
 #include <QLocale>
@@ -21,6 +22,37 @@
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QTranslator>
+
+#ifdef Q_OS_MACOS
+namespace {
+
+// Finder double-clicks and Dock drops reach a running (or launching) app as
+// QEvent::FileOpen through LaunchServices, never as argv — without this
+// filter the CFBundleDocumentTypes declared in Info.plist would open Cadly
+// but not the file. Qt queues the event until exec() starts, so the window
+// referenced here exists by the time the first one is delivered.
+class FileOpenFilter : public QObject {
+public:
+  explicit FileOpenFilter(cadly::ui::MainWindow& window) : window_(window) {}
+
+protected:
+  bool eventFilter(QObject* watched, QEvent* event) override {
+    if (event->type() == QEvent::FileOpen) {
+      const auto* open = static_cast<QFileOpenEvent*>(event);
+      if (!open->file().isEmpty()) {
+        window_.open_file(open->file());
+        return true;
+      }
+    }
+    return QObject::eventFilter(watched, event);
+  }
+
+private:
+  cadly::ui::MainWindow& window_;
+};
+
+} // namespace
+#endif
 
 int main(int argc, char** argv) {
   // Request a 4.1 core context before QApplication exists; QOpenGLWidget will
@@ -194,6 +226,11 @@ int main(int argc, char** argv) {
     window.restoreGeometry(blob);
   }
   window.show();
+
+#ifdef Q_OS_MACOS
+  FileOpenFilter file_open_filter(window);
+  app.installEventFilter(&file_open_filter);
+#endif
 
   // Defer file open until after the GL context has had a chance to come up.
   const auto positionals = parser.positionalArguments();

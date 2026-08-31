@@ -38,6 +38,19 @@ set_target_properties(cadly PROPERTIES
   MACOSX_BUNDLE ON
 )
 
+# Bundle identity + STEP/IGES document types (LaunchServices open-with /
+# double-click). The template consumes the MACOSX_BUNDLE_* variables below.
+if(APPLE)
+  set(MACOSX_BUNDLE_BUNDLE_NAME "Cadly")
+  set(MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.broccoli-97.cadly")
+  set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+  set(MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
+  set_target_properties(cadly PROPERTIES
+    MACOSX_BUNDLE_INFO_PLIST
+      ${CMAKE_SOURCE_DIR}/packaging/macos/Info.plist.in
+  )
+endif()
+
 # Translations. The .ts catalogs live in <root>/translations and are compiled
 # by lrelease into .qm files embedded under the ":/i18n" resource prefix
 # (qt_add_translations' default), where main.cpp's QTranslator looks for

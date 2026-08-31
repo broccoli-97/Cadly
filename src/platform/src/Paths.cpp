@@ -61,6 +61,11 @@ std::optional<fs::path> find_asset_dir(const std::string& subdir) {
   candidates.emplace_back(exe_dir / subdir);
   candidates.emplace_back(exe_dir / ".." / "share" / "cadly" / subdir);
   candidates.emplace_back(exe_dir / ".." / subdir);
+#if defined(__APPLE__)
+  // Inside a Cadly.app bundle the executable sits in Contents/MacOS, and the
+  // packaging script places assets in the conventional Contents/Resources.
+  candidates.emplace_back(exe_dir / ".." / "Resources" / subdir);
+#endif
 #ifdef CADLY_SOURCE_ROOT
   candidates.emplace_back(fs::path(CADLY_SOURCE_ROOT) / subdir);
 #endif
