@@ -30,11 +30,19 @@
   <string>NSApplication</string>
   <key>CFBundleDocumentTypes</key>
   <array>
+    <!-- LSHandlerRank None: the build-tree (.dev) bundle must never win the
+         default-handler election against an installed copy — it opens files
+         fine when launched explicitly, but Launch Services won't route
+         double-clicks or "Open in Cadly" to it. package-app.sh rewrites the
+         rank to Owner (and the bundle id to the release id) for the
+         distributable. -->
     <dict>
       <key>CFBundleTypeName</key>
       <string>STEP Model</string>
       <key>CFBundleTypeRole</key>
       <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>None</string>
       <key>CFBundleTypeExtensions</key>
       <array>
         <string>step</string>
@@ -46,6 +54,8 @@
       <string>IGES Model</string>
       <key>CFBundleTypeRole</key>
       <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>None</string>
       <key>CFBundleTypeExtensions</key>
       <array>
         <string>iges</string>

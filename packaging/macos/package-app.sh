@@ -68,6 +68,12 @@ cp -R "$build_dir/bin/cadly.app" "$app"
 # before signing, which seals the Info.plist.
 plutil -replace CFBundleIdentifier -string "io.github.broccoli-97.cadly" \
   "$app/Contents/Info.plist"
+# ...and promote the document types from the dev tree's rank None to Owner,
+# so the installed copy is the one Launch Services elects for STEP/IGES.
+plutil -replace CFBundleDocumentTypes.0.LSHandlerRank -string Owner \
+  "$app/Contents/Info.plist"
+plutil -replace CFBundleDocumentTypes.1.LSHandlerRank -string Owner \
+  "$app/Contents/Info.plist"
 
 # Runtime assets go to Contents/Resources, where platform::find_asset_dir's
 # bundle candidate (<exe>/../Resources) looks for them.
