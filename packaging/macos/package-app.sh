@@ -62,6 +62,13 @@ trap 'rm -rf "$work_dir"' EXIT
 app="$work_dir/Cadly.app"
 cp -R "$build_dir/bin/cadly.app" "$app"
 
+# The build tree carries the .dev bundle identifier so dev builds never
+# shadow an installed copy's Launch Services registration (see
+# src/app/CMakeLists.txt). The distributable gets the release id here —
+# before signing, which seals the Info.plist.
+plutil -replace CFBundleIdentifier -string "io.github.broccoli-97.cadly" \
+  "$app/Contents/Info.plist"
+
 # Runtime assets go to Contents/Resources, where platform::find_asset_dir's
 # bundle candidate (<exe>/../Resources) looks for them.
 mkdir -p "$app/Contents/Resources"

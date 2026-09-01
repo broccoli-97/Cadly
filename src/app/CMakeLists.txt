@@ -42,7 +42,13 @@ set_target_properties(cadly PROPERTIES
 # double-click). The template consumes the MACOSX_BUNDLE_* variables below.
 if(APPLE)
   set(MACOSX_BUNDLE_BUNDLE_NAME "Cadly")
-  set(MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.broccoli-97.cadly")
+  # Deliberately the *development* identifier: on a dev machine the build
+  # tree's bundle would otherwise share an id with the installed/staged app
+  # and shadow its Launch Services registration (file-type handler, icon).
+  # packaging/macos/package-app.sh rewrites this to the release id
+  # (io.github.broccoli-97.cadly) while assembling the distributable, so
+  # neither builders nor releasers ever pass a flag.
+  set(MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.broccoli-97.cadly.dev")
   set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
   set(MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
   # cadly.icns is committed, generated from cadly-icon.svg by
