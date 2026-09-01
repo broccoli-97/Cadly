@@ -8,6 +8,7 @@
 #include "DiagnosticsStrip.h"
 #include "IconUtils.h"
 #include "ImportOptionsWidget.h"
+#include "PreferencesDialog.h"
 #include "InspectorWidget.h"
 #include "Popover.h"
 #include "SegmentedControl.h"
@@ -651,6 +652,15 @@ void MainWindow::build_actions() {
 
   act_about_ = new QAction(tr("About Cadly"), this);
   connect(act_about_, &QAction::triggered, this, &MainWindow::on_about);
+
+  // PreferencesRole relocates this into the app menu as "Settings…" with ⌘,
+  // on macOS; elsewhere it stays where the menu code puts it, with the
+  // platform's Preferences shortcut (Ctrl+, where one is defined).
+  act_preferences_ = new QAction(tr("&Preferences…"), this);
+  act_preferences_->setMenuRole(QAction::PreferencesRole);
+  act_preferences_->setShortcut(QKeySequence::Preferences);
+  connect(act_preferences_, &QAction::triggered,
+          this, &MainWindow::open_preferences);
 }
 
 void MainWindow::build_shell() {
@@ -799,8 +809,6 @@ void MainWindow::build_shell() {
           sidebar_, &SidebarWidget::clear_selection);
 
   connect(inspector_, &InspectorWidget::display_changed, this, [this]() {
-    viewport_->set_navigation_scheme(inspector_->navigation_scheme());
-    viewport_->camera_controller()->set_orbit_style(inspector_->orbit_style());
     update_display_mode();
     save_settings();
   });
@@ -833,6 +841,8 @@ void MainWindow::build_menus() {
   file_menu->addAction(act_open_with_options_);
   file_menu->addMenu(recents_menu_);
   file_menu->addAction(act_close_tab_);
+  file_menu->addSeparator();
+  file_menu->addAction(act_preferences_);
   file_menu->addSeparator();
   file_menu->addAction(act_quit_);
 
@@ -1223,6 +1233,8 @@ void MainWindow::run_demo(const QString& name) {
     show_views_popover(hud_views_);
   } else if (name == QLatin1String("zerochrome")) {
     act_zero_chrome_->setChecked(true);
+  } else if (name == QLatin1String("preferences")) {
+    open_preferences();
   } else if (name == QLatin1String("deepzoom")) {
     // Regression driver for the zoom clip policy: wheel far past the model's
     // surface, the way a user zooming onto a feature does. Ten steps put the
@@ -1819,9 +1831,7 @@ void MainWindow::load_settings() {
     s.value("orbit_style").toString());
   s.endGroup();
   inspector_->load_display(mode);
-  inspector_->set_navigation_scheme(scheme);
   viewport_->set_navigation_scheme(scheme);
-  inspector_->set_orbit_style(orbit_style);
   viewport_->camera_controller()->set_orbit_style(orbit_style);
 
   s.beginGroup(QStringLiteral("ui"));
@@ -1856,8 +1866,9 @@ void MainWindow::save_settings() const {
   s.setValue("dimmed_hidden",  act_hidden_dimmed_->isChecked());
   s.setValue("isolate_hide_others", act_isolate_hide_others_->isChecked());
   s.setValue("navigation_scheme",
-             navigation_scheme_key(inspector_->navigation_scheme()));
-  s.setValue("orbit_style", orbit_style_key(inspector_->orbit_style()));
+             navigation_scheme_key(viewport_->navigation_scheme()));
+  s.setValue("orbit_style",
+             orbit_style_key(viewport_->camera_controller()->orbit_style()));
   s.endGroup();
 
   s.beginGroup(QStringLiteral("ui"));
@@ -1871,6 +1882,49 @@ void MainWindow::save_settings() const {
   s.setValue("split_h", split_h_->saveState());
   s.setValue("split_v", split_v_->saveState());
   s.endGroup();
+}
+
+void MainWindow::open_preferences() {
+  if (!prefs_) {
+    prefs_ = new PreferencesDialog(this);
+    connect(prefs_, &PreferencesDialog::navigation_scheme_changed,
+            this, [this](NavigationScheme scheme) {
+      viewport_->set_navigation_scheme(scheme);
+      save_settings();
+    });
+    connect(prefs_, &PreferencesDialog::orbit_style_changed,
+            this, [this](CameraController::OrbitStyle style) {
+      viewport_->camera_controller()->set_orbit_style(style);
+      save_settings();
+    });
+    // Route through the existing theme action / language action group so
+    // their side effects (theme swap; persist + relaunch offer) stay in one
+    // place and the menu twins' check state follows automatically.
+    connect(prefs_, &PreferencesDialog::dark_toggled, this,
+            [this](bool dark) { act_theme_dark_->setChecked(dark); });
+    connect(prefs_, &PreferencesDialog::language_selected,
+            this, [this](const QString& code) {
+      for (QAction* a : {act_lang_system_, act_lang_english_,
+                         act_lang_chinese_}) {
+        if (a->data().toString() == code) {
+          a->trigger();
+          break;
+        }
+      }
+    });
+    connect(&ThemeManager::instance(), &ThemeManager::changed, prefs_, [this]() {
+      prefs_->set_dark(ThemeManager::instance().dark());
+    });
+  }
+  // Populate from current state every open — cheap, and immune to changes
+  // made through the menu twins while the dialog was closed.
+  prefs_->set_language(language_code_);
+  prefs_->set_dark(ThemeManager::instance().dark());
+  prefs_->set_navigation_scheme(viewport_->navigation_scheme());
+  prefs_->set_orbit_style(viewport_->camera_controller()->orbit_style());
+  prefs_->show();
+  prefs_->raise();
+  prefs_->activateWindow();
 }
 
 void MainWindow::on_about() {

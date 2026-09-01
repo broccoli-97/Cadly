@@ -191,39 +191,10 @@ QWidget* InspectorWidget::build_display_pane() {
   axes_ = new QCheckBox(tr("Orientation axes"), pane);
   axes_->setChecked(true);
 
-  nav_scheme_ = new QComboBox(pane);
-  for (const auto s : kAllNavigationSchemes) {
-    nav_scheme_->addItem(navigation_scheme_name(s),
-                         static_cast<int>(s));
-  }
-  nav_scheme_->setToolTip(
-    tr("Mouse bindings for orbit, pan, and zoom, matching a familiar "
-       "CAD package"));
-
-  orbit_style_ = new QComboBox(pane);
-  using OrbitStyle = CameraController::OrbitStyle;
-  for (const auto s : {OrbitStyle::Free, OrbitStyle::Turntable}) {
-    orbit_style_->addItem(orbit_style_name(s), static_cast<int>(s));
-  }
-  orbit_style_->setToolTip(
-    tr("Free orbit tumbles in screen space (no pole, horizon may tilt); "
-       "turntable keeps up fixed with a clamped elevation"));
-
-  nav_legend_ = new QLabel(pane);
-  nav_legend_->setWordWrap(true);
-  nav_legend_->setTextFormat(Qt::PlainText);
-  // Secondary text: the legend explains, the combo decides.
-  nav_legend_->setEnabled(false);
-  nav_legend_->setText(
-    navigation_scheme_legend(NavigationScheme::Cadly));
-
   form->addRow(tr("Edge intensity"), edge_intensity_);
   form->addRow(tr("Anti-aliasing"), msaa_);
   form->addRow(scale_bar_);
   form->addRow(axes_);
-  form->addRow(tr("Navigation"), nav_scheme_);
-  form->addRow(tr("Orbit style"), orbit_style_);
-  form->addRow(nav_legend_);
   outer->addLayout(form);
   outer->addStretch();
 
@@ -235,43 +206,13 @@ QWidget* InspectorWidget::build_display_pane() {
           [this](bool) { emit display_changed(); });
   connect(axes_, &QCheckBox::toggled, this,
           [this](bool) { emit display_changed(); });
-  connect(nav_scheme_, &QComboBox::currentIndexChanged, this, [this](int) {
-    nav_legend_->setText(navigation_scheme_legend(navigation_scheme()));
-    emit display_changed();
-  });
-  connect(orbit_style_, &QComboBox::currentIndexChanged, this,
-          [this](int) { emit display_changed(); });
   connect(reset, &QAbstractButton::clicked, this, [this]() {
     // Struct defaults are the single source of truth; load_display blocks
-    // the per-control signals, so announce the change once here. The
-    // navigation scheme is muscle memory, not a display setting — reset
-    // leaves it alone (like the Import pane's review checkbox).
+    // the per-control signals, so announce the change once here.
     load_display(renderer::DisplayMode{});
     emit display_changed();
   });
   return pane;
-}
-
-CameraController::OrbitStyle InspectorWidget::orbit_style() const {
-  return static_cast<CameraController::OrbitStyle>(
-    orbit_style_->currentData().toInt());
-}
-
-void InspectorWidget::set_orbit_style(CameraController::OrbitStyle style) {
-  const QSignalBlocker block(orbit_style_);
-  orbit_style_->setCurrentIndex(
-    orbit_style_->findData(static_cast<int>(style)));
-}
-
-NavigationScheme InspectorWidget::navigation_scheme() const {
-  return static_cast<NavigationScheme>(
-    nav_scheme_->currentData().toInt());
-}
-
-void InspectorWidget::set_navigation_scheme(NavigationScheme scheme) {
-  const QSignalBlocker block(nav_scheme_);
-  nav_scheme_->setCurrentIndex(nav_scheme_->findData(static_cast<int>(scheme)));
-  nav_legend_->setText(navigation_scheme_legend(scheme));
 }
 
 QWidget* InspectorWidget::build_import_pane() {

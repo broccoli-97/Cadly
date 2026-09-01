@@ -184,9 +184,9 @@ switches. Panels are fixed-position and toggle visibility only; the old
 
 - Mouse: bindings come from the selected **navigation scheme**
   (`NavigationScheme.h` — Cadly default, Blender, Rhino, Fusion 360, Maya;
-  the Inspector ▸ Display "Navigation" combo is the editor, with a legend
-  generated from the live binding table; persisted as
-  `display/navigation_scheme`). Cadly default: right-drag orbits,
+  edited in **Preferences ▸ Navigation** with a legend generated from the
+  live binding table; persisted as `display/navigation_scheme`, orbit style
+  as `display/orbit_style`). Cadly default: right-drag orbits,
   middle-drag pans. Every scheme also answers **Alt+left-drag orbit,
   Alt+Ctrl+left-drag pan** (⌥ / ⌥⌘ on macOS — the trackpad path; trackpads
   have no middle button), and a modifier arriving a beat after the press
@@ -225,6 +225,13 @@ switches. Panels are fixed-position and toggle visibility only; the old
   Line's chevron menu holds "Dimmed Hidden Lines" (`show_hidden_edges`);
   its checked state is the preference itself, so it is only ever
   enabled/disabled with the mode, never force-cleared.
+- **Preferences** (`PreferencesDialog`, non-modal, instant-apply): General
+  (language, dark appearance — routed through the existing menu actions so
+  the twins stay in sync) and Navigation (scheme + orbit style). The action
+  carries `PreferencesRole`, so macOS relocates it to the app menu as
+  Settings… ⌘,; elsewhere it lives at File ▸ Preferences…. Dividing line:
+  Inspector = live view/document controls, Preferences = set-once app
+  behavior.
 - Custom-painted widgets (`ToolbarButton`, `SegmentedControl`,
   the sidebar delegate, `Popover`, …) read `ui::ThemeTokens` (a struct, **not**
   `QPalette`) so they render identically under Fusion (Qt 6.4) and qlementine

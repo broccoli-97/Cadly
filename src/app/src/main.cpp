@@ -263,6 +263,14 @@ int main(int argc, char** argv) {
       if (has_popup) {
         if (auto* popup = QApplication::activePopupWidget()) pm = popup->grab();
       }
+      // The preferences demo opens a separate top-level dialog; grab that
+      // window rather than the shell behind it.
+      if (demo == QLatin1String("preferences")) {
+        if (auto* active = QApplication::activeWindow();
+            active && active != &window) {
+          pm = active->grab();
+        }
+      }
       if (pm.isNull()) pm = window.grab();
       pm.save(shot_path);
       QApplication::quit();

@@ -9,7 +9,6 @@
 #include "cadly/cad/ICadImporter.h"
 #include "cadly/renderer/RenderTypes.h"
 #include "cadly/scene/Scene.h"
-#include "cadly/ui/NavigationScheme.h"
 
 #include <QWidget>
 
@@ -18,7 +17,6 @@
 
 class QCheckBox;
 class QComboBox;
-class QLabel;
 class QPushButton;
 class QSlider;
 class QStackedWidget;
@@ -45,13 +43,6 @@ public:
   // mode-exclusive flags like wireframe).
   void apply_display(renderer::DisplayMode& mode) const;
   void load_display(const renderer::DisplayMode& mode);
-
-  // Navigation scheme (Display pane): not a DisplayMode field — the owner
-  // pushes it to the viewport and persists it alongside the display keys.
-  NavigationScheme navigation_scheme() const;
-  void set_navigation_scheme(NavigationScheme scheme);
-  CameraController::OrbitStyle orbit_style() const;
-  void set_orbit_style(CameraController::OrbitStyle style);
 
   // --- Import pane -----------------------------------------------------
   cad::ImportOptions import_options() const;
@@ -84,9 +75,6 @@ private:
   QComboBox*           msaa_{nullptr};
   QCheckBox*           scale_bar_{nullptr};
   QCheckBox*           axes_{nullptr};
-  QComboBox*           nav_scheme_{nullptr};
-  QComboBox*           orbit_style_{nullptr};
-  QLabel*              nav_legend_{nullptr};
 
   ImportOptionsWidget* import_options_{nullptr};
   QCheckBox*           review_each_{nullptr};

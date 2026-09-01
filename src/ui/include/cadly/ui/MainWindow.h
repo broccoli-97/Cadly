@@ -26,6 +26,7 @@ namespace cadly::ui {
 
 class DiagnosticsStrip;
 class InspectorWidget;
+class PreferencesDialog;
 class IsolateBanner;
 class SidebarWidget;
 class ToolbarButton;
@@ -86,6 +87,7 @@ private slots:
   void on_zero_chrome(bool on);
   void on_isolate_changed(std::uint32_t isolate_node);
   void on_about();
+  void open_preferences();
 
 private:
   enum class SurfaceMode { Shaded = 0, HiddenLine = 1, Wireframe = 2 };
@@ -129,6 +131,7 @@ private:
   ViewportWidget*   viewport_{nullptr};
   DiagnosticsStrip* strip_{nullptr};
   InspectorWidget*  inspector_{nullptr};
+  PreferencesDialog* prefs_{nullptr};  // lazily created by open_preferences()
   QSplitter*        split_h_{nullptr};
   QSplitter*        split_v_{nullptr};
   QWidget*          hud_{nullptr};
@@ -173,6 +176,7 @@ private:
   QAction* act_lang_english_{nullptr};
   QAction* act_lang_chinese_{nullptr};
   QAction* act_about_{nullptr};
+  QAction* act_preferences_{nullptr};
   QList<QAction*> view_actions_;   // Front…Iso + Fit, for the Views popover
   QMenu* recents_menu_{nullptr};
 

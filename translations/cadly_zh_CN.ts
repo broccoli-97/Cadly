@@ -253,11 +253,11 @@
     </message>
     <message>
         <source>Mouse bindings for orbit, pan, and zoom, matching a familiar CAD package</source>
-        <translation>环绕、平移与缩放的鼠标绑定，匹配你熟悉的 CAD 软件</translation>
+        <translation type="vanished">环绕、平移与缩放的鼠标绑定，匹配你熟悉的 CAD 软件</translation>
     </message>
     <message>
         <source>Free orbit tumbles in screen space (no pole, horizon may tilt); turntable keeps up fixed with a clamped elevation</source>
-        <translation>自由环绕在屏幕空间内翻转（无极点，地平线可能倾斜）；转台式保持上方向固定并限制仰角</translation>
+        <translation type="vanished">自由环绕在屏幕空间内翻转（无极点，地平线可能倾斜）；转台式保持上方向固定并限制仰角</translation>
     </message>
     <message>
         <source>Edge intensity</source>
@@ -269,11 +269,11 @@
     </message>
     <message>
         <source>Navigation</source>
-        <translation>导航</translation>
+        <translation type="vanished">导航</translation>
     </message>
     <message>
         <source>Orbit style</source>
-        <translation>环绕方式</translation>
+        <translation type="vanished">环绕方式</translation>
     </message>
     <message>
         <source>Restore the default import options</source>
@@ -495,6 +495,10 @@
         <translation>关于 Cadly</translation>
     </message>
     <message>
+        <source>&amp;Preferences…</source>
+        <translation>偏好设置(&amp;P)…</translation>
+    </message>
+    <message>
         <source>frame %1 ms</source>
         <translation>帧 %1 ms</translation>
     </message>
@@ -647,6 +651,49 @@
     <message>
         <source>Pin as a floating card</source>
         <translation>固定为浮动卡片</translation>
+    </message>
+</context>
+<context>
+    <name>cadly::ui::PreferencesDialog</name>
+    <message>
+        <source>Preferences</source>
+        <translation>偏好设置</translation>
+    </message>
+    <message>
+        <source>General</source>
+        <translation>通用</translation>
+    </message>
+    <message>
+        <source>Navigation</source>
+        <translation>导航</translation>
+    </message>
+    <message>
+        <source>System Language</source>
+        <translation>系统语言</translation>
+    </message>
+    <message>
+        <source>Applies the next time Cadly starts</source>
+        <translation>在 Cadly 下次启动时生效</translation>
+    </message>
+    <message>
+        <source>Dark appearance</source>
+        <translation>深色外观</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>语言</translation>
+    </message>
+    <message>
+        <source>Mouse bindings for orbit, pan, and zoom, matching a familiar CAD package</source>
+        <translation>环绕、平移与缩放的鼠标绑定，匹配你熟悉的 CAD 软件</translation>
+    </message>
+    <message>
+        <source>Free orbit tumbles in screen space (no pole, horizon may tilt); turntable keeps up fixed with a clamped elevation</source>
+        <translation>自由环绕在屏幕空间内翻转（无极点，地平线可能倾斜）；转台式保持上方向固定并限制仰角</translation>
+    </message>
+    <message>
+        <source>Orbit style</source>
+        <translation>环绕方式</translation>
     </message>
 </context>
 <context>

@@ -36,6 +36,15 @@ Qt::Key_Period` instead, which renders as ⌃. — the combination CLAUDE.md
 documents. Menus render shortcuts with the native glyphs via
 `QKeySequence::NativeText`, so no display-side handling is needed.
 
+## Preferences
+
+One `PreferencesDialog` everywhere; only its entry point diverges. The
+action's `PreferencesRole` moves it into the macOS app menu as
+"Settings… ⌘," automatically; on Linux and Windows it stays at
+File ▸ Preferences…. `QKeySequence::Preferences` supplies ⌘, on macOS and
+Ctrl+, where the platform theme defines one — on Windows it defines none,
+so the menu item is the only route there.
+
 ## Menu bar
 
 The in-window `QMenuBar` is promoted to the system menu bar on macOS
