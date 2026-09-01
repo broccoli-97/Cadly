@@ -246,7 +246,7 @@ switches. Panels are fixed-position and toggle visibility only; the old
   scrollbars. Do not install a second app-wide stylesheet from the UI module.
   Reuse the existing Fusion style instance on theme changes: replacing it can
   recreate `QOpenGLWidget`'s backing surface and invalidate renderer resources.
-- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|shadedmenu|hiddenmenu|zerochrome|highlight|isolate|isolate-hide]`
+- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|shadedmenu|hiddenmenu|zerochrome|preferences|highlight|isolate|isolate-hide]`
   drives a UI state and grabs it headlessly (used to verify the shell without an
   input-injection tool). `--demo hiddenline-orbit:<yaw>,<pitch>[,persp]` (and
   the `wireframe-orbit:` twin) screenshots a line mode at an exact arbitrary
