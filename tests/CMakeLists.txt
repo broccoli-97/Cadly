@@ -27,9 +27,14 @@ target_compile_features(cadly_ibl_bake_plan_test PRIVATE cxx_std_17)
 add_test(NAME cadly_ibl_bake_plan COMMAND cadly_ibl_bake_plan_test)
 
 add_executable(cadly_shader_source_test shader_source_test.cpp)
+# The private-header include also pulls in GLFunctions.h, whose
+# <GL/glcorearb.h> comes from renderer_gl's vendored khronos tree.
 target_include_directories(cadly_shader_source_test
   PRIVATE
     ${CMAKE_SOURCE_DIR}/src/renderer_gl/src
+)
+target_include_directories(cadly_shader_source_test SYSTEM PRIVATE
+  ${CMAKE_SOURCE_DIR}/src/renderer_gl/third_party/khronos
 )
 target_compile_definitions(cadly_shader_source_test
   PRIVATE

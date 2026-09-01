@@ -141,8 +141,10 @@ if(NOT spdlog_FOUND)
   find_package(spdlog REQUIRED)
 endif()
 
-# OpenGL — Qt's OpenGLWidgets needs the host GL implementation.
-find_package(OpenGL REQUIRED)
+# No find_package(OpenGL): the only consumer was renderer_gl's include path
+# for <GL/glcorearb.h>, now vendored (macOS ships no glcorearb.h at all).
+# Qt's OpenGLWidgets links the host GL through its own imported targets, and
+# renderer_gl resolves every entry point at runtime via the loader.
 
 # --- Subdirectories --------------------------------------------------------
 add_subdirectory(src/platform)
