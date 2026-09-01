@@ -182,11 +182,18 @@ and import summary; the OpenGL viewport is shared and re-attached on tab
 switches. Panels are fixed-position and toggle visibility only; the old
 `QDockWidget` shell is gone. Layout persists as explicit `QSettings` keys.
 
-- Mouse: **right-drag orbits, middle-drag pans**; **Alt+left-drag orbits,
-  Alt+Ctrl+left-drag pans** (⌥ / ⌥⌘ on macOS — the trackpad path; trackpads
-  have no middle button). *Plain* left stays reserved for picking (not yet
-  implemented, passed through). Wheel zoom anchors on the point under
-  the cursor. Orbit uses a quaternion camera around a pluggable
+- Mouse: bindings come from the selected **navigation scheme**
+  (`NavigationScheme.h` — Cadly default, Blender, Rhino, Fusion 360, Maya;
+  the Inspector ▸ Display "Navigation" combo is the editor, with a legend
+  generated from the live binding table; persisted as
+  `display/navigation_scheme`). Cadly default: right-drag orbits,
+  middle-drag pans. Every scheme also answers **Alt+left-drag orbit,
+  Alt+Ctrl+left-drag pan** (⌥ / ⌥⌘ on macOS — the trackpad path; trackpads
+  have no middle button), and a modifier arriving a beat after the press
+  still promotes the drag (synthesized three-finger drags deliver exactly
+  that). *Plain* left never resolves in any scheme — reserved for picking
+  (not yet implemented, passed through). Wheel zoom anchors on the point
+  under the cursor. Orbit uses a quaternion camera around a pluggable
   `RotationPivotResolver` (default: camera target).
 - Sidebar tree: click selects and **highlights** the part in the viewport
   (`Node::selected` → an unlit, semi-transparent signal-orange wash —

@@ -2,6 +2,7 @@
 
 #include "cadly/ui/CameraController.h"
 #include "cadly/ui/ThemeTokens.h"
+#include "cadly/ui/NavigationScheme.h"
 #include "cadly/ui/ViewportWidget.h"
 
 #include "DiagnosticsStrip.h"
@@ -798,6 +799,7 @@ void MainWindow::build_shell() {
           sidebar_, &SidebarWidget::clear_selection);
 
   connect(inspector_, &InspectorWidget::display_changed, this, [this]() {
+    viewport_->set_navigation_scheme(inspector_->navigation_scheme());
     update_display_mode();
     save_settings();
   });
@@ -1810,8 +1812,12 @@ void MainWindow::load_settings() {
   act_isolate_hide_others_->setChecked(
     s.value("isolate_hide_others",
             act_isolate_hide_others_->isChecked()).toBool());
+  const auto scheme = navigation_scheme_from_key(
+    s.value("navigation_scheme").toString());
   s.endGroup();
   inspector_->load_display(mode);
+  inspector_->set_navigation_scheme(scheme);
+  viewport_->set_navigation_scheme(scheme);
 
   s.beginGroup(QStringLiteral("ui"));
   act_toggle_sidebar_->setChecked(s.value("sidebar_visible", true).toBool());
@@ -1844,6 +1850,8 @@ void MainWindow::save_settings() const {
   s.setValue("axes",           mode.show_axes);
   s.setValue("dimmed_hidden",  act_hidden_dimmed_->isChecked());
   s.setValue("isolate_hide_others", act_isolate_hide_others_->isChecked());
+  s.setValue("navigation_scheme",
+             navigation_scheme_key(inspector_->navigation_scheme()));
   s.endGroup();
 
   s.beginGroup(QStringLiteral("ui"));

@@ -191,10 +191,29 @@ QWidget* InspectorWidget::build_display_pane() {
   axes_ = new QCheckBox(tr("Orientation axes"), pane);
   axes_->setChecked(true);
 
+  nav_scheme_ = new QComboBox(pane);
+  for (const auto s : kAllNavigationSchemes) {
+    nav_scheme_->addItem(navigation_scheme_name(s),
+                         static_cast<int>(s));
+  }
+  nav_scheme_->setToolTip(
+    tr("Mouse bindings for orbit, pan, and zoom, matching a familiar "
+       "CAD package"));
+
+  nav_legend_ = new QLabel(pane);
+  nav_legend_->setWordWrap(true);
+  nav_legend_->setTextFormat(Qt::PlainText);
+  // Secondary text: the legend explains, the combo decides.
+  nav_legend_->setEnabled(false);
+  nav_legend_->setText(
+    navigation_scheme_legend(NavigationScheme::Cadly));
+
   form->addRow(tr("Edge intensity"), edge_intensity_);
   form->addRow(tr("Anti-aliasing"), msaa_);
   form->addRow(scale_bar_);
   form->addRow(axes_);
+  form->addRow(tr("Navigation"), nav_scheme_);
+  form->addRow(nav_legend_);
   outer->addLayout(form);
   outer->addStretch();
 
@@ -206,13 +225,30 @@ QWidget* InspectorWidget::build_display_pane() {
           [this](bool) { emit display_changed(); });
   connect(axes_, &QCheckBox::toggled, this,
           [this](bool) { emit display_changed(); });
+  connect(nav_scheme_, &QComboBox::currentIndexChanged, this, [this](int) {
+    nav_legend_->setText(navigation_scheme_legend(navigation_scheme()));
+    emit display_changed();
+  });
   connect(reset, &QAbstractButton::clicked, this, [this]() {
     // Struct defaults are the single source of truth; load_display blocks
-    // the per-control signals, so announce the change once here.
+    // the per-control signals, so announce the change once here. The
+    // navigation scheme is muscle memory, not a display setting — reset
+    // leaves it alone (like the Import pane's review checkbox).
     load_display(renderer::DisplayMode{});
     emit display_changed();
   });
   return pane;
+}
+
+NavigationScheme InspectorWidget::navigation_scheme() const {
+  return static_cast<NavigationScheme>(
+    nav_scheme_->currentData().toInt());
+}
+
+void InspectorWidget::set_navigation_scheme(NavigationScheme scheme) {
+  const QSignalBlocker block(nav_scheme_);
+  nav_scheme_->setCurrentIndex(nav_scheme_->findData(static_cast<int>(scheme)));
+  nav_legend_->setText(navigation_scheme_legend(scheme));
 }
 
 QWidget* InspectorWidget::build_import_pane() {

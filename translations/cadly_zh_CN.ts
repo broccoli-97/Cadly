@@ -9,6 +9,49 @@
     </message>
 </context>
 <context>
+    <name>NavigationScheme</name>
+    <message>
+        <source>left-drag</source>
+        <translation>左键拖动</translation>
+    </message>
+    <message>
+        <source>middle-drag</source>
+        <translation>中键拖动</translation>
+    </message>
+    <message>
+        <source>right-drag</source>
+        <translation>右键拖动</translation>
+    </message>
+    <message>
+        <source>Cadly (default)</source>
+        <translation>Cadly（默认）</translation>
+    </message>
+    <message>
+        <source> or </source>
+        <translation> 或 </translation>
+    </message>
+    <message>
+        <source>Orbit: %1</source>
+        <translation>环绕：%1</translation>
+    </message>
+    <message>
+        <source>Pan: %1</source>
+        <translation>平移：%1</translation>
+    </message>
+    <message>
+        <source>Zoom: scroll, anchored under the cursor</source>
+        <translation>缩放：滚轮，以光标处为锚点</translation>
+    </message>
+    <message>
+        <source>Zoom: scroll (anchored under the cursor) or %1</source>
+        <translation>缩放：滚轮（以光标处为锚点）或 %1</translation>
+    </message>
+    <message>
+        <source>Left click stays reserved for selection.</source>
+        <translation>左键单击保留用于选取。</translation>
+    </message>
+</context>
+<context>
     <name>cadly::ui::DiagnosticsStrip</name>
     <message>
         <source>Summary</source>
@@ -201,12 +244,20 @@
         <translation>方向坐标轴</translation>
     </message>
     <message>
+        <source>Mouse bindings for orbit, pan, and zoom, matching a familiar CAD package</source>
+        <translation>环绕、平移与缩放的鼠标绑定，匹配你熟悉的 CAD 软件</translation>
+    </message>
+    <message>
         <source>Edge intensity</source>
         <translation>边线强度</translation>
     </message>
     <message>
         <source>Anti-aliasing</source>
         <translation>抗锯齿</translation>
+    </message>
+    <message>
+        <source>Navigation</source>
+        <translation>导航</translation>
     </message>
     <message>
         <source>Restore the default import options</source>

@@ -4,6 +4,7 @@ add_library(cadly_ui STATIC
   src/IconUtils.cpp
   src/ImportOptionsWidget.cpp
   src/InspectorWidget.cpp
+  src/NavigationScheme.cpp
   src/MainWindow.cpp
   src/Popover.cpp
   src/PropertiesPanel.cpp
