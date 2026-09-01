@@ -61,6 +61,15 @@ struct Camera {
   // and similar features.
   void rotate_around(const vec3& pivot, const quat& delta);
 
+  // Turntable orbit: yaw spins about the *world* up axis, pitch about the
+  // camera's right axis with the elevation clamped short of the poles. The
+  // complement of orbit(): "up" never tilts and the pivot reads as fixed,
+  // at the price of the classic turntable limits — you cannot roll past
+  // vertical to inspect the underside in one gesture, and near the poles
+  // yaw response compresses. Preserves any roll already present (e.g. from
+  // an earlier free orbit); the standard views restore upright exactly.
+  void orbit_turntable(float yaw_delta, float pitch_delta, const vec3& pivot);
+
   // Screen-space tumble for orbit-style mouse input: one rotation about the
   // screen-plane axis `up()*yaw_delta + right()*pitch_delta` (perpendicular
   // to the drag direction), applied around `pivot`. The response follows the

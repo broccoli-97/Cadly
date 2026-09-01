@@ -47,6 +47,14 @@ resolve_navigation(NavigationScheme scheme, Qt::MouseButton button,
 QString           navigation_scheme_key(NavigationScheme scheme);
 NavigationScheme  navigation_scheme_from_key(const QString& key);
 
+// Orbit style (CameraController::OrbitStyle): settings token
+// ("free"/"turntable"), inverse, and translated display name. Persisted as
+// display/orbit_style; external consumers (the Quick Look extension) read
+// the same token.
+QString orbit_style_key(CameraController::OrbitStyle style);
+CameraController::OrbitStyle orbit_style_from_key(const QString& key);
+QString orbit_style_name(CameraController::OrbitStyle style);
+
 // Display name for menus/combos. Product names stay untranslated.
 QString navigation_scheme_name(NavigationScheme scheme);
 

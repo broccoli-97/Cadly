@@ -135,6 +135,23 @@ QString navigation_scheme_name(NavigationScheme s) {
   return QCoreApplication::translate("NavigationScheme", "Cadly (default)");
 }
 
+QString orbit_style_key(CameraController::OrbitStyle style) {
+  return style == CameraController::OrbitStyle::Turntable
+    ? QStringLiteral("turntable") : QStringLiteral("free");
+}
+
+CameraController::OrbitStyle orbit_style_from_key(const QString& key) {
+  return key == QLatin1String("turntable")
+    ? CameraController::OrbitStyle::Turntable
+    : CameraController::OrbitStyle::Free;
+}
+
+QString orbit_style_name(CameraController::OrbitStyle style) {
+  return style == CameraController::OrbitStyle::Turntable
+    ? QCoreApplication::translate("NavigationScheme", "Turntable")
+    : QCoreApplication::translate("NavigationScheme", "Free orbit");
+}
+
 QString navigation_scheme_legend(NavigationScheme s) {
   const auto rows = bindings_for(s);
   const auto join = [&rows](DM mode) {

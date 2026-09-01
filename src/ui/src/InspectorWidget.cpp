@@ -200,6 +200,15 @@ QWidget* InspectorWidget::build_display_pane() {
     tr("Mouse bindings for orbit, pan, and zoom, matching a familiar "
        "CAD package"));
 
+  orbit_style_ = new QComboBox(pane);
+  using OrbitStyle = CameraController::OrbitStyle;
+  for (const auto s : {OrbitStyle::Free, OrbitStyle::Turntable}) {
+    orbit_style_->addItem(orbit_style_name(s), static_cast<int>(s));
+  }
+  orbit_style_->setToolTip(
+    tr("Free orbit tumbles in screen space (no pole, horizon may tilt); "
+       "turntable keeps up fixed with a clamped elevation"));
+
   nav_legend_ = new QLabel(pane);
   nav_legend_->setWordWrap(true);
   nav_legend_->setTextFormat(Qt::PlainText);
@@ -213,6 +222,7 @@ QWidget* InspectorWidget::build_display_pane() {
   form->addRow(scale_bar_);
   form->addRow(axes_);
   form->addRow(tr("Navigation"), nav_scheme_);
+  form->addRow(tr("Orbit style"), orbit_style_);
   form->addRow(nav_legend_);
   outer->addLayout(form);
   outer->addStretch();
@@ -229,6 +239,8 @@ QWidget* InspectorWidget::build_display_pane() {
     nav_legend_->setText(navigation_scheme_legend(navigation_scheme()));
     emit display_changed();
   });
+  connect(orbit_style_, &QComboBox::currentIndexChanged, this,
+          [this](int) { emit display_changed(); });
   connect(reset, &QAbstractButton::clicked, this, [this]() {
     // Struct defaults are the single source of truth; load_display blocks
     // the per-control signals, so announce the change once here. The
@@ -238,6 +250,17 @@ QWidget* InspectorWidget::build_display_pane() {
     emit display_changed();
   });
   return pane;
+}
+
+CameraController::OrbitStyle InspectorWidget::orbit_style() const {
+  return static_cast<CameraController::OrbitStyle>(
+    orbit_style_->currentData().toInt());
+}
+
+void InspectorWidget::set_orbit_style(CameraController::OrbitStyle style) {
+  const QSignalBlocker block(orbit_style_);
+  orbit_style_->setCurrentIndex(
+    orbit_style_->findData(static_cast<int>(style)));
 }
 
 NavigationScheme InspectorWidget::navigation_scheme() const {

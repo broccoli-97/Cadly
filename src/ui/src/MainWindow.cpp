@@ -800,6 +800,7 @@ void MainWindow::build_shell() {
 
   connect(inspector_, &InspectorWidget::display_changed, this, [this]() {
     viewport_->set_navigation_scheme(inspector_->navigation_scheme());
+    viewport_->camera_controller()->set_orbit_style(inspector_->orbit_style());
     update_display_mode();
     save_settings();
   });
@@ -1814,10 +1815,14 @@ void MainWindow::load_settings() {
             act_isolate_hide_others_->isChecked()).toBool());
   const auto scheme = navigation_scheme_from_key(
     s.value("navigation_scheme").toString());
+  const auto orbit_style = orbit_style_from_key(
+    s.value("orbit_style").toString());
   s.endGroup();
   inspector_->load_display(mode);
   inspector_->set_navigation_scheme(scheme);
   viewport_->set_navigation_scheme(scheme);
+  inspector_->set_orbit_style(orbit_style);
+  viewport_->camera_controller()->set_orbit_style(orbit_style);
 
   s.beginGroup(QStringLiteral("ui"));
   act_toggle_sidebar_->setChecked(s.value("sidebar_visible", true).toBool());
@@ -1852,6 +1857,7 @@ void MainWindow::save_settings() const {
   s.setValue("isolate_hide_others", act_isolate_hide_others_->isChecked());
   s.setValue("navigation_scheme",
              navigation_scheme_key(inspector_->navigation_scheme()));
+  s.setValue("orbit_style", orbit_style_key(inspector_->orbit_style()));
   s.endGroup();
 
   s.beginGroup(QStringLiteral("ui"));

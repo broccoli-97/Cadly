@@ -50,6 +50,8 @@ public:
   // pushes it to the viewport and persists it alongside the display keys.
   NavigationScheme navigation_scheme() const;
   void set_navigation_scheme(NavigationScheme scheme);
+  CameraController::OrbitStyle orbit_style() const;
+  void set_orbit_style(CameraController::OrbitStyle style);
 
   // --- Import pane -----------------------------------------------------
   cad::ImportOptions import_options() const;
@@ -83,6 +85,7 @@ private:
   QCheckBox*           scale_bar_{nullptr};
   QCheckBox*           axes_{nullptr};
   QComboBox*           nav_scheme_{nullptr};
+  QComboBox*           orbit_style_{nullptr};
   QLabel*              nav_legend_{nullptr};
 
   ImportOptionsWidget* import_options_{nullptr};
