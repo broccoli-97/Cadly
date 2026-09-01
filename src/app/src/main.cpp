@@ -15,7 +15,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFileOpenEvent>
-#include <QIcon>
 #include <QLibraryInfo>
 #include <QLocale>
 #include <QScreen>
@@ -104,7 +103,10 @@ int main(int argc, char** argv) {
   app.setOrganizationName("Cadly");
   app.setApplicationName("Cadly");
   app.setApplicationVersion("0.1.0");
-  app.setWindowIcon(QIcon());
+  // No setWindowIcon call: on macOS an application icon set here would
+  // shadow the bundle's cadly.icns in the Dock, and an *empty* QIcon reads
+  // as "explicitly no icon". Linux/Windows window icons are a packaging
+  // follow-up (nothing is embedded to load yet).
 
   cadly::app::Settings settings;
 
