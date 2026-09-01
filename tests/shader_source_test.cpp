@@ -1,6 +1,7 @@
 #include "GLShader.h"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdlib>
 #include <string>
 
@@ -34,5 +35,45 @@ int main() {
   assert(fullscreen->find("fullscreen_triangle_position()") !=
          std::string::npos);
   assert(fullscreen->find("#include") == std::string::npos);
+
+  // Section view: the clip must reach EVERY stage that draws model geometry.
+  // Miss one and the model is cut in one pass and whole in another — surfaces
+  // sliced but their edges still hanging in the air, or worse, the stencil
+  // counting pass (which borrows the edges program) seeing unclipped geometry,
+  // where every closed solid balances and no cap is ever produced. There is no
+  // offscreen GL test harness in this repo, so this string check is the only
+  // automated guard against that.
+  //
+  // Match the ASSIGNMENT, not the bare identifier: these shaders discuss
+  // gl_ClipDistance at length in their comments, and a check that counted prose
+  // would pass on a shader that only talks about clipping.
+  const std::string kWrite = "gl_ClipDistance[0] =";
+  for (const char* stage : {"pbr.vert", "edges.vert", "silhouette.geom"}) {
+    const auto src = cadly::renderer_gl::detail::load_shader_source(stage);
+    assert(src);
+    assert(src->find(kWrite) != std::string::npos);
+    assert(src->find("u_clip_plane") != std::string::npos);
+  }
+  // The geometry stage must re-set it before EACH EmitVertex: outputs become
+  // undefined after one, so a single assignment silently clips only half the
+  // silhouette segments.
+  const auto silhouette =
+    cadly::renderer_gl::detail::load_shader_source("silhouette.geom");
+  assert(silhouette);
+  {
+    std::size_t count = 0;
+    for (std::size_t at = silhouette->find(kWrite);
+         at != std::string::npos;
+         at = silhouette->find(kWrite, at + 1)) {
+      ++count;
+    }
+    assert(count >= 2);
+  }
+  // The section pass draws ON its own plane, where the clip distance is ~0 and
+  // the comparison is a coin flip, so it must never write one.
+  const auto section =
+    cadly::renderer_gl::detail::load_shader_source("section.vert");
+  assert(section);
+  assert(section->find(kWrite) == std::string::npos);
   return 0;
 }

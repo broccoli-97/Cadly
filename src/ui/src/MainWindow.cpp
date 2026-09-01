@@ -102,6 +102,113 @@ struct DocumentState {
   // themselves live in the scene's nodes, but the sidebar resets them on
   // every scene handover, so the shell re-applies this on tab activation.
   std::uint32_t isolate_node{scene::Node::kInvalid};
+  // Section state for this tab. Per document rather than global because the
+  // plane's offset is measured against THIS model's bounds — carrying one
+  // tab's offset into another would put the plane somewhere arbitrary.
+  bool                   section_enabled{false};
+  renderer::SectionPlane section;
+};
+
+// Floating capsule pinned over the viewport's bottom-centre while section mode
+// is active: the plane's axis, a live offset readout, Flip, and Exit.
+//
+// Same reasoning as IsolateBanner — a mode needs one exit affordance that
+// survives zero-chrome — and the same capsule paint recipe so the two read as
+// one family. Bottom-centre rather than top-centre precisely so both can be up
+// at once without overlapping, and so it doesn't sit on top of the part the
+// user is cutting.
+class SectionBanner final : public QWidget {
+public:
+  SectionBanner(QAction* flip_action, QAction* exit_action, QWidget* parent)
+      : QWidget(parent) {
+    auto* lay = new QHBoxLayout(this);
+    lay->setContentsMargins(11, 4, 5, 4);
+    lay->setSpacing(7);
+    icon_ = new QLabel(this);
+    icon_->setFixedSize(15, 15);
+    lay->addWidget(icon_);
+    label_ = new QLabel(this);
+    label_->setFont(ui_font(12, QFont::DemiBold));
+    lay->addWidget(label_);
+    auto* flip = new ToolbarButton(this);
+    flip->setDefaultAction(flip_action);
+    flip->set_show_text(true);
+    flip->set_emphasis(ToolbarButton::Emphasis::Accent);
+    lay->addWidget(flip);
+    auto* exit = new ToolbarButton(this);
+    exit->setDefaultAction(exit_action);
+    exit->set_show_text(true);
+    exit->set_emphasis(ToolbarButton::Emphasis::Accent);
+    lay->addWidget(exit);
+    connect(&ThemeManager::instance(), &ThemeManager::changed,
+            this, [this]() { refresh_theme(); });
+    refresh_theme();
+  }
+
+  // `axis` is a short label ("X", "Y", "Z", or "Custom"); `offset` is in model
+  // units and `unit` is the scene's own unit string, so the number means what
+  // the user's CAD system means.
+  void set_readout(const QString& axis, float offset, const QString& unit) {
+    axis_   = axis;
+    offset_ = offset;
+    unit_   = unit;
+    refresh_label();
+  }
+
+  // Live angle while a rotate ring is being dragged, in degrees. Transient: the
+  // shell clears it on release, because after the drag the plane's orientation
+  // is described by its axis label, not by how far the last drag turned it.
+  void set_tilt(float degrees, bool active) {
+    tilt_        = degrees;
+    tilt_active_ = active;
+    refresh_label();
+  }
+
+protected:
+  void paintEvent(QPaintEvent*) override {
+    const auto& t = tokens();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QColor bg = t.toolbar_bg;
+    bg.setAlpha(225);
+    p.setPen(QPen(t.hairline_soft, 1.0));
+    p.setBrush(bg);
+    p.drawRoundedRect(QRectF(0.5, 0.5, width() - 1.0, height() - 1.0), 8, 8);
+  }
+
+private:
+  void refresh_label() {
+    // Not tr(): without Q_OBJECT this inherits QWidget::tr(), whose runtime
+    // context would never match what lupdate extracts. See IsolateBanner.
+    const QString offset = QString::number(static_cast<double>(offset_), 'f', 2);
+    label_->setText(
+      tilt_active_
+        ? QCoreApplication::translate("SectionBanner",
+                                      "Section %1  ·  %2 %3  ·  %4°")
+            .arg(axis_, offset, unit_,
+                 QString::number(static_cast<double>(tilt_), 'f', 1))
+        : QCoreApplication::translate("SectionBanner", "Section %1  ·  %2 %3")
+            .arg(axis_, offset, unit_));
+    adjustSize();
+  }
+
+  void refresh_theme() {
+    const auto& t = tokens();
+    icon_->setPixmap(themed_icon(QStringLiteral("misc/separation-vertical"),
+                                 t.accent, t.accent).pixmap(15, 15));
+    QPalette pal = label_->palette();
+    pal.setColor(QPalette::WindowText, t.text1);
+    label_->setPalette(pal);
+    update();
+  }
+
+  QLabel* icon_{nullptr};
+  QLabel* label_{nullptr};
+  QString axis_;
+  QString unit_;
+  float   offset_     {0.0f};
+  float   tilt_       {0.0f};
+  bool    tilt_active_{false};
 };
 
 // Floating capsule pinned over the viewport's top-centre while isolate mode
@@ -405,11 +512,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   build_menus();
   build_status_bar();
 
-  // Esc is the instinctive way out of a modal-ish view state. Isolate is
-  // the more nested state, so it unwinds first; a second Esc then restores
-  // the panels (the actions' own shortcuts also work).
+  // Esc is the instinctive way out of a modal-ish view state, unwinding the
+  // most nested one first: section (an active manipulator), then isolate, then
+  // the panels. The actions' own shortcuts also work.
   auto* esc = new QShortcut(QKeySequence(Qt::Key_Escape), this);
   connect(esc, &QShortcut::activated, this, [this]() {
+    if (act_section_->isChecked()) {
+      act_section_->setChecked(false);
+      return;
+    }
     if (sidebar_ && sidebar_->isolate_node() != scene::Node::kInvalid) {
       sidebar_->set_isolate(scene::Node::kInvalid);
       return;
@@ -539,6 +650,109 @@ void MainWindow::build_actions() {
   act_hidden_dimmed_->setEnabled(false);   // startup surface mode is Shaded
   connect(act_hidden_dimmed_, &QAction::toggled,
           this, [this](bool) { update_display_mode(); });
+
+  // --- Section view (剖切) ------------------------------------------------
+  // Orthogonal to the surface modes: a section can be cut in Shaded, Hidden
+  // Line, or Wireframe, so this is its own toolbar chip rather than a fourth
+  // segment. `S` is free (F W H E T P and 1-7 are taken).
+  act_section_ = new QAction(tr("&Section View"), this);
+  act_section_->setIconText(tr("Section"));
+  act_section_->setCheckable(true);
+  act_section_->setShortcut(Qt::Key_S);
+  act_section_->setToolTip(
+    tr("Cut the model open with a movable plane (S)"));
+  connect(act_section_, &QAction::toggled, this, &MainWindow::on_section_toggled);
+
+  act_section_flip_ = new QAction(tr("&Flip Direction"), this);
+  act_section_flip_->setIconText(tr("Flip"));
+  act_section_flip_->setToolTip(tr("Keep the other half of the model"));
+  act_section_flip_->setEnabled(false);
+  act_section_flip_->setVisible(false);
+  connect(act_section_flip_, &QAction::triggered, this, [this]() {
+    if (auto* document = active_document()) {
+      // Negating both the normal and the offset flips which half survives while
+      // leaving the plane exactly where it is in space — flipping the normal
+      // alone would also mirror the plane's position through the bounds centre
+      // and make the cut jump.
+      document->section.normal = -document->section.normal;
+      document->section.offset = -document->section.offset;
+      update_display_mode();
+      update_section_banner();
+    }
+  });
+
+  act_section_reset_ = new QAction(tr("&Reset Plane"), this);
+  act_section_reset_->setToolTip(
+    tr("Recentre the plane and square it back to the nearest world axis"));
+  act_section_reset_->setEnabled(false);
+  act_section_reset_->setVisible(false);
+  connect(act_section_reset_, &QAction::triggered, this, [this]() {
+    if (auto* document = active_document()) {
+      // Both halves, because the rings can tilt the plane to an arbitrary
+      // orientation: a reset that only recentred would leave the user with no
+      // one-click way back from a skew plane.
+      document->section = renderer::section_plane_reset(document->section);
+      update_display_mode();
+      sync_section_axis_actions();
+      update_section_banner();
+    }
+  });
+
+  // The two style options follow the Dimmed-Hidden-Lines pattern: the checkbox
+  // IS the persisted preference, never force-cleared, because the renderer
+  // ignores both while no section is active.
+  act_section_show_plane_ = new QAction(tr("Show &Plane and Handle"), this);
+  act_section_show_plane_->setCheckable(true);
+  act_section_show_plane_->setChecked(true);
+  act_section_show_plane_->setToolTip(
+    tr("Hide the manipulator but keep the cut"));
+  act_section_show_plane_->setEnabled(false);
+  connect(act_section_show_plane_, &QAction::toggled,
+          this, [this](bool) { update_display_mode(); });
+
+  act_section_hatch_ = new QAction(tr("&Hatch Cut Face"), this);
+  act_section_hatch_->setCheckable(true);
+  act_section_hatch_->setChecked(true);
+  act_section_hatch_->setToolTip(
+    tr("Draw drafting hatch strokes across the cut face"));
+  act_section_hatch_->setEnabled(false);
+  connect(act_section_hatch_, &QAction::toggled,
+          this, [this](bool) { update_display_mode(); });
+
+  // Plane orientation presets. Exclusive, and named for the axis the plane's
+  // normal follows — which is how CAD users think about "cut along X".
+  auto* axis_group = new QActionGroup(this);
+  // Optional, not plain Exclusive: the rotate rings can leave the plane on no
+  // world axis at all, and a plain exclusive group refuses to let the last
+  // checked action be unchecked — it would silently force the tick back on and
+  // the menu would claim an axis the plane is not on.
+  axis_group->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);
+  const auto add_axis = [this, axis_group](QAction*& slot, const QString& text,
+                                           const scene::vec3& normal) {
+    slot = new QAction(text, this);
+    slot->setCheckable(true);
+    slot->setEnabled(false);
+    axis_group->addAction(slot);
+    connect(slot, &QAction::triggered, this, [this, normal](bool on) {
+      if (on) set_section_normal(normal, /*recentre=*/true);
+    });
+  };
+  add_axis(act_section_axis_x_, tr("Normal to &X"), {1.0f, 0.0f, 0.0f});
+  add_axis(act_section_axis_y_, tr("Normal to &Y"), {0.0f, 1.0f, 0.0f});
+  add_axis(act_section_axis_z_, tr("Normal to &Z"), {0.0f, 0.0f, 1.0f});
+
+  // "Align to View" is not an axis, so it stays out of the exclusive group: it
+  // sets an arbitrary normal, and leaving an axis entry checked afterwards
+  // would misreport the plane's orientation.
+  act_section_axis_view_ = new QAction(tr("Align to &View"), this);
+  act_section_axis_view_->setEnabled(false);
+  act_section_axis_view_->setToolTip(
+    tr("Cut away everything between you and the model"));
+  connect(act_section_axis_view_, &QAction::triggered, this, [this]() {
+    if (auto* ctrl = viewport_ ? viewport_->camera_controller() : nullptr) {
+      set_section_normal(ctrl->camera().forward(), /*recentre=*/true);
+    }
+  });
 
   act_perspective_ = new QAction(tr("&Perspective Projection"), this);
   act_perspective_->setIconText(tr("Persp"));
@@ -695,6 +909,21 @@ void MainWindow::build_shell() {
   ta.edges            = act_edges_;
   ta.triangle_mesh    = act_triangle_mesh_;
   ta.hidden_dimmed    = act_hidden_dimmed_;
+  // One QMenu instance shared by the toolbar chevron and the View ▸ Section
+  // submenu below, so the two can never drift out of sync.
+  section_menu_ = new QMenu(tr("Section options"), this);
+  section_menu_->addAction(act_section_axis_x_);
+  section_menu_->addAction(act_section_axis_y_);
+  section_menu_->addAction(act_section_axis_z_);
+  section_menu_->addAction(act_section_axis_view_);
+  section_menu_->addSeparator();
+  section_menu_->addAction(act_section_flip_);
+  section_menu_->addAction(act_section_reset_);
+  section_menu_->addSeparator();
+  section_menu_->addAction(act_section_show_plane_);
+  section_menu_->addAction(act_section_hatch_);
+  ta.section          = act_section_;
+  ta.section_menu     = section_menu_;
   ta.toggle_sidebar   = act_toggle_sidebar_;
   ta.toggle_inspector = act_toggle_inspector_;
   ta.toggle_strip     = act_toggle_strip_;
@@ -777,6 +1006,11 @@ void MainWindow::build_shell() {
                                       act_isolate_hide_others_, viewport_);
   isolate_banner_->hide();
 
+  // Section banner: hidden until section mode is switched on. Bottom-centre,
+  // so it can coexist with the isolate banner (top-centre) and the HUD.
+  section_banner_ = new SectionBanner(act_section_flip_, act_section_, viewport_);
+  section_banner_->hide();
+
   // --- wiring ------------------------------------------------------------
   connect(act_toggle_sidebar_, &QAction::toggled,
           sidebar_, &QWidget::setVisible);
@@ -807,6 +1041,29 @@ void MainWindow::build_shell() {
   // click (see ViewportWidget::background_clicked).
   connect(viewport_, &ViewportWidget::background_clicked,
           sidebar_, &SidebarWidget::clear_selection);
+
+  // The viewport has already applied a handle drag to its own display mode, so
+  // the frame it is about to paint is correct; the shell stores it as this
+  // tab's state and refreshes the banner readout.
+  connect(viewport_, &ViewportWidget::section_plane_dragged, this,
+          [this](renderer::SectionPlane plane, renderer::SectionGizmoPart part,
+                 float degrees) {
+            if (auto* document = active_document()) document->section = plane;
+            // A tilt can leave the plane off every axis, so the presets have to
+            // be re-derived from the normal rather than left where they were.
+            if (renderer::section_part_is_ring(part)) {
+              sync_section_axis_actions();
+            }
+            update_section_banner();
+            if (section_banner_ && renderer::section_part_is_ring(part)) {
+              section_banner_->set_tilt(degrees, true);
+            }
+          });
+  connect(viewport_, &ViewportWidget::section_drag_finished, this, [this]() {
+    // The angle described one drag, not the plane's state — drop it on release
+    // so the banner goes back to naming the plane.
+    if (section_banner_) section_banner_->set_tilt(0.0f, false);
+  });
 
   connect(inspector_, &InspectorWidget::display_changed, this, [this]() {
     update_display_mode();
@@ -856,6 +1113,21 @@ void MainWindow::build_menus() {
   view_menu->addAction(act_edges_);
   view_menu->addAction(act_triangle_mesh_);
   view_menu->addAction(act_hidden_dimmed_);
+  view_menu->addSeparator();
+  // Same QAction instances as the toolbar chip's chevron menu, so the two
+  // surfaces stay in sync structurally rather than by hand.
+  view_menu->addAction(act_section_);
+  auto* section_sub = view_menu->addMenu(tr("&Section"));
+  section_sub->addAction(act_section_axis_x_);
+  section_sub->addAction(act_section_axis_y_);
+  section_sub->addAction(act_section_axis_z_);
+  section_sub->addAction(act_section_axis_view_);
+  section_sub->addSeparator();
+  section_sub->addAction(act_section_flip_);
+  section_sub->addAction(act_section_reset_);
+  section_sub->addSeparator();
+  section_sub->addAction(act_section_show_plane_);
+  section_sub->addAction(act_section_hatch_);
   view_menu->addSeparator();
   view_menu->addAction(act_perspective_);
   auto* views_menu = view_menu->addMenu(tr("Standard &Views"));
@@ -910,6 +1182,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
   if (watched == viewport_ && event->type() == QEvent::Resize) {
     if (hud_) hud_->move(viewport_->width() - hud_->width() - 12, 12);
     position_isolate_banner();
+    position_section_banner();
   }
   return QMainWindow::eventFilter(watched, event);
 }
@@ -931,6 +1204,9 @@ void MainWindow::refresh_theme() {
     themed_icon(QStringLiteral("action/eye-crossed")));
   act_wireframe_->setIcon(themed_icon(QStringLiteral("shape/cube")));
   act_hidden_line_->setIcon(themed_icon(QStringLiteral("shape/borders")));
+  act_section_->setIcon(themed_icon(QStringLiteral("action/cut")));
+  act_section_flip_->setIcon(
+    themed_icon(QStringLiteral("misc/separation-vertical")));
   act_perspective_->setIcon(
     themed_icon(QStringLiteral("misc/function-angle")));
   act_toggle_sidebar_->setIcon(
@@ -1008,6 +1284,19 @@ void MainWindow::update_display_mode() {
   // it while nodes are ghosted, so the preference survives isolate
   // round-trips without any force-clearing here.
   mode.hide_ghosted       = act_isolate_hide_others_->isChecked();
+  // Section state is per document tab, because the plane's offset is measured
+  // against that model's bounds.
+  if (const auto* document = active_document()) {
+    mode.section_enabled = document->section_enabled;
+    mode.section         = document->section;
+  } else {
+    mode.section_enabled = false;
+  }
+  // Same unconditional feed as show_hidden_edges: the renderer ignores both
+  // while no section is active, so the preferences survive mode round-trips
+  // without ever being force-cleared here.
+  mode.section_show_plane = act_section_show_plane_->isChecked();
+  mode.section_hatch      = act_section_hatch_->isChecked();
   if (mode.wireframe || mode.hidden_line) {
     mode.show_edges         = mode.hidden_line;
     mode.show_triangle_mesh = false;
@@ -1020,6 +1309,9 @@ void MainWindow::update_display_mode() {
   // Highlight tint: the dedicated signal orange, not the accent — see the
   // ThemeTokens::viewport_highlight comment. Re-fed on every theme change.
   mode.selection_color   = to_vec3(t.viewport_highlight);
+  // Cut-face fill. Deliberately not the highlight orange: a selected part and a
+  // cut face can share a frame, and they must not read as the same thing.
+  mode.section_cap_color = to_vec3(t.viewport_section);
   if (mode.hidden_line) mode.background_bottom = mode.background_top;
   viewport_->set_display_mode(mode);
   update_status_for_scene();
@@ -1118,6 +1410,145 @@ void MainWindow::position_isolate_banner() {
   if (!isolate_banner_ || !viewport_) return;
   isolate_banner_->move(
     std::max(12, (viewport_->width() - isolate_banner_->width()) / 2), 12);
+}
+
+void MainWindow::position_section_banner() {
+  if (!section_banner_ || !viewport_) return;
+  section_banner_->move(
+    std::max(12, (viewport_->width() - section_banner_->width()) / 2),
+    std::max(12, viewport_->height() - section_banner_->height() - 12));
+}
+
+void MainWindow::set_section_normal(const scene::vec3& normal, bool recentre) {
+  auto* document = active_document();
+  if (!document) return;
+  if (glm::dot(normal, normal) < 1e-12f) return;
+  document->section.normal = glm::normalize(normal);
+  if (recentre) document->section.offset = 0.0f;
+  update_display_mode();
+  sync_section_axis_actions();
+  update_section_banner();
+}
+
+// Keep the axis presets honest about the plane they claim to describe. The
+// rings can tilt it anywhere, and "Align to View" sets an arbitrary normal, so
+// after either of those no preset is true and none may stay checked — a ticked
+// "Normal to X" beside a skew plane is worse than no tick at all.
+void MainWindow::sync_section_axis_actions() {
+  const auto* document = active_document();
+  QAction* const axes[3] = {act_section_axis_x_, act_section_axis_y_,
+                            act_section_axis_z_};
+  const scene::vec3 n =
+    document ? document->section.unit_normal() : scene::vec3(0.0f);
+  for (int i = 0; i < 3; ++i) {
+    if (!axes[i]) continue;
+    // Blocked: these are an exclusive QActionGroup, and un-checking through the
+    // group would re-fire the triggered handler that recentres the plane.
+    const QSignalBlocker block(axes[i]);
+    axes[i]->setChecked(document &&
+                        std::abs(std::abs(n[i]) - 1.0f) < 1e-3f);
+  }
+}
+
+void MainWindow::update_section_banner() {
+  if (!section_banner_) return;
+  const auto* document = active_document();
+  if (!document || !document->section_enabled) return;
+
+  // Name the plane by the axis its normal follows, when it follows one — the
+  // presets are the common case and "Section X" reads far better than three
+  // decimals. An arbitrary normal (Align to View, or a tilted plane) falls
+  // back to a generic label rather than lying about the axis.
+  const scene::vec3 n = document->section.unit_normal();
+  QString axis = QCoreApplication::translate("SectionBanner", "Custom");
+  const char* names[3] = {"X", "Y", "Z"};
+  for (int i = 0; i < 3; ++i) {
+    if (std::abs(std::abs(n[i]) - 1.0f) < 1e-3f) {
+      axis = QString::fromLatin1(names[i]);
+      break;
+    }
+  }
+  const QString unit = document->scene
+    ? QString::fromStdString(document->scene->source_unit)
+    : QString();
+  section_banner_->set_readout(axis, document->section.offset, unit);
+  // Nothing to reset once the plane is centred and square: grey the command out
+  // rather than leave a live-looking menu entry that does nothing when clicked.
+  if (act_section_reset_) {
+    const scene::Aabb bounds = document->scene ? document->scene->world_bounds
+                                               : scene::Aabb::empty();
+    act_section_reset_->setEnabled(
+      document->section_enabled &&
+      !renderer::section_plane_is_reset(document->section, bounds));
+  }
+  position_section_banner();
+}
+
+void MainWindow::on_section_toggled(bool on) {
+  auto* document = active_document();
+  // No document, no bounds to place a plane against. Bounce the toggle back
+  // rather than entering a mode that cannot draw anything.
+  if (on && (!document || !document->scene ||
+             !document->scene->world_bounds.valid())) {
+    const QSignalBlocker block(act_section_);
+    act_section_->setChecked(false);
+    return;
+  }
+  if (document) {
+    document->section_enabled = on;
+    if (on && document->section.offset == 0.0f) {
+      // First entry into section mode for this document: point the plane along
+      // whichever world axis the camera is most nearly looking down, oriented so
+      // the near half is the half that goes away. The user switches section on
+      // and immediately sees the model opened up from where they are standing,
+      // rather than having to hunt for a plane edge-on to the view.
+      //
+      // Only from the user's own toggle — apply_section_mode_ui() is the entry
+      // point for restoring a tab, precisely so a tab switch never re-derives
+      // (and thus loses) the plane the user set.
+      if (auto* ctrl = viewport_ ? viewport_->camera_controller() : nullptr) {
+        const scene::vec3 f = ctrl->camera().forward();
+        int best = 0;
+        for (int i = 1; i < 3; ++i) {
+          if (std::abs(f[i]) > std::abs(f[best])) best = i;
+        }
+        scene::vec3 n(0.0f);
+        // Keeping the FAR half means the normal points the same way the camera
+        // looks (see SectionPlane's sign convention).
+        n[best] = f[best] >= 0.0f ? 1.0f : -1.0f;
+        document->section.normal = n;
+      }
+    }
+  }
+  apply_section_mode_ui(on);
+}
+
+void MainWindow::apply_section_mode_ui(bool on) {
+  // The options only mean something while a section is active, so they follow
+  // the mode's lifecycle — but, like Dimmed Hidden Lines, their CHECKED state
+  // is the persisted preference and is never touched here.
+  for (QAction* a : {act_section_flip_, act_section_reset_,
+                     act_section_axis_x_, act_section_axis_y_,
+                     act_section_axis_z_, act_section_axis_view_,
+                     act_section_show_plane_, act_section_hatch_}) {
+    a->setEnabled(on);
+  }
+  // Flip and Recentre are actions, not preferences, so they hide with the mode
+  // the way Exit Isolate does. The style toggles stay listed but greyed, so the
+  // menu doesn't reflow.
+  act_section_flip_->setVisible(on);
+  act_section_reset_->setVisible(on);
+
+  if (on && section_banner_) {
+    sync_section_axis_actions();
+    update_section_banner();
+    section_banner_->set_tilt(0.0f, false);
+    section_banner_->show();
+    section_banner_->raise();
+  } else if (section_banner_) {
+    section_banner_->hide();
+  }
+  update_display_mode();
 }
 
 void MainWindow::on_isolate_changed(std::uint32_t isolate_node) {
@@ -1314,6 +1745,71 @@ void MainWindow::run_demo(const QString& name) {
         sidebar_->set_isolate(target);
       }
     }
+  } else if (name == QLatin1String("section") ||
+             name.startsWith(QLatin1String("section:")) ||
+             name == QLatin1String("section-hiddenline") ||
+             name == QLatin1String("section-wireframe") ||
+             name == QLatin1String("section-behind") ||
+             name == QLatin1String("section-rotate") ||
+             name == QLatin1String("section-noplane")) {
+    // Section mode is view-dependent (its default normal follows the camera)
+    // and cap-correctness is easiest to read at a fixed orientation, so pin the
+    // standard isometric view before switching it on.
+    if (name.endsWith(QLatin1String("hiddenline"))) {
+      set_surface_mode(SurfaceMode::HiddenLine);
+    } else if (name.endsWith(QLatin1String("wireframe"))) {
+      set_surface_mode(SurfaceMode::Wireframe);
+    }
+    if (auto* ctrl = viewport_ ? viewport_->camera_controller() : nullptr) {
+      ctrl->set_view(30.0f, -22.0f);
+    }
+    act_section_show_plane_->setChecked(
+      name != QLatin1String("section-noplane"));
+    act_section_->setChecked(true);
+    // Orbit round to the far side AFTER enabling, so the plane keeps the
+    // orientation it was given. From there the cap must vanish and the intact
+    // outer surface must show — the depth-ordering half of the cap algorithm,
+    // and not something any front-side screenshot can demonstrate.
+    if (name == QLatin1String("section-behind")) {
+      if (auto* ctrl = viewport_ ? viewport_->camera_controller() : nullptr) {
+        ctrl->set_view(210.0f, -22.0f);
+      }
+    }
+    // "section:<offset>" takes a FRACTION of the model's travel rather than an
+    // absolute distance, so one demo string works on any model regardless of
+    // scale (1.0 puts the plane clear of the part, 0 cuts through the middle).
+    if (name.startsWith(QLatin1String("section:"))) {
+      bool ok = false;
+      const float fraction =
+        name.section(QLatin1Char(':'), 1).toFloat(&ok);
+      if (ok) {
+        if (auto* document = active_document();
+            document && document->scene &&
+            document->scene->world_bounds.valid()) {
+          document->section.offset =
+            fraction * document->section.offset_range(
+                         document->scene->world_bounds);
+          update_display_mode();
+          update_section_banner();
+        }
+      }
+    }
+    // A tilted plane: what a rotate-ring drag produces, minus the input
+    // injection. Covers the parts no axis-aligned screenshot can — the ring
+    // whose axis has drifted onto the normal must be gone, and the cap must
+    // still fill a skew cross-section.
+    if (name == QLatin1String("section-rotate")) {
+      if (auto* document = active_document();
+          document && document->scene &&
+          document->scene->world_bounds.valid()) {
+        document->section = renderer::section_plane_rotated(
+          document->section, document->scene->world_bounds,
+          scene::vec3(1.0f, 0.0f, 0.0f), 35.0f * 3.14159265f / 180.0f);
+        update_display_mode();
+        sync_section_axis_actions();
+        update_section_banner();
+      }
+    }
   } else if (name == QLatin1String("getinfo")) {
     // Pop Get Info for the first leaf node with geometry, anchored near the
     // top of the sidebar (mirrors a hover-(i) click on a tree row).
@@ -1452,6 +1948,14 @@ void MainWindow::activate_document(int index) {
     const QSignalBlocker blocker(act_perspective_);
     act_perspective_->setChecked(projection == scene::Projection::Perspective);
   }
+  // Re-apply this tab's section state. Blocked so on_section_toggled doesn't
+  // run its first-entry setup and overwrite the plane we are restoring; the
+  // action lifecycle it would normally drive is done explicitly below.
+  {
+    const QSignalBlocker blocker(act_section_);
+    act_section_->setChecked(document->section_enabled);
+  }
+  apply_section_mode_ui(document->section_enabled);
   inspector_->set_reimport_enabled(!importing_ && !document->path.isEmpty());
   act_close_tab_->setEnabled(true);
   setWindowTitle(QStringLiteral("Cadly"));
@@ -1729,6 +2233,10 @@ void MainWindow::finish_import(DocumentState* document,
   // The fresh scene has fresh node indices; a remembered isolate focus
   // would point at an arbitrary part of the new hierarchy.
   document->isolate_node = scene::Node::kInvalid;
+  // Likewise the section offset, which is measured against the OLD bounds. Only
+  // the offset is reset — the plane's orientation is a user intent that still
+  // makes sense against a re-tessellated version of the same part.
+  document->section.offset = 0.0f;
   update_document_tab(document);
   if (active_document() == document) {
     activate_document(document_index(document));
@@ -1829,6 +2337,15 @@ void MainWindow::load_settings() {
     s.value("navigation_scheme").toString());
   const auto orbit_style = orbit_style_from_key(
     s.value("orbit_style").toString());
+  // Only the section's STYLE preferences persist. The plane's orientation and
+  // offset are per document and model-scaled, so restoring them across sessions
+  // (and across whatever file is opened next) would put the plane somewhere
+  // arbitrary.
+  act_section_show_plane_->setChecked(
+    s.value("section_show_plane",
+            act_section_show_plane_->isChecked()).toBool());
+  act_section_hatch_->setChecked(
+    s.value("section_hatch", act_section_hatch_->isChecked()).toBool());
   s.endGroup();
   inspector_->load_display(mode);
   viewport_->set_navigation_scheme(scheme);
@@ -1869,6 +2386,8 @@ void MainWindow::save_settings() const {
              navigation_scheme_key(viewport_->navigation_scheme()));
   s.setValue("orbit_style",
              orbit_style_key(viewport_->camera_controller()->orbit_style()));
+  s.setValue("section_show_plane",  act_section_show_plane_->isChecked());
+  s.setValue("section_hatch",       act_section_hatch_->isChecked());
   s.endGroup();
 
   s.beginGroup(QStringLiteral("ui"));

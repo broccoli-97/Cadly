@@ -16,6 +16,15 @@ struct RotationPivot {
   scene::vec3 world_position{0.0f};
 };
 
+// A ray through a viewport pixel, in world space. Perspective gives a true eye
+// ray; orthographic gives a parallel ray whose origin sits on the focal plane
+// through the camera target. Either way `direction` is unit length and points
+// away from the viewer, so `origin + direction * t` walks into the scene.
+struct ScreenRay {
+  scene::vec3 origin   {0.0f};
+  scene::vec3 direction{0.0f, 0.0f, -1.0f};
+};
+
 // Strategy interface for choosing the rotation pivot. The default
 // implementation (`TargetPivotResolver`) returns the camera's current target,
 // which reproduces the historical "orbit around target" behaviour. Future
@@ -107,6 +116,30 @@ public:
 
   // True while an orbit drag is in progress.
   bool is_rotating() const { return drag_mode_ == DragMode::Orbit; }
+
+  // Screen <-> world, for viewport manipulators (the section-plane handle
+  // today; picking when it lands). Both work in LOGICAL pixels — the space
+  // QMouseEvent::pos() uses and the space set_viewport() is fed — not the
+  // device pixels the renderer's glViewport uses. A caller that needs to match
+  // a renderer-side "constant pixel size" must scale by the device pixel ratio
+  // itself; see ViewportWidget.
+  //
+  // Both are built from the same NDC + focal-plane construction as `wheel()`,
+  // which is what makes them behave identically in orthographic and perspective
+  // mode: Camera::projection() derives the ortho half-height from
+  // `distance * tan(fov_y/2)`, so one formula covers both.
+  ScreenRay screen_ray(QPoint widget_pos) const;
+
+  // Project a world point to logical viewport pixels (origin top-left, Qt
+  // convention). `out_behind` reports a point behind a perspective eye, whose
+  // projection is meaningless — callers hit-testing a manipulator must reject
+  // those rather than trust the coordinates.
+  scene::vec2 project_to_screen(const scene::vec3& world,
+                                bool* out_behind = nullptr) const;
+
+  // World units per logical pixel at the focal plane. The scale manipulators use
+  // to hold a constant on-screen size.
+  float world_per_logical_pixel() const;
 
   // The world-space pivot captured at the start of the current orbit drag.
   // Only meaningful while `is_rotating()` is true; for non-rotation states

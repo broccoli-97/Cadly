@@ -149,7 +149,9 @@ int main(int argc, char** argv) {
     "display|import|views|getinfo|shadedmenu|hiddenmenu|zerochrome|deepzoom|"
     "highlight|highlight:<node>|highlight-wireframe|highlight-hiddenline|"
     "isolate|isolate-wireframe|isolate-hiddenline|"
-    "isolate-hide|isolate-hide-wireframe|isolate-hide-hiddenline).",
+    "isolate-hide|isolate-hide-wireframe|isolate-hide-hiddenline|"
+    "section|section:<offset-fraction>|section-hiddenline|section-wireframe|"
+    "section-noplane|section-behind|section-rotate).",
     "state");
   parser.addOption(demoOpt);
   QCommandLineOption langOpt("lang",

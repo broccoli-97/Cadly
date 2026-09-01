@@ -145,7 +145,15 @@ and auto-opens the log; success green-flashes and badges the strip toggle.
 | Text 1/2/3 | `#E6E8EC` / `#A0A6B0` / `#6E747E` | `#1E2126` / `#5A616C` / `#9AA0AA` |
 | Hairlines between regions / inside panels | `rgba(0,0,0,.45)` / `rgba(255,255,255,.07)` | `rgba(0,0,0,.16)` / `rgba(0,0,0,.10)` |
 | Viewport gradient (`DisplayMode`) | `#ACB0B7→#80838A` (unchanged) | `#DADDE2→#ABAFB7` |
+| Viewport selection highlight (`Node::selected`) | `#FF7A26` | `#E86210` |
+| Viewport section cut face (`DisplayMode::section_cap_color`) | `#AD987A` | `#937C5B` |
 | Status colors | error `#E96B72` · warn `#FBC064` · ok `#2BB5A0` · info `#1BA8D5` (from `themes/dark.json`) | darkened variants |
+
+The two viewport tokens are deliberately far apart: a selected part and a
+section cut face can share a frame, so the highlight stays a saturated signal
+orange while the cut face is a desaturated warm tan — same warm family, but no
+chance of reading as the same state. Both go a notch deeper in the light theme
+to keep their weight against the lighter gradient.
 
 Type: system stack (SF Pro on macOS; qlementine bundles Inter; Fusion uses the
 system font). 13px body, 11px secondary, 11px/600 uppercase section heads,

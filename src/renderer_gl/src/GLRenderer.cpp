@@ -3,6 +3,7 @@
 #include "GLFunctions.h"
 #include "GLShader.h"
 #include "IblBakePlan.h"
+#include "SectionPass.h"
 
 #include "cadly/platform/Log.h"
 #include "cadly/scene/Math.h"
@@ -47,6 +48,10 @@ struct alignas(16) FrameBlock {
   scene::vec4 fill_color;
   scene::vec4 rim_dir;
   scene::vec4 rim_color;
+  // Section clip plane (Ax+By+Cz+D, kept material on the >= 0 side). A vec4 at
+  // the end of a block whose every member is already a 16-byte multiple adds no
+  // std140 padding, so the C++ and GLSL layouts stay in step by construction.
+  scene::vec4 clip_plane;
 };
 
 // One GL buffer set per BRep edge LOD tier (vao + vbo + ibo + index count).
@@ -363,6 +368,8 @@ private:
   void ensure_mesh_upload(const scene::Mesh& mesh,
                           const std::shared_ptr<scene::Mesh>& mesh_ptr);
   void free_mesh_gpu(MeshGpu& g);
+  // Must run AFTER section_.begin_frame(), which resolves the clip plane this
+  // uploads.
   void update_frame_uniforms();
   void draw_background(const renderer::DisplayMode& mode);
   void draw_pivot(const renderer::DisplayMode& mode);
@@ -377,6 +384,11 @@ private:
                         bool hidden_pass = false,
                         bool selection_only = false);
   void draw_triangle_mesh(const renderer::DisplayMode& mode);
+  // Shared tail of every exit path in render(): the section manipulator, the
+  // rotation pivot, the axes triad, and the scale bar. None of these programs
+  // writes a clip distance, so the section clip is switched off here — having
+  // one funnel is what guarantees all four exits agree about that.
+  void draw_overlays(const renderer::DisplayMode& mode);
   bool needs_redraw() const override;
 
   // MSAA offscreen target. The renderer owns its own multisample colour +
@@ -472,6 +484,11 @@ private:
   int    fbo_w_                 {0};
   int    fbo_h_                 {0};
   int    max_samples_           {0};
+
+  // Section view (剖切). Self-contained: owns its own program, buffers, and GL
+  // state, so render() only gains guarded calls. See SectionPass.h for the
+  // stencil cap algorithm.
+  detail::SectionPass section_;
 };
 
 void GLRendererImpl::initialize() {
@@ -553,6 +570,13 @@ void GLRendererImpl::initialize() {
   // Dummy VAO for the IBL bake passes — they draw a single fullscreen
   // triangle with no vertex attributes and pull positions from gl_VertexID.
   gl_.glGenVertexArrays(1, &vao_quad_);
+
+  // Section view. Built outside build_programs() on purpose: that function ANDs
+  // every program's result into one flag, so a broken section shader would fail
+  // initialize() for the whole renderer — and render() retries initialize() on
+  // every paint, which would mean a black viewport spinning the CPU. A section
+  // failure must degrade to "no section mode" and nothing else.
+  section_.initialize(gl_, frame_binding_);
 
   // Allocate the IBL targets, then fill them incrementally from render().
   // Initialization must not block the GUI thread on hundreds of millions of
@@ -1042,6 +1066,11 @@ void GLRendererImpl::update_frame_uniforms() {
   fb.fill_color = scene::vec4(scene_->environment.fill_color, 1.0f);
   fb.rim_dir    = scene::vec4(glm::normalize(rim_world),  0.0f);
   fb.rim_color  = scene::vec4(scene_->environment.rim_color, 1.0f);
+  // Section plane. All-zero while no section is active, which reads as "keep
+  // everything" (clipping needs a negative distance) — so a pass that enables
+  // GL_CLIP_DISTANCE0 by mistake still draws the whole model rather than
+  // silently discarding half of it.
+  fb.clip_plane = section_.clip_plane();
 
   gl_.glBindBuffer(GL_UNIFORM_BUFFER, ubo_frame_);
   gl_.glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(fb), &fb);
@@ -1192,11 +1221,13 @@ void GLRendererImpl::draw_axes_triad(const renderer::DisplayMode& mode) {
     const char* label;
   };
   // glm matrices are column-major: column i of the rotation part is the image
-  // of world basis vector i, i.e. exactly view * (axis_i, w=0).
+  // of world basis vector i, i.e. exactly view * (axis_i, w=0). Colours come
+  // from the shared axis palette so the triad and the section rotate rings
+  // agree on what red means.
   std::array<Arm, 3> arms{{
-    {scene::vec3(view[0]), {0.84f, 0.30f, 0.33f, 1.0f}, "X"},
-    {scene::vec3(view[1]), {0.30f, 0.62f, 0.38f, 1.0f}, "Y"},
-    {scene::vec3(view[2]), {0.32f, 0.49f, 0.83f, 1.0f}, "Z"},
+    {scene::vec3(view[0]), scene::vec4(renderer::kAxisColor[0], 1.0f), "X"},
+    {scene::vec3(view[1]), scene::vec4(renderer::kAxisColor[1], 1.0f), "Y"},
+    {scene::vec3(view[2]), scene::vec4(renderer::kAxisColor[2], 1.0f), "Z"},
   }};
   // Camera looks down -Z in view space: the smaller (more negative) the z
   // component, the farther the arm tip is from the viewer — draw those first.
@@ -1726,6 +1757,19 @@ void GLRendererImpl::ensure_msaa_target(int width_px, int height_px, int samples
   fbo_h_ = height_px;
 }
 
+void GLRendererImpl::draw_overlays(const renderer::DisplayMode& mode) {
+  // Nothing below is model geometry, and none of these programs writes
+  // gl_ClipDistance[0] — an unwritten clip distance is undefined per spec, not
+  // zero, so the section clip must be off before any of them draws.
+  section_.disable_clip(gl_);
+  if (scene_) {
+    section_.draw_gizmo(gl_, *scene_, mode, viewport_w_, viewport_h_);
+  }
+  draw_pivot(mode);
+  draw_axes_triad(mode);
+  draw_scale_bar(mode);
+}
+
 void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   if (!initialised_) initialize();
   if (!initialised_) return;
@@ -1788,22 +1832,36 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   draw_background(mode);
 
   if (!scene_ || scene_->nodes.empty()) {
-    draw_pivot(mode);
-    draw_axes_triad(mode);
-    draw_scale_bar(mode);
+    draw_overlays(mode);
     return;
   }
 
   // Camera::aspect is owned by the camera. The host is expected to keep it
   // in sync with the viewport (the Qt host does this in CameraController::
   // set_viewport); the renderer only reads it here.
+  //
+  // Resolve the section plane BEFORE the frame UBO upload: update_frame_uniforms
+  // publishes the clip plane that begin_frame() computes.
+  section_.begin_frame(mode, *scene_);
   update_frame_uniforms();
+
+  // RAII guard for the clip-distance enable, mirroring ResolveOnExit above and
+  // for the same reason: render() has several early returns, and leaving
+  // GL_CLIP_DISTANCE0 enabled past the model passes would clip the pivot marker,
+  // the axes triad, and the scale bar — and then every pass of the NEXT frame,
+  // whose programs do not write a clip distance at all (an unwritten distance is
+  // undefined per spec, not zero). Scattered disable_clip() calls would work
+  // until the next early return was added between them.
+  struct ClipOnExit {
+    detail::SectionPass& pass;
+    detail::GLFunctions& gl;
+    ~ClipOnExit() { pass.disable_clip(gl); }
+  } clip_guard{section_, gl_};
+  section_.enable_clip(gl_);
 
   if (!prog_pbr_.valid()) {
     CADLY_LOG_WARN("PBR program not available; skipping mesh draw.");
-    draw_pivot(mode);
-    draw_axes_triad(mode);
-    draw_scale_bar(mode);
+    draw_overlays(mode);
     return;
   }
 
@@ -1828,9 +1886,10 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     draw_edges(mode, /*hidden_pass=*/false, /*selection_only=*/true);
     draw_silhouettes(mode, /*hidden_pass=*/false,
                      /*selection_only=*/true);
-    draw_pivot(mode);
-    draw_axes_triad(mode);
-    draw_scale_bar(mode);
+    // No cap in wireframe: there is no filled surface for the cut to look
+    // hollow against, and a solid patch floating among BRep lines would read as
+    // an error rather than as a section.
+    draw_overlays(mode);
     return;
   }
 
@@ -1963,6 +2022,26 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     draw_node_surfaces(node);
   }
 
+  // Fill the exposed cut face. Placed here, still inside the polygon-offset
+  // scope, for two reasons: the cap inherits the same depth offset as the
+  // surfaces, so clipped edge endpoints (which land exactly on the plane) keep
+  // their usual win over the fill; and the cap's depth is in the buffer before
+  // the hidden-line GL_GREATER passes below run, so structure deeper in the
+  // model correctly shows as dimmed hidden lines through the cut.
+  if (section_.active() && section_.cap_available(gl_)) {
+    section_.draw_cap(gl_, *scene_, mode, prog_edges_,
+                      [this](const scene::Mesh& mesh) {
+                        detail::SolidDraw out;
+                        auto it = meshes_.find(&mesh);
+                        if (it != meshes_.end()) {
+                          out.vao         = it->second.vao;
+                          out.index_count = it->second.index_count;
+                        }
+                        return out;
+                      },
+                      viewport_h_);
+  }
+
   if (line_overlay) {
     gl_.glDisable(GL_POLYGON_OFFSET_FILL);
   }
@@ -2021,9 +2100,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
                      /*selection_only=*/true);
   }
 
-  draw_pivot(mode);
-  draw_axes_triad(mode);
-  draw_scale_bar(mode);
+  draw_overlays(mode);
 }
 
 bool GLRendererImpl::needs_redraw() const {
@@ -2032,6 +2109,7 @@ bool GLRendererImpl::needs_redraw() const {
 
 void GLRendererImpl::shutdown() {
   if (!initialised_) return;
+  section_.shutdown(gl_);
   for (auto& [_, g] : meshes_) {
     free_mesh_gpu(g);
   }

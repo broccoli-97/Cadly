@@ -251,6 +251,56 @@ void CameraController::wheel(QPoint cursor_pos, int angle_delta) {
   emit changed();
 }
 
+float CameraController::world_per_logical_pixel() const {
+  // Same relation draw_edges/draw_scale_bar use on the renderer side: the focal
+  // plane's world height divided by the viewport's pixel height. Valid in both
+  // projection modes because Camera::projection() derives the orthographic
+  // half-height from `distance * tan(fov_y/2)` too.
+  const float screen_height_world =
+    2.0f * std::max(camera_.distance, 1e-6f) * std::tan(0.5f * camera_.fov_y);
+  return screen_height_world /
+         std::max(static_cast<float>(viewport_h_), 1.0f);
+}
+
+ScreenRay CameraController::screen_ray(QPoint widget_pos) const {
+  // Cursor in NDC (Qt y-down -> GL y-up), then a point on the focal plane
+  // through `target` — the same construction wheel() anchors its zoom on.
+  const float ndc_x = (2.0f * static_cast<float>(widget_pos.x()) /
+                       static_cast<float>(viewport_w_)) - 1.0f;
+  const float ndc_y = 1.0f - (2.0f * static_cast<float>(widget_pos.y()) /
+                              static_cast<float>(viewport_h_));
+  const float half_h = camera_.distance * std::tan(0.5f * camera_.fov_y);
+  const float half_w = half_h * camera_.aspect;
+  const scene::vec3 on_focal_plane =
+      camera_.target + camera_.right() * (ndc_x * half_w)
+                     + camera_.up()    * (ndc_y * half_h);
+
+  ScreenRay ray;
+  if (camera_.projection_mode == scene::Projection::Perspective) {
+    ray.origin    = camera_.position();
+    ray.direction = glm::normalize(on_focal_plane - ray.origin);
+  } else {
+    // Parallel projection: every ray shares the view direction, and the pixel
+    // selects the origin rather than the direction. Pull the origin back along
+    // the view so `t = 0` is safely in front of anything in the scene.
+    ray.direction = camera_.forward();
+    ray.origin    = on_focal_plane - ray.direction * camera_.distance;
+  }
+  return ray;
+}
+
+scene::vec2 CameraController::project_to_screen(const scene::vec3& world,
+                                               bool* out_behind) const {
+  const scene::vec4 clip = camera_.view_proj() * scene::vec4(world, 1.0f);
+  const bool behind = clip.w <= 1e-6f;
+  if (out_behind) *out_behind = behind;
+  if (behind) return scene::vec2(0.0f);
+  const scene::vec2 ndc(clip.x / clip.w, clip.y / clip.w);
+  return scene::vec2(
+    (ndc.x * 0.5f + 0.5f) * static_cast<float>(viewport_w_),
+    (0.5f - ndc.y * 0.5f) * static_cast<float>(viewport_h_));
+}
+
 void CameraController::set_view(float yaw_deg, float pitch_deg) {
   // Standard-view presets reorient only; preserving target+distance keeps the
   // user's current focal point and zoom, which matches what CAD tools do when

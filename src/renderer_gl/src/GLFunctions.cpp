@@ -47,6 +47,8 @@ bool GLFunctions::load(const GLLoadProc& proc) {
   CADLY_LOAD(glClear);
   CADLY_LOAD(glClearColor);
   CADLY_LOAD(glClearDepthf);
+  CADLY_LOAD(glClearStencil);
+  CADLY_LOAD(glColorMask);
   CADLY_LOAD(glCompileShader);
   CADLY_LOAD(glCreateProgram);
   CADLY_LOAD(glCreateShader);
@@ -82,6 +84,7 @@ bool GLFunctions::load(const GLLoadProc& proc) {
   CADLY_LOAD(glGetString);
   CADLY_LOAD(glGetUniformBlockIndex);
   CADLY_LOAD(glGetUniformLocation);
+  CADLY_LOAD(glGetFramebufferAttachmentParameteriv);
   CADLY_LOAD(glLineWidth);
   CADLY_LOAD(glLinkProgram);
   CADLY_LOAD(glPixelStorei);
@@ -91,6 +94,10 @@ bool GLFunctions::load(const GLLoadProc& proc) {
   CADLY_LOAD(glRenderbufferStorageMultisample);
   CADLY_LOAD(glScissor);
   CADLY_LOAD(glShaderSource);
+  CADLY_LOAD(glStencilFunc);
+  CADLY_LOAD(glStencilMask);
+  CADLY_LOAD(glStencilOp);
+  CADLY_LOAD(glStencilOpSeparate);
   CADLY_LOAD(glTexImage2D);
   CADLY_LOAD(glTexParameteri);
   CADLY_LOAD(glUniform1f);

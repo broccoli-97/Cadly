@@ -159,6 +159,151 @@ edge of cylinder/cone/sphere/torus faces) in both edge buffers: no commercial
 viewer inks seams, and the silhouette pass now supplies curved faces' visual
 presence instead.
 
+### Section view (剖切)
+
+`SectionPass` (`src/renderer_gl/src/SectionPass.{h,cpp}`) is a self-contained
+component: it owns its program, buffers, and GL state, and `render()` only gains
+guarded calls. Two separable halves:
+
+1. **The clip** — `gl_ClipDistance[0]` against `u_clip_plane` (a `vec4` in the
+   shared `FrameBlock` UBO), written by `pbr.vert`, `edges.vert`, and
+   `silhouette.geom`. The geometry stage is where the silhouette program must
+   write it (user clipping runs after the *last* vertex-processing stage, and
+   `silhouette.vert` deliberately doesn't emit `gl_Position`), and it must be
+   re-set before **each** `EmitVertex()` — outputs go undefined after one.
+   There is no "enabled" uniform: the C++ side just calls
+   `glEnable/glDisable(GL_CLIP_DISTANCE0)`.
+   **The invariant that creates:** while that is enabled, every program that
+   draws must write `gl_ClipDistance[0]` — an unwritten distance is *undefined*
+   per spec, not zero. `draw_overlays()` exists as the single funnel where the
+   clip is switched off before the pivot/triad/scale-bar programs run, and
+   `render()` carries a `ClipOnExit` RAII guard for the same reason
+   `ResolveOnExit` exists: several early returns.
+2. **The cap** — the stencil fill that keeps a cut solid from reading as a
+   hollow shell. Per frame: count front vs back faces of the *clipped* geometry
+   with `INCR_WRAP`/`DECR_WRAP` (colour + depth writes off, depth test off, cull
+   off), then fill wherever the count is non-zero.
+
+Things not to "simplify" in the cap:
+
+- **Counting, not parity.** `GL_INVERT` is shorter and is what most tutorials
+  show, but two bodies cut by the same plane invert twice, the parity returns to
+  even, and the cap vanishes on exactly the assemblies this feature is for.
+- **The counting pass must run with clipping ON**, and its program must write a
+  clip distance. Uncut, every closed solid balances everywhere and no cap is
+  ever produced. It borrows `prog_edges_` — the only position-only program that
+  already binds `FrameBlock`, takes `u_model`, and reads attribute 0 from the
+  surface VAO — rather than carrying a program of its own.
+- **`GL_NOTEQUAL 0`, not a sign test.** That is what makes mirrored instances
+  free: a negative-determinant world matrix swaps front and back, so a cut body
+  counts +1 instead of −1.
+- **The cap polygon is plane ∩ scene-AABB** (`plane_box_cross_section`), not a
+  square. A square of half-size *r* has corners at *r*√2, which fall outside the
+  near/far slab `CameraController` fits to the bounding *sphere* — the cap comes
+  back with notches bitten out of it. Every vertex of this polygon is inside the
+  AABB by construction, and it doubles as the gizmo's translucent plane.
+- **Only straddling nodes are counted** (`box_straddles_plane` against
+  `Node::world_bounds`). A node wholly on the kept side contributes a matched
+  front/back pair — net zero — and one wholly cut away contributes nothing, so
+  the pass touches a handful of parts instead of the whole assembly.
+- **The cap plane is biased +ε toward the kept side.** A model face lying
+  exactly on the section plane is kept (`>= 0`) and would otherwise render at
+  precisely the cap's depth; users drag the plane onto planar features
+  constantly.
+- **Restore the GL baseline on exit.** A leaked `glColorMask(0,…)` defeats the
+  *next* frame's `glClear(GL_COLOR_BUFFER_BIT)`, and a leaked `GL_STENCIL_TEST`
+  masks every later pass to the cap's footprint. The cap draw uses
+  `glStencilOp(KEEP,KEEP,KEEP)` rather than `glStencilMask(0)` precisely because
+  a zero write mask also gates `glClear(GL_STENCIL_BUFFER_BIT)`.
+
+Mode behaviour: **Wireframe is clipped but not capped** — there is no filled
+surface to look hollow, and a solid patch among BRep lines reads as an error. In
+**Hidden Line** the cap fills with the paper colour, gamma-encoded to match
+`pbr.frag:100` exactly, and the hatch is drawn *unconditionally* — the shell
+sets `hidden_line_color` to the background, so paper-on-paper would be
+indistinguishable from a hole; the `section_hatch` toggle governs shaded mode,
+where the solid fill already reads. Ghosted parts are clipped but not capped
+(the veil writes no depth anyway).
+
+Known limitation: the count assumes closed, consistently wound geometry.
+`Mesh::double_sided` meshes are skipped, but that flag is set per imported
+*shape* (`is_cull_safe` in `OcctShapeToMesh.cpp`), so a compound of one solid
+plus loose sheet bodies isn't flagged and its unmatched faces can raise the
+count where no material was cut — a phantom cap plate. Fixing it needs a
+per-solid closedness flag from the importer.
+
+Interaction is screen-space, not GPU picking (`IRenderer::pick()` is still a
+stub): `ViewportWidget` projects the manipulator with
+`CameraController::project_to_screen()` and measures point-to-*segment*
+distance, then maps drags through `screen_ray()`. The manipulator's world size
+comes from `renderer::kSectionHandlePx` / `kSectionRingPx` — shared by both
+sides, since a handle you can see but not grab is worse than none. Mind the
+pixel spaces: `CameraController` works in **logical** pixels (what
+`QMouseEvent::pos()` reports), the renderer in **device** pixels, so the
+hit-test divides by the device pixel ratio.
+
+The manipulator has two controls, and `DisplayMode::section_hot_part`
+(a `SectionGizmoPart`) is how the host tells the renderer which one to light up:
+
+- **Translate** — the double-headed arrow along the normal, dragged through
+  `closest_point_on_axis()`. It gets first refusal on a press: it is drawn
+  *inside* the rings, and sliding is the more common action, so an ambiguous
+  press near the centre should move rather than tilt.
+- **Rotate** — three rings about the **world** X/Y/Z axes, coloured from
+  `renderer::kAxisColor` (the same table the corner triad reads, so a red ring
+  and the red X arm mean the same axis). Shift snaps a drag to 15°; the banner
+  shows the live angle.
+
+Things not to "simplify" in the rings:
+
+- **World axes, not the plane's own u/v.** `SectionPlane::basis()` seeds off
+  whichever cardinal axis the normal is least aligned to, so u/v flip
+  discontinuously as the normal sweeps past that threshold — mid-drag the gizmo
+  would visibly roll over. World axes never move, and they match how users say
+  it ("cut along X").
+- **A ring whose axis has drifted onto the normal is not drawn and not
+  hit-tested** (`section_ring_live()`, gain = `|cross(n, axis)|`). Rotating a
+  normal about an axis parallel to itself changes nothing, so drawing it would
+  put a large circle on the cut face that does nothing when dragged — which
+  reads as a broken gizmo, not as a redundant control.
+- **Two drag mappings, deliberately.** The primary one intersects the cursor ray
+  with the ring's own plane and reads the angle there: absolute, so a long drag
+  accumulates no error. It has no answer for an edge-on ring — and that is the
+  *default* state, because section mode starts with the normal down the view
+  axis, which leaves the two useful rings exactly edge-on. So
+  `section_ring_angle_at()` refuses (same "caller holds" contract as
+  `closest_point_on_axis`) and `ViewportWidget` falls back to mapping cursor
+  motion onto the ring's projected tangent. Both write one accumulator, so a
+  drag crossing between the regimes doesn't jump.
+- **A drag measures against the plane as it was at mouse-down**, not the live
+  one. Tilting an off-centre plane slides its anchor (the perpendicular foot
+  moves even though the plane still passes through the old one), so re-deriving
+  the ring each frame would let the ring centre chase the cursor that is turning
+  it. `ViewportWidget` holds `section_drag_start_plane_` for the whole drag and
+  re-derives the result from it absolutely.
+- **Rotation pivots about the anchor, not the bounds centre.**
+  `section_plane_rotated()` re-derives `offset` from the pre-rotation anchor so
+  the plane keeps passing through the point the gizmo sits on — "tilt in place".
+  Spinning the normal and keeping the offset would swing the cut away from where
+  the user grabbed it. `offset_range` depends on the normal, so the result is
+  re-clamped.
+- **The axis presets are an `ExclusiveOptional` group.** A tilt can leave the
+  plane on no world axis, and a plain exclusive group forces the last tick back
+  on — the menu would then claim an orientation the plane is not in.
+  `sync_section_axis_actions()` re-derives the ticks from the normal;
+  `tests/toolbar_test.cpp` pins the policy.
+
+`renderer::SectionPlane` (`src/renderer/include/cadly/renderer/SectionPlane.h`)
+holds the shared math — it lives in the header-only `renderer` module because
+`renderer_gl` and `ui` must derive the plane identically or the drawn gizmo and
+its hit region drift apart. `offset` is measured from the **scene bounds
+centre**, so 0 always cuts through the middle of whatever was imported;
+`-offset_range` clears the near side (nothing cut) and `+offset_range` passes
+the far side (everything cut). **Reset Plane** (`section_plane_reset()`) undoes
+both halves — recentres *and* squares the normal back to the nearest world axis,
+sign kept — because the rings can leave the plane anywhere; it greys itself out
+via `section_plane_is_reset()` rather than offering a click that does nothing.
+
 ### Rendering gotchas (don't "fix" these)
 
 - **MSAA is renderer-owned.** The Qt surface is single-sample on purpose
@@ -192,8 +337,11 @@ switches. Panels are fixed-position and toggle visibility only; the old
   have no middle button), and a modifier arriving a beat after the press
   still promotes the drag (synthesized three-finger drags deliver exactly
   that). *Plain* left never resolves in any scheme — reserved for picking
-  (not yet implemented, passed through). Wheel zoom anchors on the point
-  under the cursor. Orbit uses a quaternion camera around a pluggable
+  (not yet implemented, passed through) — except that the section manipulator
+  claims it first while section mode is on. A manipulator drag in flight
+  outranks mid-gesture modifier promotion, so Alt cannot turn a ring drag into
+  an orbit. Wheel zoom anchors on the point under the cursor. Orbit uses a
+  quaternion camera around a pluggable
   `RotationPivotResolver` (default: camera target).
 - Sidebar tree: click selects and **highlights** the part in the viewport
   (`Node::selected` → an unlit, semi-transparent signal-orange wash —
@@ -214,14 +362,35 @@ switches. Panels are fixed-position and toggle visibility only; the old
   persists per tab via `DocumentState::isolate_node`; the flags live in the
   scene's nodes but the sidebar wipes them on every scene handover and the
   shell re-applies.
-- Shortcuts: `F` fit, `W` wireframe, `H` hidden line, `E` edges, `T` triangle mesh, `P`
+- Section mode (剖切) is a checkable toolbar split-button (`[Section][▾]`,
+  the same joined main+chevron construction as Open) sitting after the surface
+  segments behind a separator — it is orthogonal to Shaded/Hidden Line/
+  Wireframe, not a fourth way to shade. Its chevron menu and the View ▸ Section
+  submenu share one `QMenu` and the same `QAction` instances, so they cannot
+  drift. A `SectionBanner` capsule pins to the viewport's **bottom**-centre
+  (isolate's is top-centre, the HUD is top-right, so all three coexist) with a
+  live offset readout, Flip, and Exit; while a rotate ring is being dragged it
+  also shows the drag's angle, which is transient and cleared on release (the
+  plane's orientation is described by its axis label, not by how far the last
+  drag turned it). The plane and its enabled flag persist
+  per tab via `DocumentState::section`; only the two style toggles persist to
+  QSettings (`display/section_show_plane`, `display/section_hatch`) — an offset
+  is model-scaled and meaningless against the next file opened. `finish_import`
+  resets the offset but keeps the orientation. `apply_section_mode_ui()` is
+  split out of `on_section_toggled()` so restoring a tab never re-runs the
+  first-entry "point the plane down the view axis" setup and clobbers the plane
+  it is restoring. Esc unwinds section → isolate → zero-chrome.
+- Shortcuts: `F` fit, `W` wireframe, `H` hidden line, `E` edges, `T` triangle mesh,
+  `S` section, `P`
   perspective toggle (ortho is default for CAD). Standard views `1`-`7`
   (Front/Back/Right/Left/Top/Bottom/Iso, Blender-style numbering). `⌃.` toggles
   zero-chrome (all panels hidden; Esc restores); `⌥⌘O` opens with the import
   pre-flight; `Ctrl+W` closes the active document tab.
 - Surface modes are visibly exclusive in the toolbar
-  `Shaded|Hidden Line|Wireframe` `SegmentedControl`. Edges/Mesh chips apply to
-  Shaded and are **disabled-but-remembered** in the other two modes. Hidden
+  `Shaded|Hidden Line|Wireframe` `SegmentedControl`. Edges/Mesh are **not**
+  standalone toolbar chips — they live in the Shaded segment's chevron menu
+  (`tests/toolbar_test.cpp` asserts this) and are **disabled-but-remembered** in
+  the other two modes. Hidden
   Line's chevron menu holds "Dimmed Hidden Lines" (`show_hidden_edges`);
   its checked state is the preference itself, so it is only ever
   enabled/disabled with the mode, never force-cleared.
@@ -246,12 +415,22 @@ switches. Panels are fixed-position and toggle visibility only; the old
   scrollbars. Do not install a second app-wide stylesheet from the UI module.
   Reuse the existing Fusion style instance on theme changes: replacing it can
   recreate `QOpenGLWidget`'s backing surface and invalidate renderer resources.
-- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|shadedmenu|hiddenmenu|zerochrome|preferences|highlight|isolate|isolate-hide]`
+- Dev aid: `cadly --screenshot <png> [--demo hiddenline|wireframe|light|views|getinfo|shadedmenu|hiddenmenu|zerochrome|preferences|highlight|isolate|isolate-hide|section]`
   drives a UI state and grabs it headlessly (used to verify the shell without an
   input-injection tool). `--demo hiddenline-orbit:<yaw>,<pitch>[,persp]` (and
   the `wireframe-orbit:` twin) screenshots a line mode at an exact arbitrary
   orientation — the silhouette pass is view-dependent, so regressions hide at
-  in-between azimuths the seven standard views never hit. `--lang zh_CN|en`
+  in-between azimuths the seven standard views never hit. The `section*` states
+  cover the cap algorithm's cases: `section-hiddenline` / `section-wireframe`
+  for the per-mode treatments, `section-noplane` for the cut without the
+  manipulator, `section:<fraction>` to place the plane at a fraction of the
+  model's travel (scale-independent, so one string works on any file), and
+  `section-behind` to orbit round to the kept side, where the cap must vanish
+  and the intact outer surface must show — the half of the depth argument no
+  front-side screenshot can demonstrate. `section-rotate` tilts the plane 35°
+  about world X, which is the only headless way to check the rotate rings: all
+  three appear once the normal is off every axis, and the cap must still fill a
+  skew cross-section. `--lang zh_CN|en`
   overrides the UI language for one run without touching the persisted setting
   (how translated screenshots are taken).
 
