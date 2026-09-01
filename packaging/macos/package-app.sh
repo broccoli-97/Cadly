@@ -186,4 +186,15 @@ mkdir -p "$package_dir"
 touch "$package_marker"
 mv "$app" "$work_dir/sample-files" "$work_dir/README.txt" "$package_dir/"
 
+# The temp-dir assembly above replaces the .app's directory identity every
+# run, which strands Finder's icon cache on the old nodes (generic icon
+# until a rescan). Re-register and bump the bundle's mtime so Launch
+# Services/Finder refresh on their own; harmless on CI, where nothing is
+# watching the icon.
+lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [[ -x "$lsregister" ]]; then
+  "$lsregister" -f "$package_dir/Cadly.app" || true
+fi
+touch "$package_dir/Cadly.app"
+
 echo "packaged: $package_dir/Cadly.app"
