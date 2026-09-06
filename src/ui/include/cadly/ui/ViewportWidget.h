@@ -3,6 +3,7 @@
 #include "cadly/renderer/IRenderer.h"
 #include "cadly/renderer/RenderTypes.h"
 #include "cadly/scene/Scene.h"
+#include "cadly/ui/NavigationScheme.h"
 
 #include <QElapsedTimer>
 #include <QOpenGLWidget>
@@ -29,6 +30,10 @@ public:
   renderer::DisplayMode& display_mode() { return display_mode_; }
 
   CameraController* camera_controller() { return camera_; }
+
+  // Mouse-binding scheme for orbit/pan/zoom drags (persisted by the shell).
+  void set_navigation_scheme(NavigationScheme scheme) { nav_scheme_ = scheme; }
+  NavigationScheme navigation_scheme() const { return nav_scheme_; }
 
   // Re-frame the scene to fit current world bounds (toolbar "Fit").
   void fit_view();
@@ -69,6 +74,7 @@ private:
   // mouseMoveEvent promote a modifier-less left drag to orbit/pan when Alt
   // arrives mid-gesture (see the comment there).
   bool                  camera_drag_active_{false};
+  NavigationScheme      nav_scheme_{NavigationScheme::Cadly};
 
   // Frame-time readout state: exponential moving average + emit throttle.
   float         frame_ms_avg_{0.0f};

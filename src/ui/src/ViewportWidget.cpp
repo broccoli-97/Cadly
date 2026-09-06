@@ -154,21 +154,13 @@ void ViewportWidget::fit_view() {
 
 void ViewportWidget::mousePressEvent(QMouseEvent* e) {
   using DM = CameraController::DragMode;
-  DM mode = DM::None;
-  // Right-button orbits, middle-button pans — the three-button-mouse layout.
-  // Alt+left-drag orbits and Alt+Ctrl+left-drag pans (⌥ / ⌥⌘ on macOS, the
-  // Fusion/Onshape-style convention): trackpads have no middle button at
-  // all, and holding a two-finger click through an orbit is miserable.
-  // A *plain* left press stays reserved for picking; until a pick handler
-  // lands it is reported as a background click so the shell can drop the
+  // The active NavigationScheme maps (button, modifiers) to a drag mode —
+  // see NavigationScheme.cpp for the tables. No scheme maps a *plain* left
+  // press: that stays reserved for picking, and until a pick handler lands
+  // it is reported as a background click so the shell can drop the
   // selection highlight (the one thing a bare left-click can mean while
   // nothing is pickable).
-  const bool alt = e->modifiers() & Qt::AltModifier;
-  if      (e->button() == Qt::RightButton)  mode = DM::Orbit;
-  else if (e->button() == Qt::MiddleButton) mode = DM::Pan;
-  else if (e->button() == Qt::LeftButton && alt) {
-    mode = (e->modifiers() & Qt::ControlModifier) ? DM::Pan : DM::Orbit;
-  }
+  const DM mode = resolve_navigation(nav_scheme_, e->button(), e->modifiers());
   if (mode != DM::None) {
     camera_->begin_drag(mode, e->pos());
     camera_drag_active_ = true;
@@ -183,22 +175,25 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e) {
 }
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* e) {
-  // Late promotion: a left drag that arrives without Alt is classified as a
-  // dead click at press time, but synthesized drags (macOS three-finger
-  // drag, BetterTouchTool) can deliver the mouse-down a beat before the
-  // modifier flags land — and users naturally plant fingers first, Option
-  // second. If Alt is held *now* while a modeless left drag is in motion,
-  // start the orbit/pan from the current position instead of losing the
-  // whole gesture. Sampling press-time-only turns every upstream timing
-  // wobble into a "drag didn't take".
-  if (!camera_drag_active_ && (e->buttons() & Qt::LeftButton) &&
-      (e->modifiers() & Qt::AltModifier)) {
+  // Late promotion: a drag whose press didn't resolve is dead by default,
+  // but synthesized drags (macOS three-finger drag, BetterTouchTool) can
+  // deliver the mouse-down a beat before the modifier flags land — and
+  // users naturally plant fingers first, modifier second. If the held
+  // button + current modifiers resolve *now*, start that drag from the
+  // current position instead of losing the whole gesture. Safe for plain
+  // left: no scheme resolves it.
+  if (!camera_drag_active_) {
     using DM = CameraController::DragMode;
-    const DM mode =
-      (e->modifiers() & Qt::ControlModifier) ? DM::Pan : DM::Orbit;
-    camera_->begin_drag(mode, e->pos());
-    camera_drag_active_ = true;
-    setCursor(Qt::ClosedHandCursor);
+    Qt::MouseButton held = Qt::NoButton;
+    if      (e->buttons() == Qt::LeftButton)   held = Qt::LeftButton;
+    else if (e->buttons() == Qt::MiddleButton) held = Qt::MiddleButton;
+    else if (e->buttons() == Qt::RightButton)  held = Qt::RightButton;
+    const DM mode = resolve_navigation(nav_scheme_, held, e->modifiers());
+    if (mode != DM::None) {
+      camera_->begin_drag(mode, e->pos());
+      camera_drag_active_ = true;
+      setCursor(Qt::ClosedHandCursor);
+    }
   }
   camera_->update_drag(e->pos());
   QOpenGLWidget::mouseMoveEvent(e);

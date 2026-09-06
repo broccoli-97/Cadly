@@ -178,7 +178,11 @@ void CameraController::update_drag(QPoint to) {
       // "grab the world and drag it" feel of the previous Euler controller.
       const float yaw_delta   = -delta.x() * kOrbitSpeed;
       const float pitch_delta = -delta.y() * kOrbitSpeed;
-      camera_.orbit(yaw_delta, pitch_delta, rotation_pivot_);
+      if (orbit_style_ == OrbitStyle::Turntable) {
+        camera_.orbit_turntable(yaw_delta, pitch_delta, rotation_pivot_);
+      } else {
+        camera_.orbit(yaw_delta, pitch_delta, rotation_pivot_);
+      }
       break;
     }
     case DragMode::Pan: {

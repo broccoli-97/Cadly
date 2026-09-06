@@ -66,6 +66,14 @@ public:
 
   enum class DragMode { None, Orbit, Pan, Dolly };
 
+  // Which rotation scheme an Orbit drag uses: Free is the screen-space
+  // tumble (scene::Camera::orbit), Turntable keeps world-up fixed with the
+  // elevation clamped (scene::Camera::orbit_turntable). A user preference,
+  // persisted by the shell alongside the navigation scheme.
+  enum class OrbitStyle { Free = 0, Turntable };
+  void set_orbit_style(OrbitStyle style) { orbit_style_ = style; }
+  OrbitStyle orbit_style() const { return orbit_style_; }
+
   void begin_drag(DragMode mode, QPoint at);
   void update_drag(QPoint to);
   void end_drag();
@@ -140,6 +148,7 @@ private:
 
   scene::Camera camera_;
   DragMode      drag_mode_{DragMode::None};
+  OrbitStyle    orbit_style_{OrbitStyle::Free};
   QPoint        last_pos_{};
   int           viewport_w_{1};
   int           viewport_h_{1};

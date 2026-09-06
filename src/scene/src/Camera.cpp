@@ -93,6 +93,28 @@ void Camera::orbit(float yaw_delta, float pitch_delta, const vec3& pivot) {
   rotate_around(pivot, glm::angleAxis(angle, axis));
 }
 
+void Camera::orbit_turntable(float yaw_delta, float pitch_delta,
+                             const vec3& pivot) {
+  // Pitch first, about the current right axis, with the elevation clamped
+  // short of the poles (at exactly ±90° the yaw axis and the view axis
+  // coincide and yaw degenerates into roll). Elevation is recovered from
+  // the forward vector each call, so no separate yaw/pitch state can drift
+  // out of sync with the quaternion.
+  constexpr float kElevationLimit = glm::radians(89.5f);
+  const float sin_elevation =
+    glm::clamp(glm::dot(forward(), vec3(0.0f, 1.0f, 0.0f)), -1.0f, 1.0f);
+  const float elevation = std::asin(sin_elevation);
+  const float applied_pitch =
+    glm::clamp(elevation + pitch_delta, -kElevationLimit, kElevationLimit) -
+    elevation;
+  if (applied_pitch != 0.0f) {
+    rotate_around(pivot, glm::angleAxis(applied_pitch, right()));
+  }
+  if (yaw_delta != 0.0f) {
+    rotate_around(pivot, glm::angleAxis(yaw_delta, kWorldUp));
+  }
+}
+
 void Camera::set_orientation_yaw_pitch(float yaw, float pitch) {
   // The +π on the yaw rotates the camera-local -Z (which is "look direction")
   // to face +Z at yaw=0, matching the historical Euler convention so that

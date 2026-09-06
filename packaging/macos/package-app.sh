@@ -62,6 +62,19 @@ trap 'rm -rf "$work_dir"' EXIT
 app="$work_dir/Cadly.app"
 cp -R "$build_dir/bin/cadly.app" "$app"
 
+# The build tree carries the .dev bundle identifier so dev builds never
+# shadow an installed copy's Launch Services registration (see
+# src/app/CMakeLists.txt). The distributable gets the release id here —
+# before signing, which seals the Info.plist.
+plutil -replace CFBundleIdentifier -string "io.github.broccoli-97.cadly" \
+  "$app/Contents/Info.plist"
+# ...and promote the document types from the dev tree's rank None to Owner,
+# so the installed copy is the one Launch Services elects for STEP/IGES.
+plutil -replace CFBundleDocumentTypes.0.LSHandlerRank -string Owner \
+  "$app/Contents/Info.plist"
+plutil -replace CFBundleDocumentTypes.1.LSHandlerRank -string Owner \
+  "$app/Contents/Info.plist"
+
 # Runtime assets go to Contents/Resources, where platform::find_asset_dir's
 # bundle candidate (<exe>/../Resources) looks for them.
 mkdir -p "$app/Contents/Resources"
@@ -185,5 +198,16 @@ cp "$repo_root/packaging/macos/README.txt" "$work_dir/"
 mkdir -p "$package_dir"
 touch "$package_marker"
 mv "$app" "$work_dir/sample-files" "$work_dir/README.txt" "$package_dir/"
+
+# The temp-dir assembly above replaces the .app's directory identity every
+# run, which strands Finder's icon cache on the old nodes (generic icon
+# until a rescan). Re-register and bump the bundle's mtime so Launch
+# Services/Finder refresh on their own; harmless on CI, where nothing is
+# watching the icon.
+lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [[ -x "$lsregister" ]]; then
+  "$lsregister" -f "$package_dir/Cadly.app" || true
+fi
+touch "$package_dir/Cadly.app"
 
 echo "packaged: $package_dir/Cadly.app"

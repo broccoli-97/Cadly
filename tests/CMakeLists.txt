@@ -127,6 +127,20 @@ if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
   )
 
+  add_executable(cadly_navigation_scheme_test navigation_scheme_test.cpp)
+  target_link_libraries(cadly_navigation_scheme_test
+    PRIVATE
+      Cadly::Ui
+      Cadly::Warnings
+      Qt6::Test
+      qlementine-icons
+  )
+  target_compile_features(cadly_navigation_scheme_test PRIVATE cxx_std_17)
+  add_test(NAME cadly_navigation_scheme COMMAND cadly_navigation_scheme_test)
+  set_tests_properties(cadly_navigation_scheme PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+  )
+
   add_executable(cadly_camera_controller_test camera_controller_test.cpp)
   target_link_libraries(cadly_camera_controller_test
     PRIVATE
