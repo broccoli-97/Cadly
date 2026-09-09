@@ -62,12 +62,8 @@ struct ThemeTokens {
   // selection pill, the viewport uses this.
   QColor viewport_highlight;
 
-  // Section-view cut face (DisplayMode::section_cap_color). Deliberately NOT
-  // viewport_highlight: a selected part and a cut face can appear in the same
-  // frame, and two saturated oranges would be indistinguishable. A desaturated
-  // warm tan separates by hue from the bluish-grey parts and the viewport
-  // gradient while sitting far below the signal orange in saturation, so it
-  // reads as "material seen end-on" rather than as another status colour.
+  // Opaque section fill (DisplayMode::section_cap_color). Pale copper separates
+  // the cut from grey surfaces and the saturated orange selection highlight.
   QColor viewport_section;
 
   // Viewport gradient, pushed through DisplayMode::background_top/bottom.

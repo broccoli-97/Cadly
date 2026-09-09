@@ -40,9 +40,9 @@ int main() {
   // Miss one and the model is cut in one pass and whole in another — surfaces
   // sliced but their edges still hanging in the air, or worse, the stencil
   // counting pass (which borrows the edges program) seeing unclipped geometry,
-  // where every closed solid balances and no cap is ever produced. There is no
-  // offscreen GL test harness in this repo, so this string check is the only
-  // automated guard against that.
+  // where every closed solid balances and no cap is ever produced. These
+  // source checks cover the clip writes in all model stages alongside the
+  // framebuffer compositing checks in section_render_test.
   //
   // Match the ASSIGNMENT, not the bare identifier: these shaders discuss
   // gl_ClipDistance at length in their comments, and a check that counted prose

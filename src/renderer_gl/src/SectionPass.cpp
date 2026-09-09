@@ -21,6 +21,12 @@ namespace {
 // drawn as a fan.
 constexpr int kMaxPolyVerts = 12;
 
+// Hatch strength mixes ink into an opaque fill; it is not surface opacity.
+constexpr float kHatchShadeTone = 0.40f;
+constexpr float kHatchShadeAlpha = 0.70f;
+constexpr float kHatchInkAlpha = 0.46f;
+constexpr float kHatchPitchPx = 13.0f;
+
 // Handle geometry, in a unit space the draw scales to a constant pixel length:
 // a shaft along Z with a cone at each end. Double-headed because the drag is
 // bidirectional — a single arrow invites "which way does this go?", and the two
@@ -201,6 +207,7 @@ void SectionPass::shutdown(GLFunctions& gl) {
   ring_verts_ = 0;
   built_ = false;
   active_ = false;
+  cap_mask_ready_ = false;
   stencil_bits_ = -1;
   stencil_probed_fbo_ = -1;
   clip_plane_ = scene::vec4(0.0f);
@@ -209,6 +216,7 @@ void SectionPass::shutdown(GLFunctions& gl) {
 void SectionPass::begin_frame(const renderer::DisplayMode& mode,
                               const scene::Scene& scene) {
   active_     = false;
+  cap_mask_ready_ = false;
   clip_plane_ = scene::vec4(0.0f);
   poly_count_ = 0;
 
@@ -373,6 +381,7 @@ void SectionPass::draw_cap(GLFunctions& gl, const scene::Scene& scene,
   // ---- Pass B: fill the marked pixels with the cut face --------------------
   gl.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   gl.glEnable(GL_DEPTH_TEST);
+  gl.glDepthMask(GL_TRUE);
   gl.glStencilFunc(GL_NOTEQUAL, 0, 0xFF);
   // Leave the write mask alone and make the ops no-ops instead. glStencilMask(0)
   // would work here too, but it is also what gates glClear(GL_STENCIL_BUFFER_BIT)
@@ -399,17 +408,22 @@ void SectionPass::draw_cap(GLFunctions& gl, const scene::Scene& scene,
     // paper-on-paper would be indistinguishable from a hole. The hatch is the
     // only thing that makes the cut readable here, so it is not optional in this
     // mode — the toggle governs shaded mode, where the solid fill already reads.
-    hatch = scene::vec4(0.0f, 0.0f, 0.0f, 0.55f);
+    hatch = scene::vec4(0.0f, 0.0f, 0.0f, kHatchInkAlpha);
   } else {
-    // Shaded: darken the fill for the strokes so the hatch reads as incised
-    // rather than as a second colour competing with the part.
-    hatch = scene::vec4(mode.section_cap_color * 0.55f, 0.85f);
+    // Darken the fill for the strokes so the hatch reads as incised rather than
+    // as a second colour competing with the part.
+    hatch = scene::vec4(mode.section_cap_color * kHatchShadeTone,
+                        kHatchShadeAlpha);
   }
   if (want_hatch) {
     // Constant screen pitch, so the hatch neither dissolves when zoomed out nor
     // spreads into stripes when zoomed in.
-    pitch = 9.0f * world_per_pixel(scene.camera, viewport_h);
+    pitch = kHatchPitchPx * world_per_pixel(scene.camera, viewport_h);
   }
+
+  // A cap is exposed solid material, including the spaces BETWEEN hatch lines.
+  // Replace colour and write depth so geometry behind it cannot show through.
+  gl.glDisable(GL_BLEND);
 
   gl.glUseProgram(prog_section_.id());
   const scene::mat4 identity(1.0f);
@@ -426,6 +440,7 @@ void SectionPass::draw_cap(GLFunctions& gl, const scene::Scene& scene,
   gl.glBindVertexArray(vao_poly_);
   gl.glDrawArrays(GL_TRIANGLE_FAN, 0, poly_count_);
   gl.glBindVertexArray(0);
+  cap_mask_ready_ = true;
 
   // ---- Restore the renderer's baseline -------------------------------------
   // Leaks here corrupt the NEXT frame, which is the hardest kind to trace: a
@@ -469,19 +484,32 @@ void SectionPass::draw_gizmo(GLFunctions& gl, const scene::Scene& scene,
   gl.glUniformMatrix4fv(prog_section_.uniform(gl, "u_model"), 1, GL_FALSE,
                         glm::value_ptr(identity));
 
+  const scene::vec3 guide_color = mode.section_cap_color * 0.60f;
   if (poly_count_ >= 3) {
-    const scene::vec4 face(mode.section_cap_color * 0.85f, 0.14f);
+    // The preview is slightly in front of the biased cap. Exclude cut material
+    // with this frame's stencil so showing the plane cannot wash out the hatch.
+    // Wireframe and unavailable caps have no mask; never reuse an older frame.
+    if (cap_mask_ready_) {
+      gl.glEnable(GL_STENCIL_TEST);
+      gl.glStencilFunc(GL_EQUAL, 0, 0xFF);
+      gl.glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+    }
+    const scene::vec4 face(mode.section_cap_color, 0.09f);
     gl.glUniform4fv(prog_section_.uniform(gl, "u_color"), 1, &face.x);
     gl.glBindVertexArray(vao_poly_);
     gl.glDrawArrays(GL_TRIANGLE_FAN, 0, poly_count_);
 
     // Border, so the plane's extent is legible where the translucent fill sits
     // against a similarly-toned part.
-    const scene::vec4 edge(mode.section_cap_color, 0.75f);
+    const scene::vec4 edge(guide_color, 0.80f);
     gl.glUniform4fv(prog_section_.uniform(gl, "u_color"), 1, &edge.x);
     gl.glLineWidth(1.0f);
     gl.glDrawArrays(GL_LINE_LOOP, 0, poly_count_);
     gl.glBindVertexArray(0);
+    if (cap_mask_ready_) {
+      gl.glStencilFunc(GL_ALWAYS, 0, 0xFF);
+      gl.glDisable(GL_STENCIL_TEST);
+    }
   }
 
   // The drag handle, on top of everything so it is always grabbable.
@@ -554,7 +582,7 @@ void SectionPass::draw_gizmo(GLFunctions& gl, const scene::Scene& scene,
     const scene::vec4 handle =
       mode.section_hot_part == renderer::SectionGizmoPart::Translate
         ? scene::vec4(1.0f, 1.0f, 1.0f, 0.98f)
-        : scene::vec4(mode.section_cap_color * 1.15f, 0.92f);
+        : scene::vec4(guide_color, 1.0f);
     gl.glUniform4fv(prog_section_.uniform(gl, "u_color"), 1, &handle.x);
     gl.glBindVertexArray(vao_handle_);
     gl.glDrawArrays(GL_TRIANGLES, 0, handle_verts_);

@@ -32,10 +32,13 @@ void main() {
     // fine hatch aliases into moire the moment the camera moves.
     float t     = (v_plane_uv.x + v_plane_uv.y) / u_hatch_pitch;
     float tri   = abs(fract(t) - 0.5);      // 0 at stripe centre, 0.5 between
-    float aa    = fwidth(t) + 1e-5;
-    // Stripe covers a quarter of the period; widen the transition band with aa
-    // so the hatch fades to a flat tint at distance instead of flickering.
-    float line  = 1.0 - smoothstep(0.15 - aa, 0.15 + aa, tri);
+    float footprint = fwidth(t);
+    float aa    = 0.5 * footprint + 1e-5;
+    const float half_w = 0.065;
+    float line  = 1.0 - smoothstep(half_w - aa, half_w + aa, tri);
+    // At grazing angles, converge to the stripe's average coverage instead of
+    // aliasing or darkening the entire cap. Hatch changes RGB only, never alpha.
+    line = mix(line, 2.0 * half_w, smoothstep(0.35, 0.75, footprint));
     col.rgb = mix(col.rgb, u_hatch_color.rgb, line * u_hatch_color.a);
   }
 

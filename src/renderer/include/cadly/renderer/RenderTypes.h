@@ -135,14 +135,10 @@ struct DisplayMode {
   // Transient view state like `show_rotation_pivot`, not a preference. The
   // renderer highlights that piece; None means nothing is hot.
   SectionGizmoPart section_hot_part{SectionGizmoPart::None};
-  // Cut-face fill, in sRGB — written straight out by the section shader with
-  // no linearisation, exactly like `selection_color` above. Deliberately NOT
-  // the selection orange: a selected part and a cut face can share a frame,
-  // and if they read as the same colour the user cannot tell which is which.
-  // The default matches the dark theme's viewport_section token (a desaturated
-  // warm tan: separated in hue from the bluish-grey parts, far below the
-  // signal orange in saturation); the UI overwrites it per theme.
-  scene::vec3  section_cap_color {0.678f, 0.596f, 0.478f};
+  // Opaque cut-face fill, in framebuffer sRGB like `selection_color`. The
+  // pale copper default matches the dark theme's viewport_section token;
+  // the UI overwrites it per theme. Only the auxiliary plane is translucent.
+  scene::vec3  section_cap_color {0.906f, 0.749f, 0.588f};
 
   // Anti-aliasing. Off (0 or 1) renders directly to the host's default
   // framebuffer; any other value asks the renderer to allocate an offscreen
