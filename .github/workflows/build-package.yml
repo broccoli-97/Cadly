@@ -251,7 +251,9 @@ jobs:
         run: cmake --build --preset windows-ninja-release
 
       - name: Test
-        run: ctest --preset windows-ninja-release
+        timeout-minutes: 10
+        # Stream startup diagnostics even if a Qt test blocks before exiting.
+        run: ctest --preset windows-ninja-release --verbose
 
       - name: Import smoke check (STEP)
         shell: pwsh

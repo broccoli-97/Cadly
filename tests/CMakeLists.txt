@@ -8,6 +8,21 @@ function(cadly_check_module_dependencies target)
   endforeach()
 endfunction()
 
+function(cadly_use_offscreen_qt test_name)
+  # vcpkg's applocal deployment copies Qt DLLs, but not runtime-loaded QPA
+  # plugins. Resolve the matching plugin from Qt's imported target, including
+  # the right configuration for multi-config Windows builds.
+  if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
+    find_package(Qt6QOffscreenIntegrationPlugin CONFIG REQUIRED
+      PATHS "${Qt6Gui_DIR}" NO_DEFAULT_PATH)
+  endif()
+  set(test_environment
+    "QT_QPA_PLATFORM=offscreen"
+    "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>"
+    ${ARGN})
+  set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "${test_environment}")
+endfunction()
+
 cadly_check_module_dependencies(cadly_input Cadly::Warnings)
 if(CADLY_BUILD_GUI)
   cadly_check_module_dependencies(cadly_input_qt
@@ -81,7 +96,7 @@ if(CADLY_BUILD_GUI)
   add_executable(cadly_qt_input_adapter_test qt_input_adapter_test.cpp)
   target_link_libraries(cadly_qt_input_adapter_test PRIVATE Cadly::InputQt Cadly::Warnings)
   add_test(NAME cadly_qt_input_adapter COMMAND cadly_qt_input_adapter_test)
-  set_tests_properties(cadly_qt_input_adapter PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+  cadly_use_offscreen_qt(cadly_qt_input_adapter)
 
   add_executable(cadly_input_settings_test input_settings_test.cpp)
   target_link_libraries(cadly_input_settings_test PRIVATE Cadly::AppSettings Cadly::Warnings)
@@ -99,12 +114,11 @@ if(CADLY_BUILD_GUI)
     PRIVATE CADLY_TEST_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
   )
   add_test(NAME cadly_section_render COMMAND cadly_section_render_test)
+  cadly_use_offscreen_qt(cadly_section_render)
   # Headless hosts without desktop GL skip; a GL-capable offscreen platform
   # (or a direct run with QT_QPA_PLATFORM=xcb) exercises real framebuffer pixels.
   set_tests_properties(cadly_section_render PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     SKIP_RETURN_CODE 77
-    TIMEOUT 60
   )
 endif()
 
@@ -133,9 +147,7 @@ if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
   )
   target_compile_features(cadly_popover_test PRIVATE cxx_std_17)
   add_test(NAME cadly_popover COMMAND cadly_popover_test)
-  set_tests_properties(cadly_popover PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-  )
+  cadly_use_offscreen_qt(cadly_popover)
 
   add_executable(cadly_toolbar_test toolbar_test.cpp)
   target_link_libraries(cadly_toolbar_test
@@ -151,9 +163,7 @@ if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
   )
   target_compile_features(cadly_toolbar_test PRIVATE cxx_std_17)
   add_test(NAME cadly_toolbar COMMAND cadly_toolbar_test)
-  set_tests_properties(cadly_toolbar PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-  )
+  cadly_use_offscreen_qt(cadly_toolbar)
 
   add_executable(cadly_inspector_test inspector_test.cpp)
   target_link_libraries(cadly_inspector_test
@@ -169,9 +179,7 @@ if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
   )
   target_compile_features(cadly_inspector_test PRIVATE cxx_std_17)
   add_test(NAME cadly_inspector COMMAND cadly_inspector_test)
-  set_tests_properties(cadly_inspector PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-  )
+  cadly_use_offscreen_qt(cadly_inspector)
 
   add_executable(cadly_sidebar_test sidebar_test.cpp)
   target_link_libraries(cadly_sidebar_test
@@ -187,9 +195,7 @@ if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
   )
   target_compile_features(cadly_sidebar_test PRIVATE cxx_std_17)
   add_test(NAME cadly_sidebar COMMAND cadly_sidebar_test)
-  set_tests_properties(cadly_sidebar PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-  )
+  cadly_use_offscreen_qt(cadly_sidebar)
 
   add_executable(cadly_viewport_input_test viewport_input_test.cpp)
   target_link_libraries(cadly_viewport_input_test
@@ -201,14 +207,10 @@ if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
   )
   target_compile_features(cadly_viewport_input_test PRIVATE cxx_std_17)
   add_test(NAME cadly_viewport_input COMMAND cadly_viewport_input_test)
-  set_tests_properties(cadly_viewport_input PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-  )
+  cadly_use_offscreen_qt(cadly_viewport_input)
 
   add_test(NAME cadly_viewport_input_hidpi COMMAND cadly_viewport_input_test)
-  set_tests_properties(cadly_viewport_input_hidpi PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2"
-  )
+  cadly_use_offscreen_qt(cadly_viewport_input_hidpi "QT_SCALE_FACTOR=2")
 
   add_executable(cadly_preferences_dialog_test preferences_dialog_test.cpp)
   target_link_libraries(cadly_preferences_dialog_test
@@ -216,5 +218,9 @@ if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
   )
   target_include_directories(cadly_preferences_dialog_test PRIVATE ${CMAKE_SOURCE_DIR}/src/ui/src)
   add_test(NAME cadly_preferences_dialog COMMAND cadly_preferences_dialog_test)
-  set_tests_properties(cadly_preferences_dialog PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+  cadly_use_offscreen_qt(cadly_preferences_dialog)
 endif()
+
+# A blocked platform startup must fail in bounded time, even outside CI.
+get_property(cadly_tests DIRECTORY PROPERTY TESTS)
+set_tests_properties(${cadly_tests} PROPERTIES TIMEOUT 60)

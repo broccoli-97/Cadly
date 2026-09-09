@@ -105,3 +105,10 @@ On macOS the `cadly` target builds as `bin/cadly.app`; the GUI binary lives
 at `bin/cadly.app/Contents/MacOS/cadly` (dev builds still find shaders via
 the `CADLY_SOURCE_ROOT` fallback). `cad_import_cli` stays a plain binary at
 `bin/cad_import_cli` on all platforms.
+
+GUI tests select Qt's offscreen platform and resolve its plugin directory
+from `Qt6::QOffscreenIntegrationPlugin`. Windows needs this explicit path:
+vcpkg's applocal deployment copies linked DLLs, while the package's plugin
+copy happens only after testing. A missing platform plugin can show a modal
+error dialog on a Windows runner without a console. Every test has a 60-second
+timeout, and Windows CI streams verbose test output to expose startup failures.
