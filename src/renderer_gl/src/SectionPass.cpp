@@ -373,12 +373,15 @@ void SectionPass::draw_cap(GLFunctions& gl, const scene::Scene& scene,
 
     gl.glUniformMatrix4fv(loc_model, 1, GL_FALSE,
                           glm::value_ptr(node.world_matrix));
+    gl.glFrontFace(glm::determinant(scene::mat3(node.world_matrix)) < 0.0f
+                     ? GL_CW : GL_CCW);
     gl.glBindVertexArray(solid.vao);
     // One drawcall for the whole mesh: materials are irrelevant to a count, so
     // the per-submesh split buys nothing here.
     gl.glDrawElements(GL_TRIANGLES, solid.index_count, GL_UNSIGNED_INT, nullptr);
   }
   gl.glBindVertexArray(0);
+  gl.glFrontFace(GL_CCW);
 
   // ---- Pass B: fill the marked pixels with the cut face --------------------
   gl.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);

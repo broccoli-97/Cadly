@@ -33,6 +33,7 @@ const ThemeTokens& ThemeTokens::dark_tokens() {
     d.viewport_highlight = QColor(0xFF, 0x7A, 0x26);
     // Pale copper with darker hatch ink makes the cut distinct from the shell.
     d.viewport_section   = QColor(0xE7, 0xBF, 0x96);
+    d.viewport_backface  = QColor(0x78, 0x99, 0xAD);
     d.viewport_top    = QColor(0xAC, 0xB0, 0xB7);   // unchanged from Theme.cpp era
     d.viewport_bottom = QColor(0x80, 0x83, 0x8A);
     return d;
@@ -71,6 +72,7 @@ const ThemeTokens& ThemeTokens::light_tokens() {
     // A notch deeper than the dark theme's, for the same reason the highlight
     // is: it has to keep its weight against a lighter viewport gradient.
     l.viewport_section   = QColor(0xDF, 0xB3, 0x89);
+    l.viewport_backface  = QColor(0x65, 0x86, 0x9C);
     l.viewport_top    = QColor(0xDA, 0xDD, 0xE2);
     l.viewport_bottom = QColor(0xAB, 0xAF, 0xB7);
     return l;

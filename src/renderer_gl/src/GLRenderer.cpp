@@ -1952,6 +1952,8 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
                    &mode.hidden_line_color.x);
   gl_.glUniform3fv(prog_pbr_.uniform(gl_, "u_highlight_color"), 1,
                    &mode.selection_color.x);
+  gl_.glUniform3fv(prog_pbr_.uniform(gl_, "u_backface_color"), 1,
+                   &mode.backface_color.x);
   gl_.glUniform1f(loc_ghost, 0.0f);
 
   // u_highlight carries the wash opacity, not a boolean — the shader blends
@@ -1980,6 +1982,13 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     gl_.glUniformMatrix3fv(loc_normal_m, 1, GL_FALSE, glm::value_ptr(normal_matrix));
     gl_.glUniform1f(loc_highlight, node.selected ? highlight_wash : 0.0f);
 
+    // A clipped solid is open in this view even though its source topology is
+    // closed. Its retained back wall must occlude geometry behind the part.
+    const bool cut_open = section_.active() &&
+      renderer::box_straddles_plane(node.world_bounds, section_.clip_plane());
+    // Reflections reverse triangle winding, but not the surface's front side.
+    gl_.glFrontFace(glm::determinant(scene::mat3(model)) < 0.0f ? GL_CW : GL_CCW);
+
     gl_.glBindVertexArray(g.vao);
     for (const auto& sub : mesh_ptr->submeshes) {
       const std::uint32_t mat_idx = node.material_override
@@ -1998,9 +2007,9 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
 
       // Draw both faces when either the geometry isn't a closed solid
       // (mesh.double_sided — set by the importer for IGES surface quilts /
-      // open shells, whose patch winding is arbitrary) or the material is
-      // intrinsically two-sided. Otherwise keep the cheaper single-sided cull.
-      if (mesh_ptr->double_sided || m.double_sided) {
+      // open shells, whose patch winding is arbitrary), the material is
+      // intrinsically two-sided, or the section has opened this solid.
+      if (mesh_ptr->double_sided || m.double_sided || cut_open) {
         gl_.glDisable(GL_CULL_FACE);
       } else {
         gl_.glEnable(GL_CULL_FACE);
@@ -2013,6 +2022,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
                            static_cast<std::uintptr_t>(sub.index_offset) * sizeof(std::uint32_t)));
     }
     gl_.glBindVertexArray(0);
+    gl_.glFrontFace(GL_CCW);
   };
 
   bool any_ghosted = false;

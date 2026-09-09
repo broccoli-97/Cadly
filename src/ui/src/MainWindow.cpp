@@ -1331,6 +1331,7 @@ void MainWindow::update_display_mode() {
   // Cut-face fill. Deliberately not the highlight orange: a selected part and a
   // cut face can share a frame, and they must not read as the same thing.
   mode.section_cap_color = to_vec3(t.viewport_section);
+  mode.backface_color = to_vec3(t.viewport_backface);
   if (mode.hidden_line) mode.background_bottom = mode.background_top;
   viewport_->set_display_mode(mode);
   update_status_for_scene();

@@ -61,10 +61,9 @@ using SolidLookup = std::function<SolidDraw(const scene::Mesh&)>;
 // multiple of 256 cut bodies on one pixel would alias back to zero. Every
 // implementation with an 8-bit stencil shares that bound.)
 //
-// The test is `!= 0` rather than a sign test, which also makes mirrored
-// instances free: a negative-determinant world matrix swaps front and back, so a
-// cut body counts +1 instead of -1, and a fully-kept mirrored body still
-// balances to zero either way.
+// Reflected instances reverse triangle winding. Match their front-face
+// convention to the surface pass so their counts add to ordinary instances
+// rather than cancelling an overlapping cap. Fully-kept bodies balance to zero.
 //
 // Depth ordering needs no sorting, and this is why. With the camera on the cut
 // side, `dot(plane, p)` increases monotonically along every view ray, so all kept

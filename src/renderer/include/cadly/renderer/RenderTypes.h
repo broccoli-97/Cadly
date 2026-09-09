@@ -59,6 +59,9 @@ struct DisplayMode {
   scene::vec3 hidden_line_color{0.82f, 0.84f, 0.88f};
   scene::vec3 background_top   {0.42f, 0.44f, 0.48f};
   scene::vec3 background_bottom{0.22f, 0.23f, 0.26f};
+  // Shaded back faces of open surfaces and sectioned solids use a matte cool
+  // tint. Supplied in sRGB; the surface shader linearises it before lighting.
+  scene::vec3 backface_color   {0.471f, 0.600f, 0.678f};
 
   // Rotation pivot indicator. The UI toggles this on while the user is
   // orbiting and feeds the world-space pivot through `rotation_pivot`. The

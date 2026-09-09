@@ -246,13 +246,13 @@ void verify_section(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
                      "retained outer surfaces must occlude the cap from behind");
 }
 
-void check_cap_blend(const QImage& image, QPoint cap, QPoint behind,
+void check_cap_blend(const QImage& image, const QImage& behind, QPoint cap,
                      const s::vec3& fill, const char* message) {
-  // Compare real framebuffer pixels against the intended 35% overlay, using
-  // an adjacent view of the same flat rear surface as the compositing input.
-  const QRgb background = image.pixel(behind);
+  // A render with cap generation disabled is an independent compositing input.
+  const QRgb background = behind.pixel(cap);
   const auto channel = [](float color, int rear) {
-    return static_cast<int>(std::lround(color * 255.0f * 0.35f + rear * 0.65f));
+    return static_cast<int>(std::lround(color * 255.0f * 0.35f +
+                                        static_cast<float>(rear) * 0.65f));
   };
   const QRgb expected = qRgb(channel(fill.r, qRed(background)),
                              channel(fill.g, qGreen(background)),
@@ -281,17 +281,33 @@ void verify_translucent(r::IRenderer& renderer, QOpenGLFramebufferObject& target
     renderer.render(mode);
     return target.toImage();
   };
+  auto uncapped = [&]() {
+    scene.meshes[0]->double_sided = scene.meshes[1]->double_sided = true;
+    const QImage image = draw();
+    scene.meshes[0]->double_sided = scene.meshes[1]->double_sided = false;
+    return image;
+  };
   auto backdrop = [&](const s::vec3& color) {
     scene.materials[1].base_color = s::vec4(color, 1.0f);
     scene.materials[1].emissive_color = color;
     scene.materials[1].emissive = 1.0f;
   };
   backdrop({0.95f, 0.02f, 0.03f});
-  check_cap_blend(draw(), cap, gap, mode.section_cap_color,
-                  "default cap must blend over retained geometry at 35% opacity");
-  mode.section_hatch = true;
-  const QImage red = draw();
+  const QImage back_wall = uncapped();
+  const QImage red_behind = draw();
+  check_cap_blend(red_behind, back_wall, cap, mode.section_cap_color,
+                  "default cap must blend over the retained back wall at 35% opacity");
   backdrop({0.02f, 0.12f, 0.95f});
+  const QImage blue_behind = draw();
+  check_patch_equal(red_behind, blue_behind, cap,
+                     "retained back wall must occlude unrelated geometry behind the cut solid");
+  check(color_distance(red_behind.pixel(gap), blue_behind.pixel(gap)) > 40,
+        "geometry behind an actual opening must stay visible");
+
+  mode.section_hatch = true;
+  mode.backface_color = {0.85f, 0.22f, 0.18f};
+  const QImage red = draw();
+  mode.backface_color = {0.18f, 0.32f, 0.85f};
   const QImage blue = draw();
   int least_change = 255, darkest = 255, lightest = 0;
   bool opaque_framebuffer = true;
@@ -313,11 +329,19 @@ void verify_translucent(r::IRenderer& renderer, QOpenGLFramebufferObject& target
 
   mode.section_show_plane = false;
   mode.section_hatch = false;
+  // Put the ghost inside the cut solid, ahead of its newly visible back wall.
+  scene.nodes[2].local.translation.z = 1.2f;
+  scene.update_transforms();
+  place_section(mode, scene, 0.0f);
   scene.nodes[2].ghosted = true;
   mode.ghost_opacity = 0.8f;
-  check_cap_blend(draw(), cap, gap, mode.section_cap_color,
+  const QImage ghost_reference = uncapped();
+  check_cap_blend(draw(), ghost_reference, cap, mode.section_cap_color,
                   "translucent cap must blend after rear isolate ghosts");
   scene.nodes[2].ghosted = false;
+  scene.nodes[2].local.translation.z = 0.0f;
+  scene.update_transforms();
+  place_section(mode, scene, 0.0f);
 
   mode.hidden_line = true;
   const QImage paper = draw();
@@ -376,6 +400,131 @@ void verify_hollow(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
     check(opaque.save(QDir(capture_dir).filePath("section-hollow-opaque.png")), "save opaque section");
     check(translucent.save(QDir(capture_dir).filePath("section-hollow-translucent.png")),
           "save translucent section");
+  }
+
+  for (float z : {0.8f, -0.8f, -1.25f}) {
+    place_section(mode, scene, z);
+    const QPoint centre = project(scene.camera, {0.0f, 0.0f, z});
+    scene.meshes[0]->double_sided = true;
+    const QImage reference = draw();
+    scene.meshes[0]->double_sided = false;
+    mode.section_translucent = false;
+    const QImage solid_cut = draw();
+    mode.section_translucent = true;
+    const QImage transparent_cut = draw();
+    if (z > -1.0f) {
+      check_patch_equal(solid_cut, reference, centre,
+                         "moving the plane inside a cavity must not fill the opening");
+      check_patch_equal(transparent_cut, reference, centre,
+                         "deep translucent sections must preserve the actual inner wall");
+    } else {
+      check(patch_distance(solid_cut, reference, centre) > 30,
+            "a section below the cavity floor must cap the remaining material");
+      mode.section_hatch = false;
+      check_cap_blend(draw(), reference, centre, mode.section_cap_color,
+                      "deep section fill must blend over a visible back wall");
+      mode.section_hatch = true;
+    }
+  }
+
+  place_section(mode, scene, 0.0f);
+  mode.section_translucent = false;
+  s::Node reflected = scene.nodes[0];
+  reflected.local.scale.x = -1.0f;
+  scene.add_node(std::move(reflected));
+  scene.update_transforms();
+  check_patch_equal(opaque, draw(), wall,
+                     "overlapping reflected instances must not cancel a section cap");
+  scene.nodes.pop_back();
+  scene.update_transforms();
+}
+
+void verify_backfaces(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
+                      s::Scene& scene, int samples, s::Projection projection) {
+  std::fprintf(stdout, "Back-face pixels: MSAA %d, %s\n", samples,
+               projection == s::Projection::Orthographic ? "ortho" : "perspective");
+  scene.camera.projection_mode = projection;
+  r::DisplayMode mode;
+  mode.msaa_samples = samples;
+  mode.show_axes = mode.show_scale_bar = mode.show_edges = false;
+  mode.section_show_plane = false;
+  const QPoint centre(kSize / 2, kSize / 2);
+  auto draw = [&]() {
+    target.bind();
+    renderer.render(mode);
+    return target.toImage();
+  };
+  const s::quat front_view(1.0f, 0.0f, 0.0f, 0.0f);
+  const s::quat back_view = glm::angleAxis(glm::pi<float>(), s::vec3(0, 1, 0));
+  QImage front, back;
+  for (float scale : {1.0f, -1.0f}) {
+    scene.nodes[0].local.scale.x = scale;
+    scene.update_transforms();
+    scene.camera.orientation = front_view;
+    const QImage front_face = draw();
+    scene.camera.orientation = back_view;
+    const QImage back_face = draw();
+    if (scale > 0.0f) {
+      front = front_face;
+      back = back_face;
+    } else {
+      check_patch_equal(front, front_face, centre,
+                         "reflection must preserve the surface's front material");
+      check_patch_equal(back, back_face, centre,
+                         "reflection must preserve the surface's back material");
+    }
+  }
+  check(qRed(front.pixel(centre)) > qBlue(front.pixel(centre)) + 30,
+        "open surface front must retain its warm imported material");
+  check(qBlue(back.pixel(centre)) > qRed(back.pixel(centre)) + 15,
+        "open surface back must use a visible cool inspection material");
+  check(qAlpha(back.pixel(centre)) == 255, "back-face material must remain opaque");
+
+  const s::Material original = scene.materials[0];
+  scene.materials[0].metallic = 1.0f;
+  scene.materials[0].roughness = 0.05f;
+  scene.materials[0].emissive = 1.0f;
+  scene.materials[0].emissive_color = s::vec3(1.0f);
+  check_patch_equal(back, draw(), centre,
+                     "front-side metalness and emission must not wash out the back-face cue");
+  scene.materials[0] = original;
+
+  mode.backface_color = {0.8f, 0.25f, 0.2f};
+  check(patch_distance(back, draw(), centre) > 40,
+        "back-face theme color must reach the surface shader");
+  scene.camera.orientation = front_view;
+  check_patch_equal(front, draw(), centre, "back-face theme color must not tint the front");
+  mode.backface_color = r::DisplayMode{}.backface_color;
+  scene.camera.orientation = back_view;
+
+  scene.nodes[0].selected = true;
+  check(patch_distance(back, draw(), centre) > 40,
+        "selection highlight must still cover the back-face material");
+  scene.nodes[0].selected = false;
+  scene.nodes[0].ghosted = true;
+  const QImage ghost = draw();
+  check(patch_distance(back, ghost, centre) > 20 && qAlpha(ghost.pixel(centre)) == 255,
+        "ghosted back faces must fade while preserving window opacity");
+  scene.nodes[0].ghosted = false;
+
+  // Clip an open sheet across its width. Only actual surviving surface may
+  // render; the source mesh must not become cap-eligible to show its back.
+  mode.section_enabled = true;
+  mode.section.normal = {1.0f, 0.0f, 0.0f};
+  mode.section.offset = 0.0f;
+  const QImage clipped = draw();
+  const QPoint kept = project(scene.camera, {0.6f, 0.4f, 0.0f});
+  const QPoint removed = project(scene.camera, {-0.6f, 0.4f, 0.0f});
+  check_patch_equal(clipped, back, kept, "sectioned open sheet must retain its back-face shading");
+  scene.nodes[0].visible = false;
+  check_patch_equal(clipped, draw(), removed, "removed sheet must leave no phantom cap");
+  scene.nodes[0].visible = true;
+
+  const QString capture_dir = qEnvironmentVariable("CADLY_SECTION_TEST_CAPTURE_DIR");
+  if (!capture_dir.isEmpty() && samples == 4 && projection == s::Projection::Perspective) {
+    check(QDir().mkpath(capture_dir), "create back-face capture directory");
+    check(front.save(QDir(capture_dir).filePath("surface-front.png")), "save front surface");
+    check(back.save(QDir(capture_dir).filePath("surface-back.png")), "save back surface");
   }
 }
 
@@ -457,6 +606,35 @@ int main(int argc, char** argv) {
     for (s::Projection projection : {s::Projection::Orthographic,
                                      s::Projection::Perspective}) {
       verify_hollow(*renderer, target, *hollow, samples, projection);
+    }
+  }
+
+  auto sheet = std::make_shared<s::Scene>();
+  sheet->materials.resize(1);
+  sheet->materials[0].base_color = s::vec4(0.6f, 0.22f, 0.08f, 1.0f);
+  auto surface_mesh = std::make_shared<s::Mesh>();
+  surface_mesh->double_sided = true;
+  for (const s::vec3& p : {s::vec3(-1.5f, -1.5f, 0.0f), s::vec3(1.5f, -1.5f, 0.0f),
+                           s::vec3(1.5f, 1.5f, 0.0f), s::vec3(-1.5f, 1.5f, 0.0f)}) {
+    surface_mesh->vertices.push_back({p, {0.0f, 0.0f, 1.0f}});
+    surface_mesh->bounds.expand(p);
+  }
+  surface_mesh->indices = {0, 1, 2, 0, 2, 3};
+  s::Submesh surface_sub;
+  surface_sub.index_count = 6;
+  surface_sub.bounds = surface_mesh->bounds;
+  surface_mesh->submeshes.push_back(surface_sub);
+  s::Node surface_node;
+  surface_node.mesh_index = sheet->add_mesh(surface_mesh);
+  sheet->add_node(std::move(surface_node));
+  sheet->update_transforms();
+  sheet->camera.target = s::vec3(0.0f);
+  sheet->camera.distance = 5.0f;
+  renderer->attach_scene(sheet);
+  for (int samples : {0, 4}) {
+    for (s::Projection projection : {s::Projection::Orthographic,
+                                     s::Projection::Perspective}) {
+      verify_backfaces(*renderer, target, *sheet, samples, projection);
     }
   }
   renderer->shutdown();
