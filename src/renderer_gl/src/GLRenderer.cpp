@@ -2022,13 +2022,9 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     draw_node_surfaces(node);
   }
 
-  // Fill the exposed cut face. Placed here, still inside the polygon-offset
-  // scope, for two reasons: the cap inherits the same depth offset as the
-  // surfaces, so clipped edge endpoints (which land exactly on the plane) keep
-  // their usual win over the fill; and the cap's depth is in the buffer before
-  // the hidden-line GL_GREATER passes below run, so structure deeper in the
-  // model correctly shows as dimmed hidden lines through the cut.
-  if (section_.active() && section_.cap_available(gl_)) {
+  const bool translucent_section = mode.section_translucent && !mode.hidden_line;
+  auto draw_section_cap = [&]() {
+    if (!section_.active() || !section_.cap_available(gl_)) return;
     section_.draw_cap(gl_, *scene_, mode, prog_edges_,
                       [this](const scene::Mesh& mesh) {
                         detail::SolidDraw out;
@@ -2040,7 +2036,10 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
                         return out;
                       },
                       viewport_h_);
-  }
+  };
+  // Opaque caps share the surfaces' polygon offset and write depth before the
+  // edge passes, so hidden-line sections correctly dim the edges behind them.
+  if (!translucent_section) draw_section_cap();
 
   if (line_overlay) {
     gl_.glDisable(GL_POLYGON_OFFSET_FILL);
@@ -2082,6 +2081,10 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     gl_.glDepthMask(GL_TRUE);
     gl_.glDisable(GL_BLEND);
   }
+
+  // Blend over all retained surfaces, edges, and ghosts. A translucent cap
+  // writes no depth; interior geometry must remain visible through the hatch.
+  if (translucent_section) draw_section_cap();
 
   // Selection edges are intentionally the final model pass. GL_GREATER
   // first sketches the occluded selected edges as a thin, faint ghost; the

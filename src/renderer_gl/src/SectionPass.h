@@ -47,8 +47,11 @@ using SolidLookup = std::function<SolidDraw(const scene::Mesh&)>;
 //     the plane cut has lost its front face to the clip, so its back face is
 //     unmatched and the count is nonzero.
 //   Pass B (fill): draw the plane's cross-section polygon wherever the stencil
-//     is nonzero, writing opaque colour and depth. Keep this mask until the
-//     auxiliary plane draws so its translucent tint can exclude cut material.
+//     is nonzero. Opaque caps write colour and depth before the edge passes;
+//     translucent caps blend after retained geometry without writing depth.
+//     Keep this mask until the auxiliary plane draws so its tint excludes cut
+//     material. Inner cavity surfaces have opposite winding and cancel the
+//     outer shell's count, leaving real holes open in either display style.
 //
 // Counting, not parity. GL_INVERT would be one line shorter and is what most
 // tutorials show, but it breaks as soon as two bodies are cut by the same plane:

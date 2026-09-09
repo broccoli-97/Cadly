@@ -201,6 +201,7 @@ private:
   QAction* act_section_reset_{nullptr};
   QAction* act_section_show_plane_{nullptr};
   QAction* act_section_hatch_{nullptr};
+  QAction* act_section_translucent_{nullptr};
   QAction* act_section_axis_x_{nullptr};
   QAction* act_section_axis_y_{nullptr};
   QAction* act_section_axis_z_{nullptr};

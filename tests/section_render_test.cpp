@@ -1,6 +1,7 @@
 #include "cadly/renderer_gl/GLRenderer.h"
 #include "cadly/scene/Scene.h"
 
+#include <QDir>
 #include <QGuiApplication>
 #include <QImage>
 #include <QOffscreenSurface>
@@ -37,15 +38,19 @@ int color_distance(QRgb a, QRgb b) {
                    std::abs(qAlpha(a) - qAlpha(b))});
 }
 
-void check_patch_equal(const QImage& a, const QImage& b, QPoint at,
-                       const char* message) {
+int patch_distance(const QImage& a, const QImage& b, QPoint at) {
   int delta = 0;
   for (int y = at.y() - 8; y <= at.y() + 8; ++y) {
     for (int x = at.x() - 8; x <= at.x() + 8; ++x) {
       delta = std::max(delta, color_distance(a.pixel(x, y), b.pixel(x, y)));
     }
   }
-  check(delta <= 1, message);
+  return delta;
+}
+
+void check_patch_equal(const QImage& a, const QImage& b, QPoint at,
+                       const char* message) {
+  check(patch_distance(a, b, at) <= 1, message);
 }
 
 QPoint project(const s::Camera& camera, const s::vec3& world) {
@@ -55,9 +60,10 @@ QPoint project(const s::Camera& camera, const s::vec3& world) {
           static_cast<int>((0.5f - ndc.y * 0.5f) * kSize)};
 }
 
-void add_box(s::Scene& scene, const s::vec3& lo, const s::vec3& hi,
-             std::uint32_t material) {
-  auto mesh = std::make_shared<s::Mesh>();
+void append_box(s::Mesh& mesh, const s::vec3& lo, const s::vec3& hi,
+                std::uint32_t material, bool inward = false) {
+  s::Submesh sub;
+  sub.index_offset = static_cast<std::uint32_t>(mesh.indices.size());
   const s::vec3 centre = (lo + hi) * 0.5f;
   const s::vec3 half = (hi - lo) * 0.5f;
   for (int axis = 0; axis < 3; ++axis) {
@@ -67,23 +73,35 @@ void add_box(s::Scene& scene, const s::vec3& lo, const s::vec3& hi,
       u[(axis + 1) % 3] = half[(axis + 1) % 3];
       v[(axis + 2) % 3] = half[(axis + 2) % 3] * sign;
       const s::vec3 face = centre + normal * half[axis];
-      const auto first = static_cast<std::uint32_t>(mesh->vertices.size());
+      const auto first = static_cast<std::uint32_t>(mesh.vertices.size());
       for (const s::vec3& p : {face - u - v, face + u - v,
                                face + u + v, face - u + v}) {
-        mesh->vertices.push_back({p, normal});
+        mesh.vertices.push_back({p, inward ? -normal : normal});
       }
-      for (std::uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) {
-        mesh->indices.push_back(first + i);
+      if (inward) {
+        for (std::uint32_t i : {0u, 2u, 1u, 0u, 3u, 2u}) {
+          mesh.indices.push_back(first + i);
+        }
+      } else {
+        for (std::uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) {
+          mesh.indices.push_back(first + i);
+        }
       }
     }
   }
-  mesh->bounds.expand(lo);
-  mesh->bounds.expand(hi);
-  s::Submesh sub;
-  sub.index_count = static_cast<std::uint32_t>(mesh->indices.size());
+  mesh.bounds.expand(lo);
+  mesh.bounds.expand(hi);
+  sub.index_count = static_cast<std::uint32_t>(mesh.indices.size()) - sub.index_offset;
   sub.material_index = material;
-  sub.bounds = mesh->bounds;
-  mesh->submeshes.push_back(sub);
+  sub.bounds.expand(lo);
+  sub.bounds.expand(hi);
+  mesh.submeshes.push_back(sub);
+}
+
+void add_box(s::Scene& scene, const s::vec3& lo, const s::vec3& hi,
+             std::uint32_t material) {
+  auto mesh = std::make_shared<s::Mesh>();
+  append_box(*mesh, lo, hi, material);
   s::Node node;
   node.mesh_index = scene.add_mesh(mesh);
   scene.add_node(std::move(node));
@@ -114,6 +132,7 @@ void verify_section(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
   mode.section_enabled = true;
   mode.section_show_plane = false;
   mode.section_hatch = false;
+  mode.section_translucent = false;
   mode.background_top = mode.background_bottom = s::vec3(0.08f);
   place_section(mode, scene, 0.0f);
 
@@ -227,6 +246,139 @@ void verify_section(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
                      "retained outer surfaces must occlude the cap from behind");
 }
 
+void check_cap_blend(const QImage& image, QPoint cap, QPoint behind,
+                     const s::vec3& fill, const char* message) {
+  // Compare real framebuffer pixels against the intended 35% overlay, using
+  // an adjacent view of the same flat rear surface as the compositing input.
+  const QRgb background = image.pixel(behind);
+  const auto channel = [](float color, int rear) {
+    return static_cast<int>(std::lround(color * 255.0f * 0.35f + rear * 0.65f));
+  };
+  const QRgb expected = qRgb(channel(fill.r, qRed(background)),
+                             channel(fill.g, qGreen(background)),
+                             channel(fill.b, qBlue(background)));
+  check(color_distance(image.pixel(cap), expected) <= 2, message);
+}
+
+void verify_translucent(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
+                        s::Scene& scene, int samples, s::Projection projection) {
+  scene.camera.projection_mode = projection;
+  scene.camera.orientation = s::quat(1.0f, 0.0f, 0.0f, 0.0f);
+  scene.nodes[2].visible = true;
+  scene.nodes[2].ghosted = false;
+  r::DisplayMode mode;
+  mode.msaa_samples = samples;
+  mode.show_axes = mode.show_scale_bar = mode.show_edges = false;
+  mode.section_enabled = true;
+  mode.section_show_plane = false;
+  mode.section_hatch = false;
+  mode.background_top = mode.background_bottom = s::vec3(0.08f);
+  place_section(mode, scene, 0.0f);
+  const QPoint cap = project(scene.camera, {-1.5f, 1.0f, 0.0f});
+  const QPoint gap = project(scene.camera, {0.0f, 1.3f, 0.0f});
+  auto draw = [&]() {
+    target.bind();
+    renderer.render(mode);
+    return target.toImage();
+  };
+  auto backdrop = [&](const s::vec3& color) {
+    scene.materials[1].base_color = s::vec4(color, 1.0f);
+    scene.materials[1].emissive_color = color;
+    scene.materials[1].emissive = 1.0f;
+  };
+  backdrop({0.95f, 0.02f, 0.03f});
+  check_cap_blend(draw(), cap, gap, mode.section_cap_color,
+                  "default cap must blend over retained geometry at 35% opacity");
+  mode.section_hatch = true;
+  const QImage red = draw();
+  backdrop({0.02f, 0.12f, 0.95f});
+  const QImage blue = draw();
+  int least_change = 255, darkest = 255, lightest = 0;
+  bool opaque_framebuffer = true;
+  for (int y = cap.y() - 8; y <= cap.y() + 8; ++y) {
+    for (int x = cap.x() - 8; x <= cap.x() + 8; ++x) {
+      const QRgb pixel = blue.pixel(x, y);
+      least_change = std::min(least_change, color_distance(red.pixel(x, y), pixel));
+      darkest = std::min(darkest, qGreen(pixel));
+      lightest = std::max(lightest, qGreen(pixel));
+      opaque_framebuffer = opaque_framebuffer && qAlpha(pixel) == 255;
+    }
+  }
+  check(least_change > 40, "interior color must show through both hatch strokes and gaps");
+  check(lightest - darkest > 15, "translucent hatch must remain legible");
+  check(opaque_framebuffer, "cap transparency must preserve window opacity");
+  mode.section_show_plane = true;
+  const QImage preview = draw();
+  check_patch_equal(blue, preview, cap, "plane preview must not tint a translucent cap");
+
+  mode.section_show_plane = false;
+  mode.section_hatch = false;
+  scene.nodes[2].ghosted = true;
+  mode.ghost_opacity = 0.8f;
+  check_cap_blend(draw(), cap, gap, mode.section_cap_color,
+                  "translucent cap must blend after rear isolate ghosts");
+  scene.nodes[2].ghosted = false;
+
+  mode.hidden_line = true;
+  const QImage paper = draw();
+  mode.section_translucent = false;
+  check_patch_equal(paper, draw(), cap,
+                     "hidden-line paper must stay opaque regardless of translucency preference");
+
+  mode.hidden_line = false;
+  mode.section_translucent = true;
+  scene.nodes[2].visible = false;
+  scene.camera.orientation = glm::angleAxis(glm::pi<float>(), s::vec3(0.0f, 1.0f, 0.0f));
+  const QPoint back = project(scene.camera, {-1.5f, 1.0f, -0.5f});
+  const QImage back_cut = draw();
+  mode.section_enabled = false;
+  check_patch_equal(back_cut, draw(), back,
+                     "retained outer surfaces must occlude translucent caps from behind");
+}
+
+void verify_hollow(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
+                   s::Scene& scene, int samples, s::Projection projection) {
+  std::fprintf(stdout, "Hollow section pixels: MSAA %d, %s\n", samples,
+               projection == s::Projection::Orthographic ? "ortho" : "perspective");
+  scene.camera.projection_mode = projection;
+  scene.camera.orientation = glm::angleAxis(glm::radians(20.0f), s::vec3(0, 1, 0)) *
+                             glm::angleAxis(glm::radians(-15.0f), s::vec3(1, 0, 0));
+  r::DisplayMode mode;
+  mode.msaa_samples = samples;
+  mode.show_axes = mode.show_scale_bar = mode.show_edges = false;
+  mode.section_enabled = true;
+  mode.section_show_plane = false;
+  place_section(mode, scene, 0.0f);
+  const QPoint cavity = project(scene.camera, {0.0f, 0.6f, 0.0f});
+  const QPoint wall = project(scene.camera, {2.15f, 0.6f, 0.0f});
+  auto draw = [&]() {
+    target.bind();
+    renderer.render(mode);
+    return target.toImage();
+  };
+  const QImage translucent = draw();
+  mode.section_translucent = false;
+  const QImage opaque = draw();
+  // Marking the mesh open disables capping and gives an independent reference
+  // for the actual inner wall seen through the cavity.
+  scene.meshes[0]->double_sided = true;
+  const QImage open = draw();
+  scene.meshes[0]->double_sided = false;
+  check_patch_equal(opaque, open, cavity, "opaque hatch must leave a hollow solid's cavity open");
+  check_patch_equal(translucent, open, cavity,
+                     "translucent hatch must leave a hollow solid's cavity open");
+  check(patch_distance(opaque, translucent, wall) > 30,
+        "hollow solid's material must still receive the selected cap style");
+
+  const QString capture_dir = qEnvironmentVariable("CADLY_SECTION_TEST_CAPTURE_DIR");
+  if (!capture_dir.isEmpty() && samples == 4 && projection == s::Projection::Perspective) {
+    check(QDir().mkpath(capture_dir), "create section capture directory");
+    check(opaque.save(QDir(capture_dir).filePath("section-hollow-opaque.png")), "save opaque section");
+    check(translucent.save(QDir(capture_dir).filePath("section-hollow-translucent.png")),
+          "save translucent section");
+  }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -284,6 +436,27 @@ int main(int argc, char** argv) {
     for (s::Projection projection : {s::Projection::Orthographic,
                                      s::Projection::Perspective}) {
       verify_section(*renderer, target, *scene, samples, projection);
+      verify_translucent(*renderer, target, *scene, samples, projection);
+    }
+  }
+
+  auto hollow = std::make_shared<s::Scene>();
+  hollow->materials.resize(2);
+  hollow->materials[1].base_color = s::vec4(0.16f, 0.52f, 0.72f, 1.0f);
+  auto shell = std::make_shared<s::Mesh>();
+  append_box(*shell, {-2.5f, -2.0f, -1.6f}, {2.5f, 2.0f, 1.6f}, 0);
+  append_box(*shell, {-1.7f, -1.2f, -1.0f}, {1.7f, 1.2f, 1.0f}, 1, true);
+  s::Node hollow_node;
+  hollow_node.mesh_index = hollow->add_mesh(shell);
+  hollow->add_node(std::move(hollow_node));
+  hollow->update_transforms();
+  hollow->camera.target = s::vec3(0.0f);
+  hollow->camera.distance = 8.0f;
+  renderer->attach_scene(hollow);
+  for (int samples : {0, 4}) {
+    for (s::Projection projection : {s::Projection::Orthographic,
+                                     s::Projection::Perspective}) {
+      verify_hollow(*renderer, target, *hollow, samples, projection);
     }
   }
   renderer->shutdown();

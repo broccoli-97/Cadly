@@ -699,9 +699,9 @@ void MainWindow::build_actions() {
     }
   });
 
-  // The two style options follow the Dimmed-Hidden-Lines pattern: the checkbox
+  // The style options follow the Dimmed-Hidden-Lines pattern: the checkbox
   // IS the persisted preference, never force-cleared, because the renderer
-  // ignores both while no section is active.
+  // ignores them while no section is active.
   act_section_show_plane_ = new QAction(tr("Show &Plane and Handle"), this);
   act_section_show_plane_->setCheckable(true);
   act_section_show_plane_->setChecked(true);
@@ -718,6 +718,15 @@ void MainWindow::build_actions() {
     tr("Draw drafting hatch strokes across the cut face"));
   act_section_hatch_->setEnabled(false);
   connect(act_section_hatch_, &QAction::toggled,
+          this, [this](bool) { update_display_mode(); });
+
+  act_section_translucent_ = new QAction(tr("&Translucent Cut Face"), this);
+  act_section_translucent_->setCheckable(true);
+  act_section_translucent_->setChecked(true);
+  act_section_translucent_->setToolTip(
+    tr("See interior geometry through the cut face in shaded mode"));
+  act_section_translucent_->setEnabled(false);
+  connect(act_section_translucent_, &QAction::toggled,
           this, [this](bool) { update_display_mode(); });
 
   // Plane orientation presets. Exclusive, and named for the axis the plane's
@@ -927,6 +936,7 @@ void MainWindow::build_shell() {
   section_menu_->addSeparator();
   section_menu_->addAction(act_section_show_plane_);
   section_menu_->addAction(act_section_hatch_);
+  section_menu_->addAction(act_section_translucent_);
   ta.section          = act_section_;
   ta.section_menu     = section_menu_;
   ta.toggle_sidebar   = act_toggle_sidebar_;
@@ -1133,6 +1143,7 @@ void MainWindow::build_menus() {
   section_sub->addSeparator();
   section_sub->addAction(act_section_show_plane_);
   section_sub->addAction(act_section_hatch_);
+  section_sub->addAction(act_section_translucent_);
   view_menu->addSeparator();
   view_menu->addAction(act_perspective_);
   auto* views_menu = view_menu->addMenu(tr("Standard &Views"));
@@ -1297,11 +1308,14 @@ void MainWindow::update_display_mode() {
   } else {
     mode.section_enabled = false;
   }
-  // Same unconditional feed as show_hidden_edges: the renderer ignores both
+  // Same unconditional feed as show_hidden_edges: the renderer ignores these
   // while no section is active, so the preferences survive mode round-trips
   // without ever being force-cleared here.
   mode.section_show_plane = act_section_show_plane_->isChecked();
   mode.section_hatch      = act_section_hatch_->isChecked();
+  mode.section_translucent = act_section_translucent_->isChecked();
+  act_section_translucent_->setEnabled(
+    mode.section_enabled && !mode.hidden_line && !mode.wireframe);
   if (mode.wireframe || mode.hidden_line) {
     mode.show_edges         = mode.hidden_line;
     mode.show_triangle_mesh = false;
@@ -2349,6 +2363,8 @@ void MainWindow::load_settings() {
             act_section_show_plane_->isChecked()).toBool());
   act_section_hatch_->setChecked(
     s.value("section_hatch", act_section_hatch_->isChecked()).toBool());
+  act_section_translucent_->setChecked(
+    s.value("section_translucent", act_section_translucent_->isChecked()).toBool());
   s.endGroup();
   inspector_->load_display(mode);
 
@@ -2385,6 +2401,7 @@ void MainWindow::save_settings() const {
   s.setValue("isolate_hide_others", act_isolate_hide_others_->isChecked());
   s.setValue("section_show_plane",  act_section_show_plane_->isChecked());
   s.setValue("section_hatch",       act_section_hatch_->isChecked());
+  s.setValue("section_translucent", act_section_translucent_->isChecked());
   s.endGroup();
 
   s.beginGroup(QStringLiteral("ui"));

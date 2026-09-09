@@ -62,7 +62,7 @@ struct ThemeTokens {
   // selection pill, the viewport uses this.
   QColor viewport_highlight;
 
-  // Opaque section fill (DisplayMode::section_cap_color). Pale copper separates
+  // Section fill (DisplayMode::section_cap_color). Pale copper separates
   // the cut from grey surfaces and the saturated orange selection highlight.
   QColor viewport_section;
 

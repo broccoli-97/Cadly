@@ -870,6 +870,14 @@
         <translation>在剖切截面上绘制工程图剖面线</translation>
     </message>
     <message>
+        <source>&amp;Translucent Cut Face</source>
+        <translation>半透明截面(&amp;T)</translation>
+    </message>
+    <message>
+        <source>See interior geometry through the cut face in shaded mode</source>
+        <translation>在着色模式下透过截面查看内部结构</translation>
+    </message>
+    <message>
         <location filename="../src/ui/src/MainWindow.cpp" line="738"/>
         <source>Normal to &amp;X</source>
         <translation>法向沿 &amp;X</translation>

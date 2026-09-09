@@ -130,14 +130,17 @@ struct DisplayMode {
   // space so they do not swim while orbiting. In hidden-line mode the hatch is
   // what makes the cap read as a section rather than as a blank patch of paper.
   bool         section_hatch     {true};
+  // Blend the cut face over interior geometry in shaded mode. Hidden-line
+  // sections keep opaque paper and depth so their occluded edges stay dimmed.
+  bool         section_translucent{true};
   // Hover/drag feedback on the manipulator, driven by the host's screen-space
   // hit-test: which piece the cursor is over, or is currently dragging.
   // Transient view state like `show_rotation_pivot`, not a preference. The
   // renderer highlights that piece; None means nothing is hot.
   SectionGizmoPart section_hot_part{SectionGizmoPart::None};
-  // Opaque cut-face fill, in framebuffer sRGB like `selection_color`. The
+  // Cut-face fill, in framebuffer sRGB like `selection_color`. The
   // pale copper default matches the dark theme's viewport_section token;
-  // the UI overwrites it per theme. Only the auxiliary plane is translucent.
+  // the UI overwrites it per theme.
   scene::vec3  section_cap_color {0.906f, 0.749f, 0.588f};
 
   // Anti-aliasing. Off (0 or 1) renders directly to the host's default

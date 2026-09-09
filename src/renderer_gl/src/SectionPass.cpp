@@ -21,11 +21,12 @@ namespace {
 // drawn as a fan.
 constexpr int kMaxPolyVerts = 12;
 
-// Hatch strength mixes ink into an opaque fill; it is not surface opacity.
+// Hatch strength mixes ink into the fill independently of surface opacity.
 constexpr float kHatchShadeTone = 0.40f;
 constexpr float kHatchShadeAlpha = 0.70f;
 constexpr float kHatchInkAlpha = 0.46f;
 constexpr float kHatchPitchPx = 13.0f;
+constexpr float kTranslucentCapOpacity = 0.35f;
 
 // Handle geometry, in a unit space the draw scales to a constant pixel length:
 // a shaft along Z with a cone at each end. Double-headed because the drag is
@@ -317,6 +318,7 @@ void SectionPass::draw_cap(GLFunctions& gl, const scene::Scene& scene,
                            const SolidLookup& lookup,
                            int viewport_h) {
   if (!active_ || !prog_section_.valid()) return;
+  const bool translucent = mode.section_translucent && !mode.hidden_line;
 
   upload_cross_section(gl, cap_epsilon_);
   if (poly_count_ < 3) return;   // plane is clear of the model
@@ -381,7 +383,7 @@ void SectionPass::draw_cap(GLFunctions& gl, const scene::Scene& scene,
   // ---- Pass B: fill the marked pixels with the cut face --------------------
   gl.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   gl.glEnable(GL_DEPTH_TEST);
-  gl.glDepthMask(GL_TRUE);
+  gl.glDepthMask(translucent ? GL_FALSE : GL_TRUE);
   gl.glStencilFunc(GL_NOTEQUAL, 0, 0xFF);
   // Leave the write mask alone and make the ops no-ops instead. glStencilMask(0)
   // would work here too, but it is also what gates glClear(GL_STENCIL_BUFFER_BIT)
@@ -391,7 +393,8 @@ void SectionPass::draw_cap(GLFunctions& gl, const scene::Scene& scene,
   // distance is ~0 and the comparison is a coin flip.
   gl.glDisable(GL_CLIP_DISTANCE0);
 
-  scene::vec4 fill(mode.section_cap_color, 1.0f);
+  scene::vec4 fill(mode.section_cap_color,
+                   translucent ? kTranslucentCapOpacity : 1.0f);
   scene::vec4 hatch(0.0f, 0.0f, 0.0f, 0.0f);
   float pitch = 0.0f;
 
@@ -421,9 +424,15 @@ void SectionPass::draw_cap(GLFunctions& gl, const scene::Scene& scene,
     pitch = kHatchPitchPx * world_per_pixel(scene.camera, viewport_h);
   }
 
-  // A cap is exposed solid material, including the spaces BETWEEN hatch lines.
-  // Replace colour and write depth so geometry behind it cannot show through.
-  gl.glDisable(GL_BLEND);
+  // A translucent cap runs after the retained geometry, including isolate
+  // ghosts. Preserve framebuffer alpha so the window itself stays opaque.
+  if (translucent) {
+    gl.glEnable(GL_BLEND);
+    gl.glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                           GL_ZERO, GL_ONE);
+  } else {
+    gl.glDisable(GL_BLEND);
+  }
 
   gl.glUseProgram(prog_section_.id());
   const scene::mat4 identity(1.0f);
@@ -450,6 +459,8 @@ void SectionPass::draw_cap(GLFunctions& gl, const scene::Scene& scene,
   gl.glStencilFunc(GL_ALWAYS, 0, 0xFF);
   gl.glStencilMask(0xFF);
   gl.glDisable(GL_STENCIL_TEST);
+  gl.glDisable(GL_BLEND);
+  gl.glDepthMask(GL_TRUE);
   gl.glEnable(GL_CULL_FACE);
   gl.glEnable(GL_DEPTH_TEST);
   gl.glEnable(GL_CLIP_DISTANCE0);   // the model passes after us are still clipped
