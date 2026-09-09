@@ -7,11 +7,6 @@
 namespace cadly::ui {
 
 namespace {
-constexpr float kOrbitSpeed = 0.006f;   // rad/pixel
-constexpr float kPanSpeed   = 0.0025f;
-constexpr float kZoomSpeed  = 0.0025f;
-constexpr float kWheelSpeed = 0.0015f;
-
 // Safety margin on the scene's bounding sphere for the perspective
 // stay-outside rule: the eye is kept at ≥ radius × this, so the model's
 // extreme points (which touch the sphere) can never reach the near plane.
@@ -155,68 +150,52 @@ void CameraController::set_rotation_pivot_resolver(
                       : std::make_unique<TargetPivotResolver>();
 }
 
-void CameraController::begin_drag(DragMode mode, QPoint at) {
-  drag_mode_ = mode;
-  last_pos_  = at;
-
-  if (mode == DragMode::Orbit) {
-    // Lock in the pivot for the entire drag. Resolving per-mouse-move would
-    // make the model squirm as the cursor passed over different geometry.
-    rotation_pivot_ = pivot_resolver_->resolve(camera_, at).world_position;
-    emit rotation_pivot_visibility_changed(rotation_pivot_, true);
-  }
-}
-
-void CameraController::update_drag(QPoint to) {
-  if (drag_mode_ == DragMode::None) return;
-  const QPoint delta = to - last_pos_;
-  last_pos_ = to;
-
-  switch (drag_mode_) {
-    case DragMode::Orbit: {
-      // Negate so the camera moves opposite to the mouse, matching the
-      // "grab the world and drag it" feel of the previous Euler controller.
-      const float yaw_delta   = -delta.x() * kOrbitSpeed;
-      const float pitch_delta = -delta.y() * kOrbitSpeed;
-      if (orbit_style_ == OrbitStyle::Turntable) {
-        camera_.orbit_turntable(yaw_delta, pitch_delta, rotation_pivot_);
+void CameraController::apply_navigation(const input::NavigationCommand& command) {
+  using Type = input::CommandType;
+  switch (command.type) {
+    case Type::None:
+      return;
+    case Type::BeginOrbit:
+      if (rotating_) return;
+      rotation_pivot_ = pivot_resolver_->resolve(
+        camera_, QPoint(command.position.x, command.position.y)).world_position;
+      rotating_ = true;
+      emit rotation_pivot_visibility_changed(rotation_pivot_, true);
+      return;
+    case Type::EndOrbit:
+      if (!rotating_) return;
+      rotating_ = false;
+      emit rotation_pivot_visibility_changed(rotation_pivot_, false);
+      return;
+    case Type::OrbitFree:
+    case Type::OrbitTurntable:
+      if (!rotating_ || !std::isfinite(command.x) || !std::isfinite(command.y)) return;
+      if (command.type == Type::OrbitTurntable) {
+        camera_.orbit_turntable(command.x, command.y, rotation_pivot_);
       } else {
-        camera_.orbit(yaw_delta, pitch_delta, rotation_pivot_);
+        camera_.orbit(command.x, command.y, rotation_pivot_);
       }
       break;
-    }
-    case DragMode::Pan: {
-      // Translate target by camera-space basis scaled to viewport units.
-      const float scale = camera_.distance * kPanSpeed;
-      const scene::vec3 right = camera_.right();
-      const scene::vec3 up    = camera_.up();
-      camera_.target -= right * (float)delta.x() * scale;
-      camera_.target += up    * (float)delta.y() * scale;
+    case Type::Pan:
+      if (!std::isfinite(command.x) || !std::isfinite(command.y)) return;
+      camera_.target += camera_.right() * (command.x * camera_.distance);
+      camera_.target += camera_.up() * (command.y * camera_.distance);
       break;
-    }
-    case DragMode::Dolly: {
-      const float factor = 1.0f + delta.y() * kZoomSpeed;
-      camera_.distance = clamp_distance(camera_.distance * factor);
+    case Type::Zoom:
+    case Type::ZoomAtCursor:
+      if (!std::isfinite(command.factor) || command.factor < 0.0f) return;
+      if (command.type == Type::ZoomAtCursor) {
+        zoom_at(QPoint(command.position.x, command.position.y), command.factor);
+        return;
+      }
+      camera_.distance = clamp_distance(camera_.distance * command.factor);
       break;
-    }
-    default: break;
   }
-  // Every drag step shifts the camera relative to the scene, so the near/
-  // far planes derived from that distance need to follow.
   update_clip_planes();
   emit changed();
 }
 
-void CameraController::end_drag() {
-  const bool was_orbiting = drag_mode_ == DragMode::Orbit;
-  drag_mode_ = DragMode::None;
-  if (was_orbiting) {
-    emit rotation_pivot_visibility_changed(rotation_pivot_, false);
-  }
-}
-
-void CameraController::wheel(QPoint cursor_pos, int angle_delta) {
-  const float factor       = std::exp(-static_cast<float>(angle_delta) * kWheelSpeed);
+void CameraController::zoom_at(QPoint cursor_pos, float factor) {
   const float old_distance = camera_.distance;
   const float new_distance = clamp_distance(old_distance * factor);
   const float ratio        = (old_distance > 0.0f) ? (new_distance / old_distance) : 1.0f;
@@ -264,7 +243,7 @@ float CameraController::world_per_logical_pixel() const {
 
 ScreenRay CameraController::screen_ray(QPoint widget_pos) const {
   // Cursor in NDC (Qt y-down -> GL y-up), then a point on the focal plane
-  // through `target` — the same construction wheel() anchors its zoom on.
+  // through `target` — the same construction zoom_at() anchors its zoom on.
   const float ndc_x = (2.0f * static_cast<float>(widget_pos.x()) /
                        static_cast<float>(viewport_w_)) - 1.0f;
   const float ndc_y = 1.0f - (2.0f * static_cast<float>(widget_pos.y()) /

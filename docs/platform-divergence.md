@@ -21,12 +21,22 @@ Only Zero Chrome needs an explicit per-platform binding.
 | Exit isolate / restore chrome | Esc | same | |
 
 Viewport navigation is likewise shared: the selected navigation scheme
-(Cadly, Blender, Rhino, Fusion 360, Maya — Inspector ▸ Display) uses the
+(Cadly, Blender, Rhino, Fusion 360, Maya — Preferences ▸ Navigation) uses the
 same binding table on every platform, with modifiers rendered natively
 (⌥-drag / ⌥⌘-drag on macOS, Alt / Alt+Ctrl elsewhere). The two trackpad
 rows — Alt+left orbit, Alt+Ctrl+left pan — exist in every scheme chiefly
 for trackpads: no middle button, and a held two-finger click is a poor
 orbit.
+
+Input normalization and gesture ownership live in `Cadly::Input` and its
+`Cadly::InputQt` adapter, not in the camera or settings window. `Primary` is
+Qt's logical Control modifier (Command on macOS); `Secondary` is Qt's Meta
+modifier (physical Control on macOS). No second platform-specific swap occurs.
+Logical pointer coordinates, late-modifier trackpad drags, exact modifier
+matching, and natural-scroll delta handling are covered by independent tests.
+The shared INI paths `display/navigation_scheme` and `display/orbit_style`
+remain unchanged. See [input-architecture.md](input-architecture.md) for the
+module boundaries, extension points, and regression matrix.
 
 Zero Chrome is the one case the automatic mapping gets wrong: `Qt::CTRL |
 Qt::Key_Period` would surface as **⌘.**, which macOS reserves as the

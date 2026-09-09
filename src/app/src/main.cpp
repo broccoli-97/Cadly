@@ -4,6 +4,7 @@
 #include "cadly/app/RecentFiles.h"
 #include "cadly/app/Settings.h"
 #include "cadly/app/Theme.h"
+#include "cadly/input_qt/InputPreferences.h"
 #include "cadly/platform/Log.h"
 #include "cadly/ui/MainWindow.h"
 #include "cadly/ui/ThemeTokens.h"
@@ -194,7 +195,12 @@ int main(int argc, char** argv) {
     }
   }
 
-  cadly::ui::MainWindow window;
+  cadly::input_qt::InputPreferences input_preferences(settings.input_preferences());
+  QObject::connect(&input_preferences, &cadly::input_qt::InputPreferences::changed,
+                   &settings, [&settings, &input_preferences]() {
+    settings.set_input_preferences(input_preferences.value());
+  });
+  cadly::ui::MainWindow window(input_preferences);
 
   // Recents + last-open-dir live in app-side persistence; the shell only
   // displays them and reports successful imports. This wiring is what turns

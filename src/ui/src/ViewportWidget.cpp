@@ -1,6 +1,7 @@
 #include "cadly/ui/ViewportWidget.h"
 
 #include "cadly/ui/CameraController.h"
+#include "cadly/input_qt/QtInputAdapter.h"
 #include "cadly/renderer/SectionPlane.h"
 #include "cadly/renderer_gl/GLRenderer.h"
 
@@ -160,6 +161,7 @@ void ViewportWidget::paintGL() {
 }
 
 void ViewportWidget::set_scene(std::shared_ptr<scene::Scene> scene, bool fit) {
+  cancel_input();
   // Camera changes normally reach Scene in paintGL. A tab switch may happen
   // before that queued paint, so persist the controller state explicitly.
   if (scene_) scene_->camera = camera_->camera();
@@ -179,7 +181,13 @@ void ViewportWidget::set_scene(std::shared_ptr<scene::Scene> scene, bool fit) {
 }
 
 void ViewportWidget::set_display_mode(const renderer::DisplayMode& mode) {
+  if (input_.tool_active() && (!mode.section_enabled || !mode.section_show_plane)) {
+    cancel_input();
+  }
   display_mode_ = mode;
+  if (!mode.section_enabled || !mode.section_show_plane) {
+    display_mode_.section_hot_part = renderer::SectionGizmoPart::None;
+  }
   update();
 }
 
@@ -296,91 +304,110 @@ bool ViewportWidget::section_offset_at(QPoint pos, float& out_offset) const {
   return true;
 }
 
-void ViewportWidget::mousePressEvent(QMouseEvent* e) {
-  using DM   = CameraController::DragMode;
-  using Part = renderer::SectionGizmoPart;
-  // The active NavigationScheme maps (button, modifiers) to a drag mode —
-  // see NavigationScheme.cpp for the tables. No scheme maps a *plain* left
-  // press: the section gizmo can claim it first, then picking. Until a pick
-  // handler lands, an unclaimed left press clears the selection highlight.
-  const DM mode = resolve_navigation(nav_scheme_, e->button(), e->modifiers());
-  if (mode != DM::None) {
-    camera_->begin_drag(mode, e->pos());
-    camera_drag_active_ = true;
-    setCursor(Qt::ClosedHandCursor);
-    e->accept();
-  } else if (e->button() == Qt::LeftButton) {
-    // The section gizmo gets first refusal on the press, and must CONSUME it:
-    // falling through to background_clicked() would clear the sidebar's
-    // selection every time the user reached for the plane.
-    const Part part = hit_section_gizmo(e->pos());
-    if (part != Part::None) {
-      section_drag_part_        = part;
-      section_drag_last_pos_    = e->pos();
-      section_drag_angle_       = 0.0f;
-      section_drag_start_plane_ = display_mode_.section;
-      section_drag_start_angle_ = 0.0f;
-
-      if (part == Part::Translate) {
-        // Remember where along the axis the cursor was pointing relative to the
-        // plane, so the plane slides with the cursor instead of jumping so its
-        // centre lands under the press.
-        float grabbed = 0.0f;
-        section_drag_grab_ = section_offset_at(e->pos(), grabbed)
-          ? display_mode_.section.offset - grabbed
-          : 0.0f;
-      } else if (!section_ring_angle_at_cursor(section_drag_start_plane_, part,
-                                               e->pos(),
-                                               section_drag_start_angle_)) {
-        // Edge-on ring: there is no exact grab angle, so anchor on the sampled
-        // point that projects nearest the cursor. Only the screen-tangent
-        // fallback reads it, and a fraction of a degree there costs nothing.
-        section_drag_start_angle_ = 0.0f;
-        scene::vec3 centre, e0, e1;
-        if (scene_ && scene_->world_bounds.valid() &&
-            renderer::section_ring_frame(section_drag_start_plane_,
-                                         scene_->world_bounds, part,
-                                         section_world_per_device_pixel(),
-                                         centre, e0, e1)) {
-          const scene::vec2 cursor(static_cast<float>(e->pos().x()),
-                                   static_cast<float>(e->pos().y()));
-          float best = std::numeric_limits<float>::max();
-          for (int i = 0; i < kRingSamples; ++i) {
-            const float t = kTwoPi * static_cast<float>(i) / kRingSamples;
-            bool behind = false;
-            const scene::vec2 p = camera_->project_to_screen(
-              renderer::section_ring_point(centre, e0, e1, t), &behind);
-            if (behind) continue;
-            const float d = glm::length(cursor - p);
-            if (d < best) { best = d; section_drag_start_angle_ = t; }
-          }
-        }
-      }
-
-      display_mode_.section_hot_part = part;
-      setCursor(cursor_for_part(part, /*dragging=*/true));
-      update();
-      e->accept();
-      return;
-    }
-    emit background_clicked();
-    e->accept();
-  } else {
-    QOpenGLWidget::mousePressEvent(e);
+bool ViewportWidget::event(QEvent* e) {
+  switch (e->type()) {
+    case QEvent::FocusOut:
+    case QEvent::WindowDeactivate:
+    case QEvent::UngrabMouse:
+    case QEvent::Hide:
+      cancel_input();
+      break;
+    default:
+      break;
   }
+  return QOpenGLWidget::event(e);
 }
 
-void ViewportWidget::mouseMoveEvent(QMouseEvent* e) {
+bool ViewportWidget::dispatch_pointer(const input::PointerResult& result,
+                                      const input::PointerEvent& event,
+                                      renderer::SectionGizmoPart hit) {
+  using Target = input::PointerTarget;
+  using Phase = input::PointerPhase;
+  const QPoint pos(event.position.x, event.position.y);
+  switch (result.target) {
+    case Target::Navigation:
+      camera_->apply_navigation(result.navigation);
+      setCursor(result.phase == Phase::End ? Qt::ArrowCursor : Qt::ClosedHandCursor);
+      break;
+    case Target::Tool:
+      if (result.phase == Phase::Begin) begin_section_drag(hit, pos);
+      else if (result.phase == Phase::End) end_section_drag(pos);
+      else update_section_drag(pos, input::contains(event.modifiers, input::Modifiers::Shift));
+      break;
+    case Target::Selection:
+      emit background_clicked();
+      break;
+    case Target::None:
+      break;
+  }
+  return result.consumed;
+}
+
+void ViewportWidget::cancel_input() {
+  dispatch_pointer(input_.cancel(), {});
+  if (display_mode_.section_hot_part != renderer::SectionGizmoPart::None) {
+    display_mode_.section_hot_part = renderer::SectionGizmoPart::None;
+    update();
+  }
+  setCursor(Qt::ArrowCursor);
+}
+
+void ViewportWidget::mousePressEvent(QMouseEvent* e) {
+  const auto pointer = input_qt::pointer_event(*e);
+  const auto hit = pointer.button == input::Button::Left
+    ? hit_section_gizmo(e->pos()) : renderer::SectionGizmoPart::None;
+  const auto result = input_.press(pointer, hit != renderer::SectionGizmoPart::None);
+  if (dispatch_pointer(result, pointer, hit)) e->accept();
+  else QOpenGLWidget::mousePressEvent(e);
+}
+
+void ViewportWidget::begin_section_drag(renderer::SectionGizmoPart part, QPoint pos) {
   using Part = renderer::SectionGizmoPart;
-  // A manipulator drag owns the gesture outright, and is handled BEFORE the
-  // late Alt promotion below: Alt arriving part-way through a ring drag must
-  // not convert it into an orbit and throw away the plane the user is tilting.
+  section_drag_part_        = part;
+  section_drag_last_pos_    = pos;
+  section_drag_angle_       = 0.0f;
+  section_drag_start_plane_ = display_mode_.section;
+  section_drag_start_angle_ = 0.0f;
+
+  if (part == Part::Translate) {
+    // Preserve the grabbed offset so the plane does not jump to the cursor.
+    float grabbed = 0.0f;
+    section_drag_grab_ = section_offset_at(pos, grabbed)
+      ? display_mode_.section.offset - grabbed : 0.0f;
+  } else if (!section_ring_angle_at_cursor(section_drag_start_plane_, part, pos,
+                                           section_drag_start_angle_)) {
+    // Edge-on ring: anchor on the nearest projected sample for the tangent
+    // fallback. Only its initial phase matters, not an exact ray/plane hit.
+    scene::vec3 centre, e0, e1;
+    if (scene_ && scene_->world_bounds.valid() &&
+        renderer::section_ring_frame(section_drag_start_plane_, scene_->world_bounds,
+                                     part, section_world_per_device_pixel(), centre, e0, e1)) {
+      const scene::vec2 cursor(static_cast<float>(pos.x()), static_cast<float>(pos.y()));
+      float best = std::numeric_limits<float>::max();
+      for (int i = 0; i < kRingSamples; ++i) {
+        const float t = kTwoPi * static_cast<float>(i) / kRingSamples;
+        bool behind = false;
+        const scene::vec2 p = camera_->project_to_screen(
+          renderer::section_ring_point(centre, e0, e1, t), &behind);
+        if (behind) continue;
+        const float d = glm::length(cursor - p);
+        if (d < best) { best = d; section_drag_start_angle_ = t; }
+      }
+    }
+  }
+  display_mode_.section_hot_part = part;
+  setCursor(cursor_for_part(part, /*dragging=*/true));
+  update();
+}
+
+void ViewportWidget::update_section_drag(QPoint pos, bool snap) {
+  using Part = renderer::SectionGizmoPart;
   if (section_drag_part_ == Part::Translate) {
     float offset = 0.0f;
     // A false here means the plane normal has swung nearly parallel to the view,
     // where a pixel of cursor movement maps to an unbounded world jump. Hold the
     // current offset for this frame rather than letting the plane fly off.
-    if (section_offset_at(e->pos(), offset)) {
+    if (section_offset_at(pos, offset)) {
       const float range =
         display_mode_.section.offset_range(scene_->world_bounds);
       display_mode_.section.offset =
@@ -388,36 +415,17 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e) {
       update();
       emit section_plane_dragged(display_mode_.section, Part::Translate, 0.0f);
     }
-    section_drag_last_pos_ = e->pos();
+  } else if (section_drag_part_ != Part::None) {
+    update_section_rotation(pos, snap);
+  }
+  section_drag_last_pos_ = pos;
+}
+
+void ViewportWidget::mouseMoveEvent(QMouseEvent* e) {
+  const auto pointer = input_qt::pointer_event(*e);
+  if (dispatch_pointer(input_.move(pointer), pointer)) {
     e->accept();
     return;
-  }
-
-  if (section_drag_part_ != Part::None) {
-    update_section_rotation(e->pos(), e->modifiers() & Qt::ShiftModifier);
-    section_drag_last_pos_ = e->pos();
-    e->accept();
-    return;
-  }
-
-  // Late promotion: a drag whose press didn't resolve is dead by default,
-  // but synthesized drags (macOS three-finger drag, BetterTouchTool) can
-  // deliver the mouse-down a beat before the modifier flags land — and
-  // users naturally plant fingers first, modifier second. If the held
-  // button + current modifiers resolve now, start that drag from the current
-  // position. A section drag has already consumed its gesture above.
-  if (!camera_drag_active_) {
-    using DM = CameraController::DragMode;
-    Qt::MouseButton held = Qt::NoButton;
-    if      (e->buttons() == Qt::LeftButton)   held = Qt::LeftButton;
-    else if (e->buttons() == Qt::MiddleButton) held = Qt::MiddleButton;
-    else if (e->buttons() == Qt::RightButton)  held = Qt::RightButton;
-    const DM mode = resolve_navigation(nav_scheme_, held, e->modifiers());
-    if (mode != DM::None) {
-      camera_->begin_drag(mode, e->pos());
-      camera_drag_active_ = true;
-      setCursor(Qt::ClosedHandCursor);
-    }
   }
 
   // Hover feedback, so the manipulator announces itself as grabbable before the
@@ -425,8 +433,8 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e) {
   // while the camera is being dragged: the rings sweep past the cursor as the
   // view turns, and the hover cursor would fight the orbit cursor all the way
   // round.
-  if (display_mode_.section_enabled && !camera_drag_active_) {
-    const Part hot = hit_section_gizmo(e->pos());
+  if (display_mode_.section_enabled && !input_.navigating() && !input_.tool_active()) {
+    const auto hot = hit_section_gizmo(e->pos());
     if (hot != display_mode_.section_hot_part) {
       display_mode_.section_hot_part = hot;
       setCursor(cursor_for_part(hot, /*dragging=*/false));
@@ -434,7 +442,6 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e) {
     }
   }
 
-  camera_->update_drag(e->pos());
   QOpenGLWidget::mouseMoveEvent(e);
 }
 
@@ -502,29 +509,22 @@ void ViewportWidget::update_section_rotation(QPoint pos, bool snap) {
                              applied * 180.0f / kPi);
 }
 
+void ViewportWidget::end_section_drag(QPoint pos) {
+  section_drag_part_ = renderer::SectionGizmoPart::None;
+  display_mode_.section_hot_part = hit_section_gizmo(pos);
+  setCursor(cursor_for_part(display_mode_.section_hot_part, /*dragging=*/false));
+  update();
+  emit section_drag_finished();
+}
+
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* e) {
-  using Part = renderer::SectionGizmoPart;
-  if (section_drag_part_ != Part::None && e->button() == Qt::LeftButton) {
-    section_drag_part_ = Part::None;
-    display_mode_.section_hot_part = hit_section_gizmo(e->pos());
-    setCursor(cursor_for_part(display_mode_.section_hot_part,
-                              /*dragging=*/false));
-    update();
-    emit section_drag_finished();
-    e->accept();
-    return;
-  }
-  camera_->end_drag();
-  camera_drag_active_ = false;
-  setCursor(Qt::ArrowCursor);
-  QOpenGLWidget::mouseReleaseEvent(e);
+  const auto pointer = input_qt::pointer_event(*e);
+  if (dispatch_pointer(input_.release(pointer), pointer)) e->accept();
+  else QOpenGLWidget::mouseReleaseEvent(e);
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* e) {
-  // Forward widget-local cursor position so the controller can anchor zoom
-  // to the point under the pointer (the same coordinate space the controller
-  // sees via set_viewport()).
-  camera_->wheel(e->position().toPoint(), e->angleDelta().y());
+  camera_->apply_navigation(input_.scroll(input_qt::scroll_event(*e)));
   e->accept();
 }
 

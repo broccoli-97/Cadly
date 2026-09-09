@@ -1,3 +1,33 @@
+function(cadly_check_module_dependencies target)
+  get_target_property(dependencies ${target} LINK_LIBRARIES)
+  set(allowed ${ARGN})
+  foreach(dependency IN LISTS dependencies)
+    if(NOT dependency IN_LIST allowed)
+      message(FATAL_ERROR "Module boundary: ${target} must not depend on ${dependency}")
+    endif()
+  endforeach()
+endfunction()
+
+cadly_check_module_dependencies(cadly_input Cadly::Warnings)
+if(CADLY_BUILD_GUI)
+  cadly_check_module_dependencies(cadly_input_qt
+    Cadly::Input Qt6::Core Qt6::Gui Cadly::Warnings)
+  cadly_check_module_dependencies(cadly_app_settings
+    Cadly::Input Qt6::Core Cadly::Warnings)
+  cadly_check_module_dependencies(cadly_camera_controller
+    Cadly::Input Cadly::Scene Qt6::Core Cadly::Warnings)
+endif()
+
+add_executable(cadly_navigation_scheme_test navigation_scheme_test.cpp)
+target_link_libraries(cadly_navigation_scheme_test PRIVATE Cadly::Input Cadly::Warnings)
+set_target_properties(cadly_navigation_scheme_test PROPERTIES AUTOMOC OFF AUTOUIC OFF)
+add_test(NAME cadly_navigation_scheme COMMAND cadly_navigation_scheme_test)
+
+add_executable(cadly_pointer_router_test pointer_router_test.cpp)
+target_link_libraries(cadly_pointer_router_test PRIVATE Cadly::Input Cadly::Warnings)
+set_target_properties(cadly_pointer_router_test PROPERTIES AUTOMOC OFF AUTOUIC OFF)
+add_test(NAME cadly_pointer_router COMMAND cadly_pointer_router_test)
+
 add_executable(cadly_smoke_test smoke_test.cpp)
 target_link_libraries(cadly_smoke_test
   PRIVATE
@@ -45,6 +75,22 @@ target_compile_features(cadly_shader_source_test PRIVATE cxx_std_17)
 add_test(NAME cadly_shader_source COMMAND cadly_shader_source_test)
 
 if(CADLY_BUILD_GUI)
+  # Core Qt adapters, persistence, and camera execution do not require Widgets,
+  # OpenGL, OCCT, or QtTest. They also run on the Windows/vcpkg Qt build that
+  # omits testlib, so platform compatibility is not silently skipped there.
+  add_executable(cadly_qt_input_adapter_test qt_input_adapter_test.cpp)
+  target_link_libraries(cadly_qt_input_adapter_test PRIVATE Cadly::InputQt Cadly::Warnings)
+  add_test(NAME cadly_qt_input_adapter COMMAND cadly_qt_input_adapter_test)
+  set_tests_properties(cadly_qt_input_adapter PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  add_executable(cadly_input_settings_test input_settings_test.cpp)
+  target_link_libraries(cadly_input_settings_test PRIVATE Cadly::AppSettings Cadly::Warnings)
+  add_test(NAME cadly_input_settings COMMAND cadly_input_settings_test)
+
+  add_executable(cadly_camera_controller_test camera_controller_test.cpp)
+  target_link_libraries(cadly_camera_controller_test PRIVATE Cadly::CameraController Cadly::Warnings)
+  add_test(NAME cadly_camera_controller COMMAND cadly_camera_controller_test)
+
   add_executable(cadly_section_render_test section_render_test.cpp)
   target_link_libraries(cadly_section_render_test
     PRIVATE Cadly::RendererGL Cadly::Warnings Qt6::Gui Qt6::OpenGL
@@ -145,31 +191,30 @@ if(CADLY_BUILD_GUI AND TARGET Qt6::Test)
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
   )
 
-  add_executable(cadly_navigation_scheme_test navigation_scheme_test.cpp)
-  target_link_libraries(cadly_navigation_scheme_test
+  add_executable(cadly_viewport_input_test viewport_input_test.cpp)
+  target_link_libraries(cadly_viewport_input_test
     PRIVATE
       Cadly::Ui
       Cadly::Warnings
       Qt6::Test
       qlementine-icons
   )
-  target_compile_features(cadly_navigation_scheme_test PRIVATE cxx_std_17)
-  add_test(NAME cadly_navigation_scheme COMMAND cadly_navigation_scheme_test)
-  set_tests_properties(cadly_navigation_scheme PROPERTIES
+  target_compile_features(cadly_viewport_input_test PRIVATE cxx_std_17)
+  add_test(NAME cadly_viewport_input COMMAND cadly_viewport_input_test)
+  set_tests_properties(cadly_viewport_input PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
   )
 
-  add_executable(cadly_camera_controller_test camera_controller_test.cpp)
-  target_link_libraries(cadly_camera_controller_test
-    PRIVATE
-      Cadly::Ui
-      Cadly::Warnings
-      Qt6::Test
-      qlementine-icons
+  add_test(NAME cadly_viewport_input_hidpi COMMAND cadly_viewport_input_test)
+  set_tests_properties(cadly_viewport_input_hidpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2"
   )
-  target_compile_features(cadly_camera_controller_test PRIVATE cxx_std_17)
-  add_test(NAME cadly_camera_controller COMMAND cadly_camera_controller_test)
-  set_tests_properties(cadly_camera_controller PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+
+  add_executable(cadly_preferences_dialog_test preferences_dialog_test.cpp)
+  target_link_libraries(cadly_preferences_dialog_test
+    PRIVATE Cadly::Ui Cadly::AppSettings Cadly::Warnings Qt6::Test qlementine-icons
   )
+  target_include_directories(cadly_preferences_dialog_test PRIVATE ${CMAKE_SOURCE_DIR}/src/ui/src)
+  add_test(NAME cadly_preferences_dialog COMMAND cadly_preferences_dialog_test)
+  set_tests_properties(cadly_preferences_dialog PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

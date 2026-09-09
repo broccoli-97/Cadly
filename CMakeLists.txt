@@ -18,10 +18,6 @@ endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Qt auto-tooling. AUTORCC stays off — we ship resources explicitly.
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTOUIC ON)
-
 # Default install layout (used by the packaging milestone).
 include(GNUInstallDirs)
 if(NOT CADLY_INSTALL_BINDIR)
@@ -40,6 +36,11 @@ option(CADLY_BUILD_CLI           "Build cad_import_cli helper" ON)
 option(CADLY_BUILD_GUI           "Build the Qt GUI application" ON)
 option(CADLY_ENABLE_VULKAN       "Enable Vulkan backend (placeholder, off in MVP)" OFF)
 option(CADLY_WARNINGS_AS_ERRORS  "Treat compiler warnings as errors" OFF)
+
+# Qt auto-tooling is unnecessary in headless builds. AUTORCC stays off — we
+# ship resources explicitly. Qt-free input targets opt out in GUI builds too.
+set(CMAKE_AUTOMOC ${CADLY_BUILD_GUI})
+set(CMAKE_AUTOUIC ${CADLY_BUILD_GUI})
 
 # --- Compiler warning baseline --------------------------------------------
 add_library(cadly_warnings INTERFACE)
@@ -148,11 +149,13 @@ endif()
 
 # --- Subdirectories --------------------------------------------------------
 add_subdirectory(src/platform)
+add_subdirectory(src/input)
 add_subdirectory(src/scene)
 add_subdirectory(src/renderer)
 add_subdirectory(src/renderer_gl)
 add_subdirectory(src/cad)
 if(CADLY_BUILD_GUI)
+  add_subdirectory(src/input_qt)
   add_subdirectory(src/ui)
   add_subdirectory(src/app)
 endif()
@@ -163,8 +166,9 @@ if(CADLY_BUILD_TESTS)
     # Optional on purpose: the vcpkg manifest builds qtbase without the
     # "testlib" feature to hold down the hours-long from-source Windows build
     # (see vcpkg.json), so Qt6Test only exists on the system-Qt configs. When
-    # it is absent, tests/CMakeLists.txt skips the GUI widget tests (loudly)
-    # and the Qt-free smoke test remains the cross-platform gate. Don't make
+    # it is absent, tests/CMakeLists.txt skips the GUI widget tests (loudly).
+    # Input policy, Qt adapters, settings, and camera tests do not need QtTest
+    # and remain cross-platform gates alongside the smoke tests. Don't make
     # this REQUIRED again — it turns every vcpkg configure into a hard error.
     find_package(Qt6 QUIET COMPONENTS Test)
   endif()

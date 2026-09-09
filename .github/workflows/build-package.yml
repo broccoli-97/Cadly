@@ -76,6 +76,18 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+      # Enforce the input module's no-Qt/no-camera dependency boundary even
+      # when the regular application build has all GUI dependencies available.
+      - name: Test input without the GUI
+        run: |
+          cmake -S . -B build/input-headless -G Ninja \
+            -DCADLY_BUILD_GUI=OFF -DCADLY_BUILD_CLI=OFF \
+            -DCADLY_WARNINGS_AS_ERRORS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/input-headless --target \
+            cadly_navigation_scheme_test cadly_pointer_router_test
+          ctest --test-dir build/input-headless --output-on-failure \
+            -R '^cadly_(navigation_scheme|pointer_router)$'
+
       # End-to-end import check on a real STEP assembly — exercises the OCCT
       # reader + tessellation without needing a GL context or display.
       - name: Import smoke check (STEP)

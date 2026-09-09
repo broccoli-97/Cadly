@@ -2,7 +2,7 @@
 
 #include "cadly/ui/CameraController.h"
 #include "cadly/ui/ThemeTokens.h"
-#include "cadly/ui/NavigationScheme.h"
+#include "cadly/input_qt/InputPreferences.h"
 #include "cadly/ui/ViewportWidget.h"
 
 #include "DiagnosticsStrip.h"
@@ -498,7 +498,8 @@ private:
 
 } // namespace
 
-MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+MainWindow::MainWindow(input_qt::InputPreferences& input_preferences, QWidget* parent)
+  : QMainWindow(parent), input_preferences_(input_preferences) {
   setWindowTitle(QStringLiteral("Cadly"));
   resize(1480, 920);
   setAcceptDrops(true);
@@ -879,6 +880,10 @@ void MainWindow::build_actions() {
 
 void MainWindow::build_shell() {
   viewport_ = new ViewportWidget(this);
+  viewport_->set_input_preferences(input_preferences_.value());
+  connect(&input_preferences_, &input_qt::InputPreferences::changed, viewport_, [this]() {
+    viewport_->set_input_preferences(input_preferences_.value());
+  });
   viewport_->setMinimumSize(320, 240);
   viewport_->installEventFilter(this);
   connect(viewport_, &ViewportWidget::frame_timed, this, [this](float ms) {
@@ -1674,7 +1679,9 @@ void MainWindow::run_demo(const QString& name) {
     // surface detail — not a cutaway of the model's interior.
     if (auto* ctrl = viewport_ ? viewport_->camera_controller() : nullptr) {
       const QPoint anchor(viewport_->width() / 2, viewport_->height() / 2);
-      for (int i = 0; i < 10; ++i) ctrl->wheel(anchor, 240);
+      for (int i = 0; i < 10; ++i) {
+        ctrl->apply_navigation(input::scroll_zoom({anchor.x(), anchor.y()}, 240));
+      }
     }
   } else if (name == QLatin1String("highlight") ||
              name == QLatin1String("highlight-wireframe") ||
@@ -2333,10 +2340,6 @@ void MainWindow::load_settings() {
   act_isolate_hide_others_->setChecked(
     s.value("isolate_hide_others",
             act_isolate_hide_others_->isChecked()).toBool());
-  const auto scheme = navigation_scheme_from_key(
-    s.value("navigation_scheme").toString());
-  const auto orbit_style = orbit_style_from_key(
-    s.value("orbit_style").toString());
   // Only the section's STYLE preferences persist. The plane's orientation and
   // offset are per document and model-scaled, so restoring them across sessions
   // (and across whatever file is opened next) would put the plane somewhere
@@ -2348,8 +2351,6 @@ void MainWindow::load_settings() {
     s.value("section_hatch", act_section_hatch_->isChecked()).toBool());
   s.endGroup();
   inspector_->load_display(mode);
-  viewport_->set_navigation_scheme(scheme);
-  viewport_->camera_controller()->set_orbit_style(orbit_style);
 
   s.beginGroup(QStringLiteral("ui"));
   act_toggle_sidebar_->setChecked(s.value("sidebar_visible", true).toBool());
@@ -2382,10 +2383,6 @@ void MainWindow::save_settings() const {
   s.setValue("axes",           mode.show_axes);
   s.setValue("dimmed_hidden",  act_hidden_dimmed_->isChecked());
   s.setValue("isolate_hide_others", act_isolate_hide_others_->isChecked());
-  s.setValue("navigation_scheme",
-             navigation_scheme_key(viewport_->navigation_scheme()));
-  s.setValue("orbit_style",
-             orbit_style_key(viewport_->camera_controller()->orbit_style()));
   s.setValue("section_show_plane",  act_section_show_plane_->isChecked());
   s.setValue("section_hatch",       act_section_hatch_->isChecked());
   s.endGroup();
@@ -2405,17 +2402,7 @@ void MainWindow::save_settings() const {
 
 void MainWindow::open_preferences() {
   if (!prefs_) {
-    prefs_ = new PreferencesDialog(this);
-    connect(prefs_, &PreferencesDialog::navigation_scheme_changed,
-            this, [this](NavigationScheme scheme) {
-      viewport_->set_navigation_scheme(scheme);
-      save_settings();
-    });
-    connect(prefs_, &PreferencesDialog::orbit_style_changed,
-            this, [this](CameraController::OrbitStyle style) {
-      viewport_->camera_controller()->set_orbit_style(style);
-      save_settings();
-    });
+    prefs_ = new PreferencesDialog(input_preferences_, this);
     // Route through the existing theme action / language action group so
     // their side effects (theme swap; persist + relaunch offer) stay in one
     // place and the menu twins' check state follows automatically.
@@ -2439,8 +2426,6 @@ void MainWindow::open_preferences() {
   // made through the menu twins while the dialog was closed.
   prefs_->set_language(language_code_);
   prefs_->set_dark(ThemeManager::instance().dark());
-  prefs_->set_navigation_scheme(viewport_->navigation_scheme());
-  prefs_->set_orbit_style(viewport_->camera_controller()->orbit_style());
   prefs_->show();
   prefs_->raise();
   prefs_->activateWindow();

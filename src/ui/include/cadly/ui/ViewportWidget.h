@@ -1,9 +1,9 @@
 #pragma once
 
+#include "cadly/input/PointerRouter.h"
 #include "cadly/renderer/IRenderer.h"
 #include "cadly/renderer/RenderTypes.h"
 #include "cadly/scene/Scene.h"
-#include "cadly/ui/NavigationScheme.h"
 
 #include <QElapsedTimer>
 #include <QOpenGLWidget>
@@ -31,9 +31,12 @@ public:
 
   CameraController* camera_controller() { return camera_; }
 
-  // Mouse-binding scheme for orbit/pan/zoom drags (persisted by the shell).
-  void set_navigation_scheme(NavigationScheme scheme) { nav_scheme_ = scheme; }
-  NavigationScheme navigation_scheme() const { return nav_scheme_; }
+  // One configuration boundary; the viewport never interprets individual
+  // preferences or reads settings. Changes apply to the next gesture.
+  void set_input_preferences(input::Preferences preferences) {
+    input_.set_preferences(preferences);
+  }
+  const input::Preferences& input_preferences() const { return input_.preferences(); }
 
   // Re-frame the scene to fit current world bounds (toolbar "Fit").
   void fit_view();
@@ -70,6 +73,7 @@ signals:
   void section_drag_finished();
 
 protected:
+  bool event(QEvent* event) override;
   void initializeGL() override;
   void resizeGL(int w, int h) override;
   void paintGL() override;
@@ -80,6 +84,14 @@ protected:
   void wheelEvent     (QWheelEvent*  e) override;
 
 private:
+  bool dispatch_pointer(const input::PointerResult& result,
+                         const input::PointerEvent& event,
+                         renderer::SectionGizmoPart hit = renderer::SectionGizmoPart::None);
+  void cancel_input();
+  void begin_section_drag(renderer::SectionGizmoPart part, QPoint pos);
+  void update_section_drag(QPoint pos, bool snap);
+  void end_section_drag(QPoint pos);
+
   // Screen-space hit-test on the whole section manipulator: the translate
   // shaft, then the three rotate rings. Returns the piece under `pos` (logical
   // widget pixels), or None. Screen-space rather than GPU picking because
@@ -117,11 +129,7 @@ private:
   // previous version did against the IRenderer contract.
   bool                  scene_dirty_{false};
   renderer::DisplayMode display_mode_{};
-  // True while a camera drag is in flight (begin_drag .. end_drag). Lets
-  // mouseMoveEvent promote a modifier-less left drag to orbit/pan when Alt
-  // arrives mid-gesture (see the comment there).
-  bool                  camera_drag_active_{false};
-  NavigationScheme      nav_scheme_{NavigationScheme::Cadly};
+  input::PointerRouter  input_;
 
   // Frame-time readout state: exponential moving average + emit throttle.
   float         frame_ms_avg_{0.0f};

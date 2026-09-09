@@ -22,6 +22,8 @@ class QSplitter;
 class QTabBar;
 class QToolButton;
 
+namespace cadly::input_qt { class InputPreferences; }
+
 namespace cadly::ui {
 
 class DiagnosticsStrip;
@@ -45,7 +47,8 @@ struct DocumentState;
 class MainWindow : public QMainWindow {
   Q_OBJECT
 public:
-  explicit MainWindow(QWidget* parent = nullptr);
+  explicit MainWindow(input_qt::InputPreferences& input_preferences,
+                      QWidget* parent = nullptr);
   ~MainWindow() override;
 
   // Recents / last-dir persistence lives in the app module (app::RecentFiles,
@@ -217,6 +220,7 @@ private:
   QMenu* recents_menu_{nullptr};
 
   // --- state -------------------------------------------------------------
+  input_qt::InputPreferences& input_preferences_;
   std::vector<std::unique_ptr<DocumentState>> documents_;
   QString     last_open_dir_;
   QStringList recent_files_;
