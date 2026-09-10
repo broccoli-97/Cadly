@@ -260,6 +260,107 @@ void check_cap_blend(const QImage& image, const QImage& behind, QPoint cap,
   check(color_distance(image.pixel(cap), expected) <= 2, message);
 }
 
+void verify_coplanar_cap(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
+                         s::Scene& scene, int samples, s::Projection projection) {
+  scene.camera.projection_mode = projection;
+  r::DisplayMode mode;
+  mode.msaa_samples = samples;
+  mode.show_axes = mode.show_scale_bar = false;
+  mode.section_enabled = true;
+  mode.section_show_plane = false;
+  place_section(mode, scene, 0.0f);
+  auto draw = [&]() {
+    target.bind();
+    renderer.render(mode);
+    return target.toImage();
+  };
+  for (const bool show_edges : {false, true}) {
+    mode.show_edges = show_edges;
+    for (const bool translucent : {false, true}) {
+      mode.section_translucent = translucent;
+      for (const float degrees : {0.0f, 0.1f, 1.0f, 5.0f, 15.0f, 35.0f, 60.0f, 75.0f}) {
+        scene.camera.orientation =
+          glm::angleAxis(glm::radians(degrees), s::vec3(0, 1, 0)) *
+          glm::angleAxis(glm::radians(degrees * 0.37f), s::vec3(1, 0, 0));
+        // The retained plate has an existing face on the section plane. A second
+        // intersected body contributes stencil there; its cap must stay behind
+        // that face for every camera angle, just as when no cap is generated.
+        scene.meshes[1]->double_sided = true;
+        const QImage reference = draw();
+        scene.meshes[1]->double_sided = false;
+        const QImage capped = draw();
+        const int delta = patch_distance(reference, capped,
+                                          project(scene.camera, s::vec3(0.0f)));
+        if (delta > 1) {
+          std::fprintf(stderr, "Coplanar cap: MSAA %d, projection %d, edges %d, "
+                               "translucent %d, angle %.1f, delta %d\n",
+                        samples, static_cast<int>(projection), show_edges,
+                        translucent, degrees, delta);
+        }
+        check(delta <= 1, "orbiting must not let a cap bleed over a coplanar retained face");
+
+        const QString capture_dir = qEnvironmentVariable("CADLY_SECTION_TEST_CAPTURE_DIR");
+        if (!capture_dir.isEmpty() && samples == 4 &&
+            projection == s::Projection::Perspective && show_edges &&
+            translucent && degrees == 15.0f) {
+          check(QDir().mkpath(capture_dir), "create coplanar cap capture directory");
+          check(reference.save(QDir(capture_dir).filePath("coplanar-reference.png")),
+                "save coplanar retained face");
+          check(capped.save(QDir(capture_dir).filePath("coplanar-cap.png")),
+                "save coplanar cap occlusion");
+        }
+      }
+    }
+  }
+}
+
+void verify_touching_solids(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
+                            s::Scene& scene, int samples, s::Projection projection) {
+  scene.camera.projection_mode = projection;
+  r::DisplayMode mode;
+  mode.msaa_samples = samples;
+  mode.show_axes = mode.show_scale_bar = false;
+  mode.section_enabled = true;
+  mode.section_show_plane = false;
+  place_section(mode, scene, 0.0f);
+  auto draw = [&]() {
+    target.bind();
+    renderer.render(mode);
+    return target.toImage();
+  };
+  for (const bool show_edges : {false, true}) {
+    mode.show_edges = show_edges;
+    for (const float scale : {1.0f, -1.0f}) {
+      for (auto& node : scene.nodes) node.local.scale.x = scale;
+      scene.update_transforms();
+      for (int order = 0; order < 2; ++order) {
+        for (const float degrees : {0.0f, 0.1f, 1.0f, 15.0f, 35.0f, 60.0f}) {
+          scene.camera.orientation =
+            glm::angleAxis(glm::radians(degrees), s::vec3(0, 1, 0)) *
+            glm::angleAxis(glm::radians(degrees * 0.37f), s::vec3(1, 0, 0));
+          // The opened plate's back wall and the rear body's front face touch.
+          // The true front material must win consistently; a back-face tint
+          // must not bleed through it as the camera or draw order changes.
+          mode.backface_color = {0.85f, 0.22f, 0.18f};
+          const QImage red = draw();
+          mode.backface_color = {0.18f, 0.32f, 0.85f};
+          const QImage blue = draw();
+          const int delta = patch_distance(red, blue,
+                                            project(scene.camera, scene.world_bounds.center()));
+          if (delta > 1) {
+            std::fprintf(stderr, "Touching solids: MSAA %d, projection %d, edges %d, "
+                                 "scale %.0f, order %d, angle %.1f, delta %d\n",
+                          samples, static_cast<int>(projection), show_edges,
+                          scale, order, degrees, delta);
+          }
+          check(delta <= 1, "coplanar front faces must occlude section back walls while orbiting");
+        }
+        std::swap(scene.nodes[0], scene.nodes[1]);
+      }
+    }
+  }
+}
+
 void verify_translucent(r::IRenderer& renderer, QOpenGLFramebufferObject& target,
                         s::Scene& scene, int samples, s::Projection projection) {
   scene.camera.projection_mode = projection;
@@ -635,6 +736,53 @@ int main(int argc, char** argv) {
     for (s::Projection projection : {s::Projection::Orthographic,
                                      s::Projection::Perspective}) {
       verify_backfaces(*renderer, target, *sheet, samples, projection);
+    }
+  }
+
+  auto coplanar = std::make_shared<s::Scene>();
+  coplanar->materials.resize(1);
+  add_box(*coplanar, {-2.5f, -2.0f, -1.0f}, {2.5f, 2.0f, 0.0f}, 0);
+  add_box(*coplanar, {-1.5f, -1.5f, -1.0f}, {1.5f, 1.5f, 1.0f}, 0);
+  coplanar->update_transforms();
+  coplanar->camera.target = s::vec3(0.0f);
+  coplanar->camera.distance = 8.0f;
+  renderer->attach_scene(coplanar);
+  for (int samples : {0, 4}) {
+    for (s::Projection projection : {s::Projection::Orthographic,
+                                     s::Projection::Perspective}) {
+      verify_coplanar_cap(*renderer, target, *coplanar, samples, projection);
+    }
+  }
+
+  auto touching = std::make_shared<s::Scene>();
+  touching->materials.resize(1);
+  add_box(*touching, {-2.5f, -2.0f, -0.5f}, {2.5f, 2.0f, 0.5f}, 0);
+  add_box(*touching, {-1.5f, -1.2f, -1.5f}, {1.5f, 1.2f, -0.5f}, 0);
+  // A different, thin triangulation on the contacting front face exercises
+  // raster depth-slope rounding, as seen around bolt holes in CAD meshes.
+  auto& rear = *touching->meshes[1];
+  rear.indices.resize(rear.indices.size() - 6);
+  for (int strip = 0; strip < 256; ++strip) {
+    const float lo = -1.2f + 2.4f * static_cast<float>(strip) / 256.0f;
+    const float hi = -1.2f + 2.4f * static_cast<float>(strip + 1) / 256.0f;
+    const auto first = static_cast<std::uint32_t>(rear.vertices.size());
+    for (const s::vec3& p : {s::vec3(-1.5f, lo, -0.5f), s::vec3(1.5f, lo, -0.5f),
+                             s::vec3(1.5f, hi, -0.5f), s::vec3(-1.5f, hi, -0.5f)}) {
+      rear.vertices.push_back({p, {0.0f, 0.0f, 1.0f}});
+    }
+    for (std::uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) rear.indices.push_back(first + i);
+  }
+  rear.submeshes[0].index_count = static_cast<std::uint32_t>(rear.indices.size());
+  for (auto& node : touching->nodes) node.local.translation = {100.0f, 75.0f, 0.0f};
+  touching->update_transforms();
+  touching->camera.target = {100.0f, 75.0f, 0.0f};
+  touching->camera.distance = 8.0f;
+  touching->camera.far_z = 40.0f;
+  renderer->attach_scene(touching);
+  for (int samples : {0, 4}) {
+    for (s::Projection projection : {s::Projection::Orthographic,
+                                     s::Projection::Perspective}) {
+      verify_touching_solids(*renderer, target, *touching, samples, projection);
     }
   }
   renderer->shutdown();

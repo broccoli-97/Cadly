@@ -1966,7 +1966,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   // cull mode, selection highlight. The opaque pass and the isolate ghost
   // pass below differ only in blend/depth state and the u_ghost value, so
   // the body is one lambda.
-  auto draw_node_surfaces = [&](const scene::Node& node) {
+  auto draw_node_surfaces = [&](const scene::Node& node, bool surface_offset) {
     if (!node.mesh_index || *node.mesh_index >= scene_->meshes.size()) return;
     const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
     if (!mesh_ptr) return;
@@ -2005,21 +2005,38 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
       gl_.glUniform3fv(loc_emi_col, 1, &m.emissive_color.x);
       gl_.glUniform1f (loc_emi,     m.emissive);
 
-      // Draw both faces when either the geometry isn't a closed solid
-      // (mesh.double_sided — set by the importer for IGES surface quilts /
-      // open shells, whose patch winding is arbitrary), the material is
-      // intrinsically two-sided, or the section has opened this solid.
-      if (mesh_ptr->double_sided || m.double_sided || cut_open) {
+      auto draw_submesh = [&]() {
+        gl_.glDrawElements(GL_TRIANGLES,
+                           static_cast<GLsizei>(sub.index_count),
+                           GL_UNSIGNED_INT,
+                           reinterpret_cast<void*>(
+                             static_cast<std::uintptr_t>(sub.index_offset) * sizeof(std::uint32_t)));
+      };
+
+      // A section can expose a back wall exactly against another part's front
+      // face. Give that front face a stable win, independent of triangle or
+      // node order. Thin triangles can round the depth slope differently, so
+      // bias section back faces by a quarter pixel's slope plus depth units.
+      // Separate culling passes retain early depth testing in the PBR shader.
+      if (cut_open) {
+        gl_.glEnable(GL_CULL_FACE);
+        gl_.glCullFace(GL_FRONT);
+        gl_.glEnable(GL_POLYGON_OFFSET_FILL);
+        const float offset = surface_offset ? 1.0f : 0.0f;
+        gl_.glPolygonOffset(offset + 0.25f, offset + 4.0f);
+        draw_submesh();
+        gl_.glCullFace(GL_BACK);
+        gl_.glPolygonOffset(1.0f, 1.0f);
+        if (!surface_offset) gl_.glDisable(GL_POLYGON_OFFSET_FILL);
+      } else if (mesh_ptr->double_sided || m.double_sided) {
+        // Open shells and intrinsically two-sided materials need both faces
+        // even when the section plane does not cross them.
         gl_.glDisable(GL_CULL_FACE);
       } else {
         gl_.glEnable(GL_CULL_FACE);
       }
 
-      gl_.glDrawElements(GL_TRIANGLES,
-                         static_cast<GLsizei>(sub.index_count),
-                         GL_UNSIGNED_INT,
-                         reinterpret_cast<void*>(
-                           static_cast<std::uintptr_t>(sub.index_offset) * sizeof(std::uint32_t)));
+      draw_submesh();
     }
     gl_.glBindVertexArray(0);
     gl_.glFrontFace(GL_CCW);
@@ -2029,7 +2046,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   for (const auto& node : scene_->nodes) {
     if (!node.visible || !node.mesh_index) continue;
     if (node.ghosted) { any_ghosted = true; continue; }
-    draw_node_surfaces(node);
+    draw_node_surfaces(node, line_overlay);
   }
 
   const bool translucent_section = mode.section_translucent && !mode.hidden_line;
@@ -2085,7 +2102,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     gl_.glUniform1f(loc_ghost, std::clamp(mode.ghost_opacity, 0.02f, 1.0f));
     for (const auto& node : scene_->nodes) {
       if (!node.visible || !node.ghosted) continue;
-      draw_node_surfaces(node);
+      draw_node_surfaces(node, /*surface_offset=*/false);
     }
     gl_.glUniform1f(loc_ghost, 0.0f);
     gl_.glDepthMask(GL_TRUE);
@@ -2094,7 +2111,14 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
 
   // Blend over all retained surfaces, edges, and ghosts. A translucent cap
   // writes no depth; interior geometry must remain visible through the hatch.
-  if (translucent_section) draw_section_cap();
+  if (translucent_section) {
+    // Match the surfaces' slope-dependent offset, even though the intervening
+    // line passes need it disabled. Otherwise it can overtake the cap's small
+    // geometric inset as the camera orbits, exposing hatch on a coplanar face.
+    if (line_overlay) gl_.glEnable(GL_POLYGON_OFFSET_FILL);
+    draw_section_cap();
+    if (line_overlay) gl_.glDisable(GL_POLYGON_OFFSET_FILL);
+  }
 
   // Selection edges are intentionally the final model pass. GL_GREATER
   // first sketches the occluded selected edges as a thin, faint ghost; the
