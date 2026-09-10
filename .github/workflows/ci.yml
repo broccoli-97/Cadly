@@ -16,7 +16,10 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A cold Windows vcpkg build can take hours. Let a PR's running build
+  # finish and publish its binaries; keep only the newest pending update.
+  # Main pushes and manual runs still replace an obsolete running build.
+  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
 
 jobs:
   build:
