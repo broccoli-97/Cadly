@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -379,11 +380,15 @@ private:
   // triangle batch. Shared tail of every 2D overlay pass (scale bar, triad).
   void submit_overlay();
   void draw_edges(const renderer::DisplayMode& mode, bool hidden_pass = false,
-                  bool selection_only = false);
+                  bool selection_only = false,
+                  std::optional<std::size_t> node_only = std::nullopt,
+                  float view_bias = 0.0f);
   void draw_silhouettes(const renderer::DisplayMode& mode,
                         bool hidden_pass = false,
                         bool selection_only = false);
-  void draw_triangle_mesh(const renderer::DisplayMode& mode);
+  void draw_triangle_mesh(const renderer::DisplayMode& mode,
+                          std::optional<std::size_t> node_only = std::nullopt,
+                          float view_bias = 0.0f);
   // Shared tail of every exit path in render(): the section manipulator, the
   // rotation pivot, the axes triad, and the scale bar. None of these programs
   // writes a clip distance, so the section clip is switched off here — having
@@ -1308,7 +1313,9 @@ void GLRendererImpl::submit_overlay() {
   gl_.glDisable(GL_BLEND);
 }
 
-void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
+void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode,
+                                       std::optional<std::size_t> node_only,
+                                       float view_bias) {
   // Debug overlay: re-draw the surface triangles in GL_LINE polygon mode
   // using the edges shader. Reuses the surface VAO + IBO, so the triangle
   // edges sit exactly on the same depth values as the filled surface —
@@ -1322,7 +1329,7 @@ void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
   const GLint loc_model = prog_edges_.uniform(gl_, "u_model");
   const GLint loc_color = prog_edges_.uniform(gl_, "u_color");
   const GLint loc_bias  = prog_edges_.uniform(gl_, "u_view_bias");
-  gl_.glUniform1f(loc_bias, 0.0f);
+  gl_.glUniform1f(loc_bias, view_bias);
   // Cooler / lighter than the BRep edge ink so the two overlays are
   // distinguishable when both are on. Mid-alpha to soften the inevitable
   // double-draw where a triangle edge coincides with a BRep edge.
@@ -1344,7 +1351,10 @@ void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
   // those that the front-facing surface already covers.
   gl_.glDisable(GL_CULL_FACE);
 
-  for (const auto& node : scene_->nodes) {
+  const std::size_t begin = node_only.value_or(0);
+  const std::size_t end = node_only ? begin + 1 : scene_->nodes.size();
+  for (std::size_t index = begin; index < end; ++index) {
+    const auto& node = scene_->nodes[index];
     if (!node.visible || !node.mesh_index) continue;
     // Isolate mode: the debug overlay follows the edge overlay's rule and
     // leaves ghosted parts as a clean veil.
@@ -1372,7 +1382,9 @@ void GLRendererImpl::draw_triangle_mesh(const renderer::DisplayMode& mode) {
 
 void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
                                 bool hidden_pass,
-                                bool selection_only) {
+                                bool selection_only,
+                                std::optional<std::size_t> node_only,
+                                float view_bias) {
   // Three display modes feed this pass:
   //   - mode.show_edges : overlay BRep edges on the shaded surface using
   //                       the mesh-coupled strip (depth-matched, no
@@ -1406,13 +1418,13 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
   const GLint loc_model = prog_edges_.uniform(gl_, "u_model");
   const GLint loc_color = prog_edges_.uniform(gl_, "u_color");
   const GLint loc_bias  = prog_edges_.uniform(gl_, "u_view_bias");
-  // No view-space bias — depth fighting between edges and faces is
+  // Normally no view-space bias — depth fighting between edges and faces is
   // resolved on the surface side via glPolygonOffset (see render()),
   // which gives proper hidden-line behaviour: edges belonging to a
   // visible face pass the depth test (the face was pushed slightly
   // farther), but edges on the BACK of the part are still occluded by
   // the front-facing surface's real-ish depth.
-  gl_.glUniform1f(loc_bias, 0.0f);
+  gl_.glUniform1f(loc_bias, view_bias);
 
   // Depth test ON so back-of-part edges stay hidden. Depth write OFF so
   // the edge overlay doesn't pollute the depth buffer for the pivot pass.
@@ -1500,7 +1512,10 @@ void GLRendererImpl::draw_edges(const renderer::DisplayMode& mode,
     return chosen;
   };
 
-  for (const auto& node : scene_->nodes) {
+  const std::size_t begin = node_only.value_or(0);
+  const std::size_t end = node_only ? begin + 1 : scene_->nodes.size();
+  for (std::size_t index = begin; index < end; ++index) {
+    const auto& node = scene_->nodes[index];
     if (!node.visible || !node.mesh_index) continue;
     if (selection_only && !node.selected) continue;
     // The "hide others" isolate style removes ghosted parts outright: no
@@ -1962,11 +1977,16 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   const float highlight_wash =
     std::clamp(mode.selection_opacity, 0.0f, 1.0f);
 
+  const bool translucent_section = mode.section_translucent && !mode.hidden_line;
+  const bool defer_section_backs = translucent_section && line_overlay &&
+    section_.active() && section_.cap_available(gl_);
+
   // Shared per-node surface submission: transforms, per-submesh material,
   // cull mode, selection highlight. The opaque pass and the isolate ghost
   // pass below differ only in blend/depth state and the u_ghost value, so
   // the body is one lambda.
-  auto draw_node_surfaces = [&](const scene::Node& node, bool surface_offset) {
+  auto draw_node_surfaces = [&](const scene::Node& node, bool surface_offset,
+                                bool back_only = false) {
     if (!node.mesh_index || *node.mesh_index >= scene_->meshes.size()) return;
     const auto& mesh_ptr = scene_->meshes[*node.mesh_index];
     if (!mesh_ptr) return;
@@ -2013,21 +2033,20 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
                              static_cast<std::uintptr_t>(sub.index_offset) * sizeof(std::uint32_t)));
       };
 
-      // A section can expose a back wall exactly against another part's front
-      // face. Give that front face a stable win, independent of triangle or
-      // node order. Thin triangles can round the depth slope differently, so
-      // bias section back faces by a quarter pixel's slope plus depth units.
-      // Separate culling passes retain early depth testing in the PBR shader.
+      // The exit wall of retained material occludes a touching part's entry
+      // face. Include a slope bias for differently triangulated contact faces.
       if (cut_open) {
         gl_.glEnable(GL_CULL_FACE);
-        gl_.glCullFace(GL_FRONT);
-        gl_.glEnable(GL_POLYGON_OFFSET_FILL);
-        const float offset = surface_offset ? 1.0f : 0.0f;
-        gl_.glPolygonOffset(offset + 0.25f, offset + 4.0f);
-        draw_submesh();
+        if (!defer_section_backs || node.ghosted || back_only) {
+          gl_.glCullFace(GL_FRONT);
+          gl_.glEnable(GL_POLYGON_OFFSET_FILL);
+          const float offset = surface_offset ? 1.0f : 0.0f;
+          gl_.glPolygonOffset(offset - 0.25f, offset - 4.0f);
+          draw_submesh();
+          gl_.glPolygonOffset(1.0f, 1.0f);
+          if (!surface_offset) gl_.glDisable(GL_POLYGON_OFFSET_FILL);
+        }
         gl_.glCullFace(GL_BACK);
-        gl_.glPolygonOffset(1.0f, 1.0f);
-        if (!surface_offset) gl_.glDisable(GL_POLYGON_OFFSET_FILL);
       } else if (mesh_ptr->double_sided || m.double_sided) {
         // Open shells and intrinsically two-sided materials need both faces
         // even when the section plane does not cross them.
@@ -2036,7 +2055,7 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
         gl_.glEnable(GL_CULL_FACE);
       }
 
-      draw_submesh();
+      if (!back_only) draw_submesh();
     }
     gl_.glBindVertexArray(0);
     gl_.glFrontFace(GL_CCW);
@@ -2049,7 +2068,6 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
     draw_node_surfaces(node, line_overlay);
   }
 
-  const bool translucent_section = mode.section_translucent && !mode.hidden_line;
   auto draw_section_cap = [&]() {
     if (!section_.active() || !section_.cap_available(gl_)) return;
     section_.draw_cap(gl_, *scene_, mode, prog_edges_,
@@ -2083,6 +2101,40 @@ void GLRendererImpl::render(const renderer::DisplayMode& mode) {
   }
   draw_edges(mode);
   draw_silhouettes(mode);
+
+  if (defer_section_backs) {
+    // Retained walls cover both the faces and edge ink of contacting parts.
+    // Mark only the pixels a wall actually wins, then restore its own edges
+    // inside that mask. The cap has not run yet and will replace this stencil.
+    const auto& camera = scene_->camera;
+    const float edge_bias = 0.25f * 2.0f * std::max(camera.distance, 1e-6f) *
+      std::tan(0.5f * camera.fov_y) / std::max(static_cast<float>(viewport_h_), 1.0f);
+    for (std::size_t index = 0; index < scene_->nodes.size(); ++index) {
+      const auto& node = scene_->nodes[index];
+      if (!node.visible || node.ghosted || !node.mesh_index ||
+          !renderer::box_straddles_plane(node.world_bounds, section_.clip_plane())) continue;
+
+      gl_.glEnable(GL_STENCIL_TEST);
+      gl_.glStencilMask(0xFF);
+      gl_.glClearStencil(0);
+      gl_.glClear(GL_STENCIL_BUFFER_BIT);
+      gl_.glStencilFunc(GL_ALWAYS, 1, 0xFF);
+      gl_.glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+      gl_.glUseProgram(prog_pbr_.id());
+      draw_node_surfaces(node, line_overlay, /*back_only=*/true);
+      gl_.glDisable(GL_POLYGON_OFFSET_FILL);
+
+      gl_.glStencilFunc(GL_EQUAL, 1, 0xFF);
+      gl_.glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+      draw_triangle_mesh(mode, index, edge_bias);
+      draw_edges(mode, /*hidden_pass=*/false, /*selection_only=*/false,
+                  index, edge_bias);
+    }
+    gl_.glStencilFunc(GL_ALWAYS, 0, 0xFF);
+    gl_.glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+    gl_.glStencilMask(0xFF);
+    gl_.glDisable(GL_STENCIL_TEST);
+  }
 
   // Isolate ghost pass: everything outside the focus as a translucent veil.
   // Runs AFTER the edge overlays so a ghost sitting in front of the focused

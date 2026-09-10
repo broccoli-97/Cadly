@@ -338,14 +338,15 @@ void verify_touching_solids(r::IRenderer& renderer, QOpenGLFramebufferObject& ta
           scene.camera.orientation =
             glm::angleAxis(glm::radians(degrees), s::vec3(0, 1, 0)) *
             glm::angleAxis(glm::radians(degrees * 0.37f), s::vec3(1, 0, 0));
-          // The opened plate's back wall and the rear body's front face touch.
-          // The true front material must win consistently; a back-face tint
-          // must not bleed through it as the camera or draw order changes.
-          mode.backface_color = {0.85f, 0.22f, 0.18f};
-          const QImage red = draw();
-          mode.backface_color = {0.18f, 0.32f, 0.85f};
-          const QImage blue = draw();
-          const int delta = patch_distance(red, blue,
+          // Adding a body touching the outside of the retained plate must not
+          // change the wall seen from inside, including the contacting edges.
+          auto rear = std::find_if(scene.nodes.begin(), scene.nodes.end(),
+            [](const s::Node& node) { return node.mesh_index == 1u; });
+          rear->visible = false;
+          const QImage wall = draw();
+          rear->visible = true;
+          const QImage touching = draw();
+          const int delta = patch_distance(wall, touching,
                                             project(scene.camera, scene.world_bounds.center()));
           if (delta > 1) {
             std::fprintf(stderr, "Touching solids: MSAA %d, projection %d, edges %d, "
@@ -353,7 +354,34 @@ void verify_touching_solids(r::IRenderer& renderer, QOpenGLFramebufferObject& ta
                           samples, static_cast<int>(projection), show_edges,
                           scale, order, degrees, delta);
           }
-          check(delta <= 1, "coplanar front faces must occlude section back walls while orbiting");
+          check(delta <= 1, "retained walls must occlude contacting bodies while orbiting");
+          check_patch_equal(wall, touching,
+            project(scene.camera, scene.world_bounds.center() + s::vec3(-1.5f, 0.0f, 0.0f)),
+            "contacting edges must not show through a retained wall");
+
+          if (show_edges) {
+            mode.show_edges = false;
+            const QImage no_edges = draw();
+            mode.show_edges = true;
+            check(patch_distance(no_edges, touching,
+                    project(scene.camera, scene.world_bounds.center() +
+                      s::vec3(0.0f, 0.6f, 0.0f))) > 10,
+                  "a retained wall must keep its own face-boundary edges");
+          }
+
+          // A true intrusion is nearer than the exit wall and must remain
+          // visible. The contact tie-break must not act like an x-ray mask.
+          rear->local.translation.z = 0.05f;
+          scene.update_transforms();
+          place_section(mode, scene, 0.0f);
+          const QImage penetrating = draw();
+          check(patch_distance(wall, penetrating,
+                  project(scene.camera, scene.camera.target +
+                    s::vec3(0.0f, 0.0f, -0.45f))) > 10,
+                "geometry protruding into retained material must remain visible");
+          rear->local.translation.z = 0.0f;
+          scene.update_transforms();
+          place_section(mode, scene, 0.0f);
         }
         std::swap(scene.nodes[0], scene.nodes[1]);
       }
@@ -758,6 +786,12 @@ int main(int argc, char** argv) {
   touching->materials.resize(1);
   add_box(*touching, {-2.5f, -2.0f, -0.5f}, {2.5f, 2.0f, 0.5f}, 0);
   add_box(*touching, {-1.5f, -1.2f, -1.5f}, {1.5f, 1.2f, -0.5f}, 0);
+  // A face-boundary seam on the plate's exit wall must survive the contact
+  // occlusion pass, even though the other body's coincident edges are hidden.
+  auto& plate = *touching->meshes[0];
+  plate.vertices.push_back({{-0.75f, 0.6f, -0.5f}, {0.0f, 0.0f, -1.0f}});
+  plate.vertices.push_back({{0.75f, 0.6f, -0.5f}, {0.0f, 0.0f, -1.0f}});
+  plate.edge_strip_indices = {24, 25, 0xFFFFFFFFu};
   // A different, thin triangulation on the contacting front face exercises
   // raster depth-slope rounding, as seen around bolt holes in CAD meshes.
   auto& rear = *touching->meshes[1];
@@ -773,6 +807,7 @@ int main(int argc, char** argv) {
     for (std::uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) rear.indices.push_back(first + i);
   }
   rear.submeshes[0].index_count = static_cast<std::uint32_t>(rear.indices.size());
+  rear.edge_strip_indices = {20, 21, 22, 23, 20, 0xFFFFFFFFu};
   for (auto& node : touching->nodes) node.local.translation = {100.0f, 75.0f, 0.0f};
   touching->update_transforms();
   touching->camera.target = {100.0f, 75.0f, 0.0f};
