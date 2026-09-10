@@ -1,0 +1,173 @@
+--- a/src/StepFile/step.lex
++++ b/src/StepFile/step.lex
+@@ -22,6 +22,7 @@
+     yyclass             define name of the scanner class
+ */
+ %option c++
++%option batch
+ %option 8bit warn nodefault
+ %option noyywrap
+ %option yyclass="step::scanner"
+--- a/src/StepFile/lex.step.cxx
++++ b/src/StepFile/lex.step.cxx
+@@ -321,7 +321,7 @@
+ typedef flex_uint8_t YY_CHAR;
+ 
+ #define yytext_ptr yytext
+-#define YY_INTERACTIVE
++/* Batch STEP file input: do not select the one-byte interactive reader. */
+ 
+ #include <FlexLexer.h>
+ 
+--- a/src/Intf/Intf_InterferencePolygon2d.cxx
++++ b/src/Intf/Intf_InterferencePolygon2d.cxx
+@@ -25,6 +25,12 @@
+ #include <Intf_SeqOfTangentZone.hxx>
+ #include <Intf_TangentZone.hxx>
+ #include <Precision.hxx>
++#include <NCollection_UBTreeFiller.hxx>
++#include <algorithm>
++#include <array>
++#include <optional>
++#include <utility>
++#include <vector>
+ #include <Standard_OutOfRange.hxx>
+ #include <TColStd_ListOfInteger.hxx>
+ 
+@@ -33,6 +39,70 @@
+ namespace
+ {
+   static const Standard_Real PRCANG = Precision::Angular();
++
++  // Match Intersect's eight-slot parameter arrays without allocating a
++  // sequence (and touching its shared allocator) for every segment pair.
++  class LocalSectionPoints
++  {
++  public:
++    void Append (const Intf_SectionPoint& thePoint)
++    { myPoints[mySize++] = thePoint; }
++    Intf_SectionPoint& operator() (Standard_Integer theIndex)
++    { return *myPoints[theIndex - 1]; }
++  private:
++    std::array<std::optional<Intf_SectionPoint>, 8> myPoints;
++    Standard_Integer mySize = 0;
++  };
++
++
++  // Retain the original expanded-box test, but avoid visiting every pair of
++  // segments for densely sampled curves. Candidates are sorted so Intersect()
++  // receives exactly the same pairs in the same order as the nested loops.
++  class PolygonSegments
++  {
++  public:
++    typedef NCollection_UBTree<Standard_Integer, Bnd_Box2d> Tree;
++    struct Selector : public Tree::Selector
++    {
++      Bnd_Box2d Box;
++      std::vector<Standard_Integer> Indices;
++      Standard_Boolean Reject (const Bnd_Box2d& theBox) const override
++      { return Box.IsOut(theBox); }
++      Standard_Boolean Accept (const Standard_Integer& theIndex) override
++      { Indices.push_back(theIndex); return Standard_True; }
++    };
++
++    explicit PolygonSegments (const Intf_Polygon2d& thePolygon)
++    {
++      const Standard_Integer aCount = thePolygon.NbSegments();
++      const Standard_Real aDeflection = thePolygon.DeflectionOverEstimation();
++      Points.resize(aCount);
++      NCollection_UBTreeFiller<Standard_Integer, Bnd_Box2d> aFiller(myTree);
++      for (Standard_Integer i = 1; i <= aCount; ++i)
++      {
++        std::pair<gp_Pnt2d, gp_Pnt2d>& aPoints = Points[i - 1];
++        thePolygon.Segment(i, aPoints.first, aPoints.second);
++        Bnd_Box2d aBox;
++        aBox.Add(aPoints.first);
++        aBox.Add(aPoints.second);
++        aBox.Enlarge(aDeflection);
++        aFiller.Add(i, aBox);
++      }
++      aFiller.Fill();
++    }
++
++    void Select (const Bnd_Box2d& theBox, Selector& theSelector) const
++    {
++      theSelector.Box = theBox;
++      theSelector.Indices.clear();
++      myTree.Select(theSelector);
++      std::sort(theSelector.Indices.begin(), theSelector.Indices.end());
++    }
++
++    std::vector<std::pair<gp_Pnt2d, gp_Pnt2d> > Points;
++  private:
++    Tree myTree;
++  };
+ }
+ 
+ //=======================================================================
+@@ -164,6 +234,27 @@
+     d2 = Obje2.DeflectionOverEstimation();
+ 
+   gp_Pnt2d p1b, p1e, p2b, p2e;
++  if (n2 >= 64 && static_cast<Standard_Real>(n1) * n2 >= 4096)
++  {
++    PolygonSegments aSegments(Obje2);
++    PolygonSegments::Selector aSelector;
++    for (iObje1 = 1; iObje1 <= n1; ++iObje1)
++    {
++      bSO.SetVoid();
++      Obje1.Segment(iObje1, p1b, p1e);
++      bSO.Add(p1b);
++      bSO.Add(p1e);
++      bSO.Enlarge(d1);
++      if (Obje2.Bounding().IsOut(bSO)) continue;
++      aSegments.Select(bSO, aSelector);
++      for (const Standard_Integer anIndex : aSelector.Indices)
++      {
++        const std::pair<gp_Pnt2d, gp_Pnt2d>& aPoints = aSegments.Points[anIndex - 1];
++        Intersect(iObje1, anIndex, p1b, p1e, aPoints.first, aPoints.second);
++      }
++    }
++    return;
++  }
+   for (iObje1=1; iObje1<=n1; iObje1++)
+   {
+     bSO.SetVoid();
+@@ -200,6 +291,28 @@
+   Standard_Real d = Obje.DeflectionOverEstimation();
+ 
+   gp_Pnt2d p1b, p1e, p2b, p2e;
++  if (n >= 64)
++  {
++    PolygonSegments aSegments(Obje);
++    PolygonSegments::Selector aSelector;
++    for (iObje1 = 1; iObje1 <= n; ++iObje1)
++    {
++      const std::pair<gp_Pnt2d, gp_Pnt2d>& aFirst = aSegments.Points[iObje1 - 1];
++      bSO.SetVoid();
++      bSO.Add(aFirst.first);
++      bSO.Add(aFirst.second);
++      bSO.Enlarge(d);
++      if (Obje.Bounding().IsOut(bSO)) continue;
++      aSegments.Select(bSO, aSelector);
++      for (const Standard_Integer anIndex : aSelector.Indices)
++      {
++        if (anIndex <= iObje1) continue;
++        const std::pair<gp_Pnt2d, gp_Pnt2d>& aSecond = aSegments.Points[anIndex - 1];
++        Intersect(iObje1, anIndex, aFirst.first, aFirst.second, aSecond.first, aSecond.second);
++      }
++    }
++    return;
++  }
+   for (iObje1=1; iObje1<=n; iObje1++) {
+     bSO.SetVoid();
+     Obje.Segment(iObje1,p1b,p1e);
+@@ -318,7 +431,7 @@
+   Standard_Integer nbpi=0;
+   Standard_Real parO[8];
+   Standard_Real parT[8];
+-  Intf_SeqOfSectionPoint thePi;
++  LocalSectionPoints thePi;
+   gp_XY segT =EndT.XY()-BegT.XY();
+   gp_XY segO =EndO.XY()-BegO.XY();
+ 

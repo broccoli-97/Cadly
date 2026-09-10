@@ -1,6 +1,16 @@
 # cad module: OCCT-backed CAD import + tessellation. This is the only target
 # that links against OCCT toolkits — keep it that way per the architecture.
 
+set(_cadly_occt_perf_default OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND OpenCASCADE_BUILD_SHARED_LIBS AND
+   "${OpenCASCADE_MAJOR_VERSION}.${OpenCASCADE_MINOR_VERSION}.${OpenCASCADE_MAINTENANCE_VERSION}" VERSION_EQUAL "7.6.3")
+  set(_cadly_occt_perf_default ON)
+endif()
+option(CADLY_OCCT_PERFORMANCE_PATCHES "Build patched Linux OCCT 7.6.3 import toolkits locally" ${_cadly_occt_perf_default})
+if(CADLY_OCCT_PERFORMANCE_PATCHES)
+  include(cmake/OcctPerformance.cmake)
+endif()
+
 # OCCT toolkit list, ordered from highest-level to lowest. The find_package
 # call exposes individual TK* targets; we link a curated subset, not the
 # omnibus OpenCASCADE::* alias, so unused toolkits don't get pulled into the
@@ -21,7 +31,9 @@ set(occt_libs "")
 foreach(lib IN LISTS _occt_libs)
   # Newer OCCT installs (>= 7.7) namespace targets under OpenCASCADE::; pick
   # whichever the active find_package exposes.
-  if(TARGET ${lib})
+  if(TARGET cadly_occt_${lib})
+    list(APPEND occt_libs cadly_occt_${lib})
+  elseif(TARGET ${lib})
     list(APPEND occt_libs ${lib})
   elseif(TARGET OpenCASCADE::${lib})
     list(APPEND occt_libs OpenCASCADE::${lib})
@@ -39,6 +51,7 @@ add_library(cadly_cad STATIC
   src/OcctIgesImporter.cpp
   src/OcctShapeToMesh.cpp
   src/OcctStepImporter.cpp
+  src/OcctStepTransfer.cpp
   src/TessellationPolicy.cpp
   src/XcafSession.cpp
 )
@@ -68,12 +81,22 @@ target_link_libraries(cadly_cad
     ${occt_libs}
 )
 
+if(CADLY_OCCT_PERFORMANCE_PATCHES)
+  # TKGeomAlgo is otherwise only an indirect dependency. Keep both patched
+  # SONAMEs in the executable so its RUNPATH selects them without preload or
+  # a machine-wide library replacement.
+  target_link_options(cadly_cad INTERFACE -Wl,--no-as-needed)
+endif()
+
 # OCCT's modular TK* imported targets on Debian don't carry the include
 # directory as an INTERFACE_INCLUDE_DIRECTORIES property — fold it in here so
 # downstream files can `#include <TDF_Label.hxx>`.
 if(OpenCASCADE_INCLUDE_DIR)
-  target_include_directories(cadly_cad PRIVATE ${OpenCASCADE_INCLUDE_DIR})
+  target_include_directories(cadly_cad SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 endif()
+
+find_package(Threads REQUIRED)
+target_link_libraries(cadly_cad PRIVATE Threads::Threads)
 
 # Optional CLI used to validate import without launching the GUI. Reads a
 # STEP/IGES file from argv[1] and prints geometry stats.

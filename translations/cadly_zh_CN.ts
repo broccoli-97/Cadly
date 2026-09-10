@@ -263,6 +263,30 @@
         <source>Load names</source>
         <translation>加载名称</translation>
     </message>
+    <message>
+        <source>STEP import</source>
+        <translation>STEP 导入</translation>
+    </message>
+    <message>
+        <source>Full repair</source>
+        <translation>完整修复</translation>
+    </message>
+    <message>
+        <source>Fast viewing</source>
+        <translation>快速查看</translation>
+    </message>
+    <message>
+        <source>Fast viewing skips repair of intersections between adjacent edges. Use Full repair for damaged geometry. Mesh quality is unchanged.</source>
+        <translation>快速查看会跳过相邻边相交修复。几何损坏的文件请使用完整修复。网格精度不变。</translation>
+    </message>
+    <message>
+        <source>Parallel part conversion</source>
+        <translation>并行转换零件</translation>
+    </message>
+    <message>
+        <source>Geometry repair</source>
+        <translation>几何修复</translation>
+    </message>
 </context>
 <context>
     <name>cadly::ui::InspectorWidget</name>

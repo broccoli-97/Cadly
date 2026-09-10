@@ -8,11 +8,13 @@
 #include "cadly/platform/Log.h"
 #include "cadly/ui/MainWindow.h"
 #include "cadly/ui/ThemeTokens.h"
+#include "cadly/ui/ViewportWidget.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileOpenEvent>
@@ -22,6 +24,8 @@
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QTranslator>
+
+#include <memory>
 
 #ifdef Q_OS_MACOS
 namespace {
@@ -141,6 +145,10 @@ int main(int argc, char** argv) {
     "Save a screenshot of the window to <path> ~3.5s after startup, then exit.",
     "path");
   parser.addOption(shotOpt);
+  QCommandLineOption profileImportOpt("profile-import",
+    "Report command-line file open to first presented frame, then exit. "
+    "With --screenshot, capture that frame.");
+  parser.addOption(profileImportOpt);
   QCommandLineOption demoOpt("demo",
     "Dev aid: drive a UI state before the screenshot "
     "(wireframe|hiddenline|shaded-orbit:<yaw>,<pitch>|"
@@ -244,13 +252,48 @@ int main(int argc, char** argv) {
 
   // Defer file open until after the GL context has had a chance to come up.
   const auto positionals = parser.positionalArguments();
+  struct ImportProfile {
+    QElapsedTimer timer;
+    qint64 ready_ms{-1};
+    bool rendered{false};
+    bool reported{false};
+  };
+  const auto import_profile = std::make_shared<ImportProfile>();
+  const bool profile_import = parser.isSet(profileImportOpt);
+  if (profile_import) {
+    if (positionals.isEmpty()) {
+      CADLY_LOG_ERROR("--profile-import requires a STEP or IGES file.");
+      return 2;
+    }
+    auto* viewport = window.findChild<cadly::ui::ViewportWidget*>();
+    QObject::connect(&window, &cadly::ui::MainWindow::file_imported, &window,
+      [import_profile](const QString&) { import_profile->ready_ms = import_profile->timer.elapsed(); });
+    QObject::connect(viewport, &cadly::ui::ViewportWidget::scene_rendered, &window,
+      [import_profile]() { import_profile->rendered = true; });
+    QObject::connect(viewport, &QOpenGLWidget::frameSwapped, &window,
+      [import_profile, &window, shot_path = parser.value(shotOpt)]() {
+        if (!import_profile->rendered || import_profile->reported || import_profile->ready_ms < 0) return;
+        import_profile->reported = true;
+        CADLY_LOG_INFO("Import first frame: {} ms (scene ready: {} ms)",
+          import_profile->timer.elapsed(), import_profile->ready_ms);
+        const bool saved = shot_path.isEmpty() || window.grab().save(shot_path);
+        if (!saved) CADLY_LOG_ERROR("Could not save screenshot: {}", shot_path.toStdString());
+        QTimer::singleShot(0, &window, [saved]() { QApplication::exit(saved ? 0 : 1); });
+      });
+    QTimer::singleShot(300000, &window, [&window]() {
+      CADLY_LOG_ERROR("Timed out waiting for an imported scene to be presented.");
+      window.close();
+      QApplication::exit(1);
+    });
+  }
   if (!positionals.isEmpty()) {
-    QMetaObject::invokeMethod(&window, [&window, path = positionals.first()]() {
+    QMetaObject::invokeMethod(&window, [&window, path = positionals.first(), import_profile, profile_import]() {
+      if (profile_import) import_profile->timer.start();
       window.open_file(path);
     }, Qt::QueuedConnection);
   }
 
-  if (parser.isSet(shotOpt)) {
+  if (parser.isSet(shotOpt) && !profile_import) {
     const QString shot_path = parser.value(shotOpt);
     const QString demo = parser.value(demoOpt);
     // Trigger the demo state a beat before the grab so any import has landed

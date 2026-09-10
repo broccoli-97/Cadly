@@ -2,6 +2,7 @@
 
 #include "OcctShapeToMesh.h"
 #include "OcctProgressBridge.h"
+#include "OcctImportGuard.h"
 #include "XcafDocumentLease.h"
 
 #include "cadly/platform/Log.h"
@@ -41,6 +42,12 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
   ImportResult result;
   result.scene = std::make_shared<scene::Scene>();
   result.scene->source_file = req.path;
+
+  occt::OcctImportGuard import_guard(progress);
+  if (!import_guard.acquired()) {
+    result.cancelled = true;
+    return result;
+  }
 
   if (!std::filesystem::exists(req.path)) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Error,
@@ -83,7 +90,7 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
 
   // Cancellable Transfer — see OcctProgressBridge for the rationale.
   Handle(occt::OcctProgressBridge) transfer_bridge =
-    new occt::OcctProgressBridge(progress, 0.25f, 0.40f,
+    new occt::OcctProgressBridge(progress, 0.25f, 0.60f,
                                  "Transferring shapes to OCAF document...");
   phase_start = clock::now();
   const bool transferred = reader.Transfer(doc_lease.doc(),
@@ -106,7 +113,7 @@ ImportResult OcctIgesImporter::Import(const ImportRequest& req,
   result.summary.parse_time = std::chrono::duration_cast<std::chrono::milliseconds>(
     t_parse - t0);
 
-  progress.update(0.40f, "Tessellating geometry...");
+  progress.update(0.60f, "Tessellating geometry...");
   occt::ConversionStats stats;
   phase_start = clock::now();
   auto scn = occt::document_to_scene(doc_lease.doc(), TopoDS_Shape{},

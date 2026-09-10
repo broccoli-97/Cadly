@@ -16,6 +16,14 @@ enum class TessellationMode {
   VisualRelative,
 };
 
+enum class StepHealingMode {
+  Full,
+  // Keep curve construction, seams and tolerance repair, but skip repair of
+  // intersections between adjacent edges. Intended for fast viewing; damaged
+  // files may require Full. This does not change tessellation tolerances.
+  Fast,
+};
+
 // Knobs the user can tweak in the Import Options dialog. Defaults are tuned
 // for industrial assemblies in millimetres; the CLI uses the same defaults.
 struct ImportOptions {
@@ -47,6 +55,11 @@ struct ImportOptions {
 
   bool   load_colors    {true};
   bool   load_names     {true};
+
+  bool   parallel_step_transfer{true};
+  // Zero selects up to four workers; one forces the ordinary OCCT reader.
+  unsigned step_transfer_threads{0};
+  StepHealingMode step_healing_mode{StepHealingMode::Full};
 
   // Developer profiling hook. Normal imports leave this off to avoid adding
   // timer overhead inside the topology walk.
@@ -81,6 +94,10 @@ struct ImportSummary {
   double model_extent{0.0};
   double resolved_linear_deflection{0.0};
   TessellationMode tessellation_mode{TessellationMode::VisualRelative};
+  std::size_t step_entity_count{0};
+  std::size_t step_body_count{0};
+  unsigned step_transfer_threads{1};
+  StepHealingMode step_healing_mode{StepHealingMode::Full};
   std::vector<ImportTiming> timings;
   std::vector<Diagnostic> diagnostics;
 };
@@ -101,6 +118,8 @@ class IProgressSink {
 public:
   virtual ~IProgressSink() = default;
   // `fraction` is in [0, 1]. `message` is a human-readable status hint.
+  // OCCT may call these methods from workers; shared sink state must be
+  // synchronized, including the cancellation flag.
   virtual void update(float fraction, const std::string& message) = 0;
   // Importers should check this regularly and return early when true.
   virtual bool cancelled() const = 0;

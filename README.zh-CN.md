@@ -46,7 +46,7 @@ Qt 6 Widgets。材质采用 PBR 金属度-粗糙度模型配合基于图像的�
 ## 构建与运行
 
 使用 CMake preset（Ninja）。Qt 6 与 OCCT 的预编译依赖分别通过 Linux 的 apt、
-Windows 的 MSYS2 UCRT64 和 macOS 的 Homebrew 安装。
+Windows 的 MSYS2 CLANG64 和 macOS 的 Homebrew 安装。
 
 ```bash
 cmake --preset linux-release          # 配置（RelWithDebInfo）
@@ -57,12 +57,12 @@ build/linux-release/bin/cadly [file.step]        # 图形界面，可选在启�
 build/linux-release/bin/cad_import_cli file.step # 无界面导入，打印几何统计
 ```
 
-Windows 下先安装 [MSYS2](https://www.msys2.org/)，打开 **UCRT64** 终端。
+Windows 下先安装 [MSYS2](https://www.msys2.org/)，打开 **CLANG64** 终端。
 先运行 `pacman -Syu` 更新；若提示关闭终端，重新打开后再次运行更新。
 在仓库根目录执行：
 
 ```bash
-bash scripts/setup-windows.sh        # 安装预编译依赖及 GCC
+bash scripts/setup-windows.sh        # 安装预编译依赖及 Clang
 cmake --preset windows-msys2-release
 cmake --build --preset windows-msys2-release
 ctest --preset windows-msys2-release
@@ -70,8 +70,21 @@ build/windows-msys2-release/bin/cadly.exe [file.step]
 ```
 
 Windows CI 使用相同的依赖和命令，无需从源码构建 Qt/OCCT，也无需维护依赖二进制
-缓存。依赖随 MSYS2 仓库更新，GCC 和所有库统一使用 UCRT64 版本。
-发布包自带运行所需 DLL，用户无需安装 MSYS2。
+缓存。依赖随 MSYS2 仓库更新，Clang 和所有库统一使用 CLANG64 版本。
+从 UCRT64 构建迁移时，运行 `cmake --fresh --preset windows-msys2-release`
+清除旧 CMake 缓存。发布包自带运行所需 DLL，用户无需安装 MSYS2。
+选择此工具链的 OCCT 导入回归说明见[平台差异记录](docs/platform-divergence.md)。
+
+Linux 搭配共享版 OCCT 7.6.3 时，构建会下载固定版本的 OCCT 源码，在构建目录内重编译
+两个 toolkit，优化 STEP 扫描和多边形求交。这需要 `patch`；可用
+`-DCADLY_OCCT_PERFORMANCE_PATCHES=OFF` 使用系统库。其他 OCCT 版本使用原有库。
+测试条件和实际收益见[导入深度性能报告](docs/research/05-step-import-deep-profile.md)。
+
+STEP 默认并行转换独立零件，并保留完整几何修复。
+`cad_import_cli file.step --profile --fingerprint` 输出阶段耗时与场景指纹；
+`--step-threads 1` 使用普通串行转换。可选的 `--step-healing fast`（导入选项中也可选择）
+跳过相邻边交叉修复，损坏的几何可能需要完整修复。
+`cadly file.step --profile-import` 测量从打开文件到首帧提交显示的时间。
 
 其他 preset：`linux-debug`、`linux-qt68-{debug,release}`（Qt 6.8，启用 qlementine
 样式）、`windows-msys2-debug`、`macos-{debug,release}`（先运行

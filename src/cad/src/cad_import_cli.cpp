@@ -4,6 +4,7 @@
 #include "cadly/cad/ImporterRegistry.h"
 #include "cadly/cad/TessellationPolicy.h"
 #include "cadly/platform/Log.h"
+#include "SceneFingerprint.h"
 
 #include <fmt/format.h>
 
@@ -14,6 +15,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -32,9 +34,13 @@ void print_usage(const char* argv0) {
     "  --max-relative <r>        visual-relative upper clamp (default 0.0005)\n"
     "  --no-colors\n"
     "  --no-names\n"
+    "  --step-healing <mode>     full|fast (default full; fast skips adjacent-edge repair)\n"
+    "  --step-threads <n>        0=auto, 1=serial, 2..64=body workers\n"
+    "  --no-parallel-step        use the ordinary OCCT transfer path\n"
     "  --cancel-after-ms <ms>    request cancellation after this delay; used\n"
     "                            to measure how quickly importers honour it\n"
     "  --profile                 print detailed import stage timings\n"
+    "  --fingerprint             compare geometry, hierarchy, colours and edges\n"
     "  --verbose\n";
 }
 
@@ -95,6 +101,12 @@ void print_result(const std::filesystem::path& path,
   std::cout << fmt::format("  faces        : {}\n", result.summary.face_count);
   std::cout << fmt::format("  triangles    : {}\n", result.summary.triangle_count);
   std::cout << fmt::format("  vertices     : {}\n", result.summary.vertex_count);
+  if (result.summary.step_entity_count > 0) {
+    std::cout << fmt::format("  STEP entities: {}\n", result.summary.step_entity_count);
+    std::cout << fmt::format("  STEP transfer: {} body jobs, {} worker(s), {} repair\n",
+      result.summary.step_body_count, result.summary.step_transfer_threads,
+      result.summary.step_healing_mode == cadly::cad::StepHealingMode::Fast ? "fast" : "full");
+  }
   std::cout << fmt::format("  tessellation : {}\n",
                            cadly::cad::tessellation_mode_name(
                              result.summary.tessellation_mode));
@@ -182,6 +194,7 @@ int main(int argc, char** argv) {
 
   cad::ImportOptions opts;
   bool profile = false;
+  bool fingerprint = false;
   bool tessellation_mode_explicit = false;
   long cancel_after_ms = -1;
   std::vector<std::filesystem::path> inputs;
@@ -190,8 +203,35 @@ int main(int argc, char** argv) {
     if (a == "-h" || a == "--help") { print_usage(argv[0]); return 0; }
     if (a == "--verbose") { platform::init_logging("debug"); continue; }
     if (a == "--profile") { opts.profile_timings = true; profile = true; continue; }
+    if (a == "--fingerprint") { fingerprint = true; continue; }
     if (a == "--no-colors") { opts.load_colors = false; continue; }
     if (a == "--no-names")  { opts.load_names  = false; continue; }
+    if (a == "--no-parallel-step") { opts.parallel_step_transfer = false; continue; }
+    if (a == "--step-healing" && i + 1 < argc) {
+      const std::string mode = argv[++i];
+      if (mode == "full") opts.step_healing_mode = cad::StepHealingMode::Full;
+      else if (mode == "fast") opts.step_healing_mode = cad::StepHealingMode::Fast;
+      else {
+        std::cerr << "Unknown STEP healing mode: " << mode << "\n";
+        return 2;
+      }
+      continue;
+    }
+    if (a == "--step-threads" && i + 1 < argc) {
+      const std::string value = argv[++i];
+      try {
+        std::size_t end = 0;
+        const auto count = std::stoul(value, &end);
+        if (value.empty() || value.front() == '-' || end != value.size() || count > 64) {
+          throw std::out_of_range("STEP worker count");
+        }
+        opts.step_transfer_threads = static_cast<unsigned>(count);
+      } catch (const std::exception&) {
+        std::cerr << "STEP thread count must be between 0 and 64.\n";
+        return 2;
+      }
+      continue;
+    }
     if (a == "--cancel-after-ms" && i + 1 < argc) {
       cancel_after_ms = std::stol(argv[++i]); continue;
     }
@@ -251,6 +291,7 @@ int main(int argc, char** argv) {
 
   bool all_ok = true;
   for (const auto& file : files) {
+    const auto wall_start = std::chrono::steady_clock::now();
     cad::ImportResult result;
     if (cancel_after_ms >= 0) {
       DeadlineCancelSink sink{std::chrono::milliseconds(cancel_after_ms)};
@@ -267,7 +308,18 @@ int main(int argc, char** argv) {
     } else {
       result = cad::ImporterRegistry::instance().import(file, opts);
     }
+    const auto wall_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - wall_start);
     print_result(file, result, profile);
+    if (fingerprint && result.success && result.scene) {
+      const auto hashes = cad::scene_fingerprint(*result.scene);
+      std::cout << fmt::format("  geometry hash: {:016x}\n  scene hash   : {:016x}\n",
+        hashes.geometry, hashes.scene);
+    }
+    if (profile) {
+      std::cout << fmt::format("  wall time (including cleanup): {} ms\n",
+        wall_time.count());
+    }
     all_ok = all_ok && (result.success || result.cancelled);
   }
 
