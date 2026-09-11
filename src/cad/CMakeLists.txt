@@ -53,6 +53,12 @@ target_include_directories(cadly_cad
 
 target_compile_features(cadly_cad PUBLIC cxx_std_17)
 
+if(MINGW)
+  # OCCT headers use M_PI/M_PI_2, which MinGW hides in strict C++17 mode.
+  # Define this before any consumer includes <cmath>, including CAD tests.
+  target_compile_definitions(cadly_cad PUBLIC _USE_MATH_DEFINES)
+endif()
+
 target_link_libraries(cadly_cad
   PUBLIC
     Cadly::Scene
