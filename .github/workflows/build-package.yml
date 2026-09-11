@@ -200,6 +200,8 @@ jobs:
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           Remove-Item Env:QT_PLUGIN_PATH, Env:QT_QPA_PLATFORM_PLUGIN_PATH -ErrorAction SilentlyContinue
           $env:QT_QPA_PLATFORM = 'offscreen'
+          # A Windows GUI executable otherwise shows --help in a modal dialog.
+          $env:QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES = '1'
           $gui = Start-Process -FilePath "package/cadly/bin/cadly.exe" -ArgumentList '--help' -Wait -PassThru
           if ($gui.ExitCode -ne 0) { throw "packaged cadly failed ($($gui.ExitCode))" }
           & "package/cadly/bin/cad_import_cli.exe" package/cadly/sample-files/as1-ug-214.stp

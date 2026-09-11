@@ -3,6 +3,10 @@
 #   -P packaging/windows/package-portable.cmake
 cmake_minimum_required(VERSION 3.24)
 
+if(POLICY CMP0207)
+  cmake_policy(SET CMP0207 NEW)
+endif()
+
 if(NOT WIN32 OR NOT DEFINED BUILD_DIR OR NOT DEFINED PACKAGE_DIR)
   message(FATAL_ERROR "Run on Windows with -DBUILD_DIR=... -DPACKAGE_DIR=...")
 endif()
