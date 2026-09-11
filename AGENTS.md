@@ -24,10 +24,12 @@ to the renderer, never `QPainter`.
   OCCT import and tessellation without a display or GL context.
 
 Use `linux-release` for RelWithDebInfo, `linux-qt68-*` with local Qt 6.8.3, and
-`linux-vcpkg-debug` with `VCPKG_ROOT`. Windows contributors use a
-`windows-ninja-*` or `windows-msvc-*` preset. macOS contributors run
-`scripts/setup-macos.sh` (Homebrew deps) and use `macos-{debug,release}`; the
-GUI binary is `bin/cadly.app/Contents/MacOS/cadly`, and deliberate
+`linux-vcpkg-debug` with `VCPKG_ROOT`. Windows contributors run
+`bash scripts/setup-windows.sh` in MSYS2 UCRT64 and use `windows-msys2-*`;
+`windows-ninja-*` and `windows-msvc-*` remain optional vcpkg presets.
+macOS contributors run `scripts/setup-macos.sh` (Homebrew deps) and use
+`macos-{debug,release}`; the GUI binary is
+`bin/cadly.app/Contents/MacOS/cadly`, and deliberate
 per-platform differences are recorded in `docs/platform-divergence.md`. CI
 builds, tests, imports the fixture, and packages on all three platforms.
 

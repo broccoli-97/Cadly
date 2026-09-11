@@ -8,12 +8,8 @@
 #     bundled with their runtime closure into a portable tarball.
 #     Pinned to ubuntu-24.04 (Qt 6.4, OCCT 7.6) so a runner-image bump can't
 #     silently change the toolchain the way `ubuntu-latest` would.
-#   - Windows: vcpkg manifest build (Qt 6.11, OCCT 8.0 at the pinned
-#     baseline), packaged self-contained (applocal DLL closure + a manual
-#     Qt plugin copy — see the Package step). Built with Ninja
-#     against whatever MSVC toolset the runner image provides (vcvars via
-#     msvc-dev-cmd) — deliberately NOT a year-pinned Visual Studio generator,
-#     which breaks whenever the hosted image rotates VS versions.
+#   - Windows: MSYS2 UCRT64 binary packages (Qt6 + OCCT), built with GCC
+#     and Ninja, deployed with windeployqt and CMake's runtime DLL scanner.
 #   - macOS: Homebrew Qt + OCCT on the Apple Silicon runner, deployed into a
 #     self-contained ad-hoc-signed Cadly.app via packaging/macos/package-app.sh
 #     and shipped as a .dmg (unsigned-developer distribution: users right-click
@@ -159,168 +155,55 @@ jobs:
           if-no-files-found: error
 
   windows:
-    name: Windows (windows-ninja-release)
+    name: Windows (windows-msys2-release)
     runs-on: windows-latest
-    # First run builds Qt + OCCT from source via vcpkg — release-only, via
-    # the preset's x64-windows-release triplet, since nothing here ever
-    # links the debug variants — later runs restore per-package binaries
-    # from the Actions cache and take minutes. A full rebuild recurs only
-    # when something that feeds vcpkg's ABI hash actually changes —
-    # baseline bump, or the hosted image rotating its MSVC toolset.
-    timeout-minutes: 350
-    permissions:
-      contents: read
-      packages: write
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-      # Binary caching via a NuGet feed on GitHub Packages: one package per
-      # vcpkg binary artifact, keyed by vcpkg's own ABI hash (compiler
-      # version, triplet, features, port tree all included). The previous
-      # `x-gha` Actions-cache backend was removed from the vcpkg tool
-      # (bootstrap always fetches the latest tool, whatever the port-tree
-      # baseline), after which caching silently no-opped and every run
-      # rebuilt all dependencies from source (~3 h).
-      #
-      # Deliberately NOT actions/cache over VCPKG_DEFAULT_BINARY_CACHE: that
-      # tarball's key (hash of vcpkg.json) didn't include the MSVC version,
-      # but the ABI hashes inside it do. Every few weeks windows-latest
-      # rotates MSVC, after which the stale tarball still *hit* exactly —
-      # vcpkg could reuse none of it, everything rebuilt (~2 h), and the
-      # save step (conditioned on a cache miss) threw the fresh binaries
-      # away. Result: a full rebuild on every push until vcpkg.json next
-      # changed. Per-package ABI-keyed entries cannot go stale-but-hitting,
-      # and each package uploads right after it builds, so even a timed-out
-      # run keeps its progress.
-      VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-      VCPKG_BINARY_SOURCES: clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v7
 
-      # Put MSVC (cl.exe) + the Windows SDK on PATH and export the associated
-      # env (INCLUDE/LIB/...). The Ninja generator picks the compiler up from
-      # this environment, sidestepping the "could not find any instance of
-      # Visual Studio" failure the Visual Studio generator hits when it can't
-      # locate an install via COM on the hosted image.
-      - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
+      - name: Set up MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
         with:
-          arch: x64
+          msystem: UCRT64
+          update: true
+          cache: false
 
-      # vcvars in recent VS (18/2026 on the image) exports VCPKG_ROOT pointing
-      # at the copy of vcpkg bundled inside the VS install, and msvc-dev-cmd
-      # faithfully re-exports the whole vcvars environment — which overrides
-      # the job-level `env:` value for all later steps. Re-pin our pinned-
-      # baseline checkout; a later GITHUB_ENV write wins over vcvars' value.
-      - name: Re-pin VCPKG_ROOT (vcvars exports the VS-bundled vcpkg)
-        shell: pwsh
-        run: Add-Content $env:GITHUB_ENV 'VCPKG_ROOT=${{ github.workspace }}/vcpkg'
+      - name: Install prebuilt dependencies
+        run: bash scripts/setup-windows.sh
 
-      - name: Install Ninja
-        run: choco install ninja -y --no-progress
-
-      # Check out vcpkg at exactly the manifest's builtin-baseline so the
-      # dependency set is fully pinned by vcpkg.json (single source of truth).
-      - name: Set up vcpkg
-        shell: pwsh
-        run: |
-          $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
-          Write-Host "vcpkg baseline: $baseline"
-          git init $env:VCPKG_ROOT
-          git -C $env:VCPKG_ROOT remote add origin https://github.com/microsoft/vcpkg.git
-          git -C $env:VCPKG_ROOT fetch --depth 1 origin $baseline
-          git -C $env:VCPKG_ROOT checkout FETCH_HEAD
-          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
-
-      # Point vcpkg's bundled NuGet client at the GitHub Packages feed.
-      # GITHUB_TOKEN can publish packages to the repository's namespace once
-      # the job requests `packages: write` (fork PRs get a read-only token —
-      # restores still work there; failed uploads are non-fatal warnings).
-      - name: Configure NuGet binary cache feed
-        shell: pwsh
-        run: |
-          $nuget = (& "$env:VCPKG_ROOT/vcpkg" fetch nuget) | Select-Object -Last 1
-          & $nuget sources add -Source $env:VCPKG_NUGET_FEED -Name GitHubPackages `
-            -UserName "${{ github.repository_owner }}" -Password "${{ secrets.GITHUB_TOKEN }}" `
-            -StorePasswordInClearText
-          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source $env:VCPKG_NUGET_FEED
-
-      - name: Configure (builds vcpkg dependencies)
-        run: cmake --preset windows-ninja-release
+      - name: Configure
+        run: cmake --preset windows-msys2-release
 
       - name: Build
-        run: cmake --build --preset windows-ninja-release
+        run: cmake --build --preset windows-msys2-release
 
       - name: Test
         timeout-minutes: 10
-        # Stream startup diagnostics even if a Qt test blocks before exiting.
-        run: ctest --preset windows-ninja-release --verbose
+        run: ctest --preset windows-msys2-release --verbose
 
       - name: Import smoke check (STEP)
-        shell: pwsh
-        run: |
-          & "build/windows-ninja-release/bin/cad_import_cli.exe" test_files/as1-ug-214.stp
-          if ($LASTEXITCODE -ne 0) { throw "cad_import_cli failed ($LASTEXITCODE)" }
+        run: ./build/windows-msys2-release/bin/cad_import_cli.exe test_files/as1-ug-214.stp
 
       - name: Package
+        run: |
+          cmake -DBUILD_DIR=build/windows-msys2-release -DPACKAGE_DIR=package/cadly \
+            -P packaging/windows/package-portable.cmake
+
+      - name: Test standalone package
+        timeout-minutes: 5
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          cmake --install build/windows-ninja-release --prefix package/cadly
-          if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
-          # FetchContent'd deps (qlementine, qlementine-icons) install dev
-          # files into the prefix; the viewer package only needs bin/ + share/.
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue package/cadly/include, package/cadly/lib
-
-          # Non-Qt runtime DLLs (OCCT TK*, fmt, freetype, ...): vcpkg's
-          # applocal post-build step already computed the exact closure next
-          # to the built executables — reuse it instead of re-deriving.
-          Copy-Item "build/windows-ninja-release/bin/*.dll" "package/cadly/bin/" -Force
-
-          # Qt runtime-loaded plugins (platforms, imageformats, iconengines,
-          # styles), copied straight from the target triplet's plugin tree.
-          # windeployqt is deliberately NOT used here: with the release-only
-          # x64-windows-release target triplet, Qt's ports treat the build as
-          # a cross build (host triplet stays x64-windows) and only install
-          # tools for the host — the release tree has no windeployqt/qtpaths
-          # at all, and the host copy's qt.conf resolves against the host
-          # prefix, which has no Qt6Svg or plugins to deploy from. The Qt
-          # DLLs the executables link are already applocal-deployed (copied
-          # above); plugins are the only piece windeployqt added.
-          $qtRel = "build/windows-ninja-release/vcpkg_installed/x64-windows-release"
-          if (-not (Test-Path "$qtRel/Qt6/plugins")) { throw "Qt plugin tree not found at $qtRel/Qt6/plugins" }
-          foreach ($d in @('platforms', 'imageformats', 'iconengines', 'styles')) {
-            if (Test-Path "$qtRel/Qt6/plugins/$d") {
-              Copy-Item "$qtRel/Qt6/plugins/$d" "package/cadly/bin/" -Recurse -Force
-            }
-          }
-          # The svg plugins load Qt6Svg.dll at runtime; nothing links it
-          # directly, so the applocal closure copied above doesn't include it.
-          Copy-Item "$qtRel/bin/Qt6Svg.dll" "package/cadly/bin/" -Force
-
-          # Fail loudly if the deploy silently missed the plugins the app
-          # can't run without (window platform, SVG icon theme rendering).
-          foreach ($f in @('platforms/qwindows.dll', 'imageformats/qsvg.dll', 'iconengines/qsvgicon.dll')) {
-            if (-not (Test-Path "package/cadly/bin/$f")) { throw "packaged Qt deploy is missing $f" }
-          }
-
-          New-Item -ItemType Directory -Force package/cadly/sample-files | Out-Null
-          Copy-Item test_files/as1-ug-214.stp package/cadly/sample-files/
-          @'
-          Cadly — Windows x64 build (self-contained)
-
-          Run:
-            bin\cadly.exe sample-files\as1-ug-214.stp     (GUI viewer)
-            bin\cad_import_cli.exe sample-files\as1-ug-214.stp   (headless import stats)
-
-          Requires the Microsoft Visual C++ Redistributable (x64), which most
-          systems already have. Latest installer:
-          https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist
-          Requires a GPU/driver with OpenGL 4.1+.
-          '@ | Set-Content package/cadly/README.txt
-
-          # Validate the package's own DLL closure by running it in place.
-          & "package/cadly/bin/cad_import_cli.exe" test_files/as1-ug-214.stp
-          if ($LASTEXITCODE -ne 0) { throw "packaged cad_import_cli failed ($LASTEXITCODE) - DLL closure incomplete?" }
+          # Exclude the development environment so it cannot hide missing DLLs.
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item Env:QT_PLUGIN_PATH, Env:QT_QPA_PLATFORM_PLUGIN_PATH -ErrorAction SilentlyContinue
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          $gui = Start-Process -FilePath "package/cadly/bin/cadly.exe" -ArgumentList '--help' -Wait -PassThru
+          if ($gui.ExitCode -ne 0) { throw "packaged cadly failed ($($gui.ExitCode))" }
+          & "package/cadly/bin/cad_import_cli.exe" package/cadly/sample-files/as1-ug-214.stp
+          if ($LASTEXITCODE -ne 0) { throw "packaged cad_import_cli failed ($LASTEXITCODE)" }
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v7

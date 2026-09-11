@@ -1,6 +1,6 @@
 # CI: on every push to main and every pull request, run the full build +
-# test + package pipeline on Linux and Windows. The packaging steps live in
-# build-package.yml, which release.yml calls with the same inputs — so a
+# test + package pipeline on Linux, Windows, and macOS. The packaging steps
+# live in build-package.yml, which release.yml calls with the same inputs — so a
 # release ships exactly what CI has been exercising all along.
 #
 # Packages land as workflow artifacts (Actions tab -> run -> Artifacts).
@@ -16,10 +16,7 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # A cold Windows vcpkg build can take hours. Let a PR's running build
-  # finish and publish its binaries; keep only the newest pending update.
-  # Main pushes and manual runs still replace an obsolete running build.
-  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -27,4 +24,3 @@ jobs:
     uses: ./.github/workflows/build-package.yml
     permissions:
       contents: read
-      packages: write

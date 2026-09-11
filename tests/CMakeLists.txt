@@ -91,8 +91,8 @@ add_test(NAME cadly_shader_source COMMAND cadly_shader_source_test)
 
 if(CADLY_BUILD_GUI)
   # Core Qt adapters, persistence, and camera execution do not require Widgets,
-  # OpenGL, OCCT, or QtTest. They also run on the Windows/vcpkg Qt build that
-  # omits testlib, so platform compatibility is not silently skipped there.
+  # OpenGL, OCCT, or QtTest. They also run on local vcpkg builds without
+  # testlib, so platform compatibility is not silently skipped there.
   add_executable(cadly_qt_input_adapter_test qt_input_adapter_test.cpp)
   target_link_libraries(cadly_qt_input_adapter_test PRIVATE Cadly::InputQt Cadly::Warnings)
   add_test(NAME cadly_qt_input_adapter COMMAND cadly_qt_input_adapter_test)
@@ -122,11 +122,8 @@ if(CADLY_BUILD_GUI)
   )
 endif()
 
-# The widget tests need Qt6::Test, which the vcpkg-built Qt deliberately
-# omits (qtbase is built without "testlib" to keep the Windows from-source
-# build down; see vcpkg.json). They also exercise pure widget logic, nothing
-# platform-specific, so running them on the system-Qt Linux configs is the
-# real gate — on vcpkg configs they are skipped rather than failing configure.
+# Widget tests run on all CI platforms using the packaged Qt6::Test. The
+# optional local vcpkg configuration omits testlib (see vcpkg.json).
 if(CADLY_BUILD_GUI AND NOT TARGET Qt6::Test)
   message(STATUS "Qt6Test not available - skipping GUI widget tests "
     "(vcpkg builds qtbase without the testlib feature)")

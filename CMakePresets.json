@@ -84,6 +84,28 @@
       }
     },
     {
+      "name": "windows-msys2-debug",
+      "inherits": "base",
+      "displayName": "Windows Debug (MSYS2 UCRT64 Qt6 + OCCT)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "g++"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-msys2-release",
+      "inherits": "windows-msys2-debug",
+      "displayName": "Windows Release (MSYS2 UCRT64 Qt6 + OCCT)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
       "name": "windows-msvc-debug",
       "inherits": "base",
       "displayName": "Windows MSVC Debug (vcpkg manifest)",
@@ -141,6 +163,8 @@
     { "name": "linux-qt68-release", "configurePreset": "linux-qt68-release" },
     { "name": "macos-debug",   "configurePreset": "macos-debug" },
     { "name": "macos-release", "configurePreset": "macos-release" },
+    { "name": "windows-msys2-debug",   "configurePreset": "windows-msys2-debug" },
+    { "name": "windows-msys2-release", "configurePreset": "windows-msys2-release" },
     { "name": "windows-msvc-debug",   "configurePreset": "windows-msvc-debug",   "configuration": "Debug" },
     { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "RelWithDebInfo" },
     { "name": "windows-ninja-debug",   "configurePreset": "windows-ninja-debug" },
@@ -153,6 +177,8 @@
     { "name": "linux-qt68-release", "configurePreset": "linux-qt68-release", "output": { "outputOnFailure": true } },
     { "name": "macos-debug",   "configurePreset": "macos-debug",   "output": { "outputOnFailure": true } },
     { "name": "macos-release", "configurePreset": "macos-release", "output": { "outputOnFailure": true } },
+    { "name": "windows-msys2-debug",   "configurePreset": "windows-msys2-debug",   "output": { "outputOnFailure": true } },
+    { "name": "windows-msys2-release", "configurePreset": "windows-msys2-release", "output": { "outputOnFailure": true } },
     { "name": "windows-msvc-debug",   "configurePreset": "windows-msvc-debug",   "configuration": "Debug",          "output": { "outputOnFailure": true } },
     { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "RelWithDebInfo", "output": { "outputOnFailure": true } },
     { "name": "windows-ninja-debug",   "configurePreset": "windows-ninja-debug",   "output": { "outputOnFailure": true } },

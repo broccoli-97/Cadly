@@ -46,18 +46,18 @@ set(CMAKE_AUTOUIC ${CADLY_BUILD_GUI})
 add_library(cadly_warnings INTERFACE)
 add_library(Cadly::Warnings ALIAS cadly_warnings)
 
+if(WIN32)
+  # glcorearb.h includes windows.h for APIENTRY; its min/max macros otherwise
+  # collide with std::min/std::max under both MSVC and MinGW.
+  target_compile_definitions(cadly_warnings INTERFACE NOMINMAX)
+endif()
+
 if(MSVC)
   target_compile_options(cadly_warnings INTERFACE
     /W4 /permissive- /Zc:__cplusplus /Zc:preprocessor
     /wd4127 # conditional expression is constant (Qt headers)
     /wd4459 # declaration hides global
   )
-  # NOMINMAX: <GL/glcorearb.h> pulls in <windows.h> on Win32 to get APIENTRY,
-  # and windows.h defines min()/max() as function-like macros unless this is
-  # set — which then mangles every std::min/std::max call site into a C2589
-  # ("illegal token on right side of ::"). Define it for all first-party
-  # translation units, before any header is seen.
-  target_compile_definitions(cadly_warnings INTERFACE NOMINMAX)
   if(CADLY_WARNINGS_AS_ERRORS)
     target_compile_options(cadly_warnings INTERFACE /WX)
   endif()
@@ -163,13 +163,9 @@ endif()
 if(CADLY_BUILD_TESTS)
   enable_testing()
   if(CADLY_BUILD_GUI)
-    # Optional on purpose: the vcpkg manifest builds qtbase without the
-    # "testlib" feature to hold down the hours-long from-source Windows build
-    # (see vcpkg.json), so Qt6Test only exists on the system-Qt configs. When
-    # it is absent, tests/CMakeLists.txt skips the GUI widget tests (loudly).
-    # Input policy, Qt adapters, settings, and camera tests do not need QtTest
-    # and remain cross-platform gates alongside the smoke tests. Don't make
-    # this REQUIRED again — it turns every vcpkg configure into a hard error.
+    # System packages, including MSYS2, provide QtTest. Keep it optional for
+    # local vcpkg builds, whose manifest omits the qtbase "testlib" feature.
+    # Input policy, Qt adapters, settings, and camera tests also run without it.
     find_package(Qt6 QUIET COMPONENTS Test)
   endif()
   add_subdirectory(tests)

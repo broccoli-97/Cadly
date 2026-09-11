@@ -45,8 +45,8 @@ Qt 6 Widgets。材质采用 PBR 金属度-粗糙度模型配合基于图像的�
 
 ## 构建与运行
 
-使用 CMake preset（Ninja）。Linux 下依赖系统的 Qt 6 与 OCCT；Windows/便携构建
-使用 vcpkg 清单（`vcpkg.json`）。
+使用 CMake preset（Ninja）。Qt 6 与 OCCT 的预编译依赖分别通过 Linux 的 apt、
+Windows 的 MSYS2 UCRT64 和 macOS 的 Homebrew 安装。
 
 ```bash
 cmake --preset linux-release          # 配置（RelWithDebInfo）
@@ -57,11 +57,28 @@ build/linux-release/bin/cadly [file.step]        # 图形界面，可选在启�
 build/linux-release/bin/cad_import_cli file.step # 无界面导入，打印几何统计
 ```
 
+Windows 下先安装 [MSYS2](https://www.msys2.org/)，打开 **UCRT64** 终端。
+先运行 `pacman -Syu` 更新；若提示关闭终端，重新打开后再次运行更新。
+在仓库根目录执行：
+
+```bash
+bash scripts/setup-windows.sh        # 安装预编译依赖及 GCC
+cmake --preset windows-msys2-release
+cmake --build --preset windows-msys2-release
+ctest --preset windows-msys2-release
+build/windows-msys2-release/bin/cadly.exe [file.step]
+```
+
+Windows CI 使用相同的依赖和命令，无需从源码构建 Qt/OCCT，也无需维护依赖二进制
+缓存。依赖随 MSYS2 仓库更新，GCC 和所有库统一使用 UCRT64 版本。
+发布包自带运行所需 DLL，用户无需安装 MSYS2。
+
 其他 preset：`linux-debug`、`linux-qt68-{debug,release}`（Qt 6.8，启用 qlementine
-样式）、`linux-vcpkg-debug`、`windows-msvc-{debug,release}`（VS 解决方案）、
-`windows-ninja-{debug,release}`（单配置 Ninja，需要环境中已有 MSVC）。CI 在
-Linux 与 Windows 上完成构建、测试与打包；推送 `v*` 标签会把这些包发布到
-[Releases](../../releases) 页面。
+样式）、`windows-msys2-debug`、`macos-{debug,release}`（先运行
+`scripts/setup-macos.sh`）。仍可选用 vcpkg preset：`linux-vcpkg-debug`、
+`windows-msvc-{debug,release}`（VS 解决方案）、`windows-ninja-{debug,release}`
+（使用环境中的 MSVC）。CI 在三个平台上完成构建、测试与打包；推送 `v*` 标签会把
+这些包发布到 [Releases](../../releases) 页面。
 
 ### 依赖
 
