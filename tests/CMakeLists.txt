@@ -59,6 +59,14 @@ target_compile_definitions(cadly_smoke_test
 )
 add_test(NAME cadly_smoke COMMAND cadly_smoke_test)
 
+add_executable(cadly_import_error_test import_error_test.cpp)
+target_link_libraries(cadly_import_error_test PRIVATE Cadly::Cad Cadly::Warnings)
+target_include_directories(cadly_import_error_test SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
+target_compile_definitions(cadly_import_error_test
+  PRIVATE CADLY_TEST_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+add_test(NAME cadly_import_error COMMAND cadly_import_error_test)
+
 add_executable(cadly_ibl_bake_plan_test
   ibl_bake_plan_test.cpp
   ${CMAKE_SOURCE_DIR}/src/renderer_gl/src/IblBakePlan.cpp
