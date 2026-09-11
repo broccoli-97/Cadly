@@ -22,4 +22,7 @@ void main() {
   v_world_normal = normalize(u_normal_matrix * a_normal);
   v_vertex_color = a_color;
   gl_Position    = u_view_proj * world;
+  // Section clip. Inert unless the host enabled GL_CLIP_DISTANCE0 — see
+  // u_clip_plane in common/frame_block.glsl.
+  gl_ClipDistance[0] = dot(u_clip_plane, world);
 }

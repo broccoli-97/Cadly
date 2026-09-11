@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cadly/input/NavigationCommand.h"
 #include "cadly/scene/Camera.h"
 
 #include <QObject>
@@ -14,6 +15,15 @@ namespace cadly::ui {
 // for every mouse-move event in the same drag.
 struct RotationPivot {
   scene::vec3 world_position{0.0f};
+};
+
+// A ray through a viewport pixel, in world space. Perspective gives a true eye
+// ray; orthographic gives a parallel ray whose origin sits on the focal plane
+// through the camera target. Either way `direction` is unit length and points
+// away from the viewer, so `origin + direction * t` walks into the scene.
+struct ScreenRay {
+  scene::vec3 origin   {0.0f};
+  scene::vec3 direction{0.0f, 0.0f, -1.0f};
 };
 
 // Strategy interface for choosing the rotation pivot. The default
@@ -45,9 +55,9 @@ public:
   RotationPivot resolve(const scene::Camera& camera, QPoint) const override;
 };
 
-// Orbit/pan/zoom controller. Owns no widget; the host viewport feeds mouse
-// events in and consults `camera()` after each step. Rotation is performed
-// with quaternions around a pivot resolved at the start of each drag — see
+// Orbit/pan/zoom executor. Owns no widget or input preferences; the host feeds
+// resolved navigation commands in and consults `camera()` after each step.
+// Rotation uses quaternions around a pivot resolved at the start of each drag — see
 // `set_rotation_pivot_resolver()` for how to swap in custom pivot strategies.
 class CameraController : public QObject {
   Q_OBJECT
@@ -64,26 +74,10 @@ public:
   void restore_camera(const scene::Camera& camera,
                       const scene::vec3& min, const scene::vec3& max);
 
-  enum class DragMode { None, Orbit, Pan, Dolly };
-
-  // Which rotation scheme an Orbit drag uses: Free is the screen-space
-  // tumble (scene::Camera::orbit), Turntable keeps world-up fixed with the
-  // elevation clamped (scene::Camera::orbit_turntable). A user preference,
-  // persisted by the shell alongside the navigation scheme.
-  enum class OrbitStyle { Free = 0, Turntable };
-  void set_orbit_style(OrbitStyle style) { orbit_style_ = style; }
-  OrbitStyle orbit_style() const { return orbit_style_; }
-
-  void begin_drag(DragMode mode, QPoint at);
-  void update_drag(QPoint to);
-  void end_drag();
-
-  // `cursor_pos` is widget-local pixels (Qt convention: origin top-left).
-  // Zoom anchors on the world point currently under the cursor on the focal
-  // plane through `target`, so that point stays under the cursor after the
-  // distance change. Falls back to target-centred zoom near screen centre
-  // (where `cursor_world ≈ target` makes the two formulations identical).
-  void wheel(QPoint cursor_pos, int angle_delta);
+  // Input policy (buttons, modifiers, sensitivity, drag ownership) stays in
+  // Cadly::Input. This boundary only applies camera-space motion, resolves the
+  // pivot at BeginOrbit, and enforces the existing projection/clip policies.
+  void apply_navigation(const input::NavigationCommand& command);
 
   // Re-orient the camera to a fixed yaw/pitch (in degrees) without moving the
   // target or changing distance. Drives the View > Standard Views actions
@@ -102,11 +96,35 @@ public:
 
   // Replace the rotation-pivot strategy. Passing `nullptr` restores the
   // default `TargetPivotResolver`. Safe to call mid-session; the next
-  // `begin_drag(Orbit, ...)` will use the new resolver.
+  // BeginOrbit command will use the new resolver.
   void set_rotation_pivot_resolver(std::unique_ptr<RotationPivotResolver> r);
 
   // True while an orbit drag is in progress.
-  bool is_rotating() const { return drag_mode_ == DragMode::Orbit; }
+  bool is_rotating() const { return rotating_; }
+
+  // Screen <-> world, for viewport manipulators (the section-plane handle
+  // today; picking when it lands). Both work in LOGICAL pixels — the space
+  // QMouseEvent::pos() uses and the space set_viewport() is fed — not the
+  // device pixels the renderer's glViewport uses. A caller that needs to match
+  // a renderer-side "constant pixel size" must scale by the device pixel ratio
+  // itself; see ViewportWidget.
+  //
+  // Both use the same NDC + focal-plane construction as cursor-anchored zoom,
+  // which is what makes them behave identically in orthographic and perspective
+  // mode: Camera::projection() derives the ortho half-height from
+  // `distance * tan(fov_y/2)`, so one formula covers both.
+  ScreenRay screen_ray(QPoint widget_pos) const;
+
+  // Project a world point to logical viewport pixels (origin top-left, Qt
+  // convention). `out_behind` reports a point behind a perspective eye, whose
+  // projection is meaningless — callers hit-testing a manipulator must reject
+  // those rather than trust the coordinates.
+  scene::vec2 project_to_screen(const scene::vec3& world,
+                                bool* out_behind = nullptr) const;
+
+  // World units per logical pixel at the focal plane. The scale manipulators use
+  // to hold a constant on-screen size.
+  float world_per_logical_pixel() const;
 
   // The world-space pivot captured at the start of the current orbit drag.
   // Only meaningful while `is_rotating()` is true; for non-rotation states
@@ -124,6 +142,9 @@ signals:
   void rotation_pivot_visibility_changed(scene::vec3 pivot, bool visible);
 
 private:
+  // Keep the point on the focal plane under `cursor_pos` fixed on screen.
+  void zoom_at(QPoint cursor_pos, float factor);
+
   // Zoom-distance policy, split by projection mode. Orthographic: zoom is
   // pure magnification (the eye position is optically meaningless), so only
   // an absolute epsilon floor applies — detail zoom is unlimited and
@@ -147,9 +168,7 @@ private:
   void  update_clip_planes();
 
   scene::Camera camera_;
-  DragMode      drag_mode_{DragMode::None};
-  OrbitStyle    orbit_style_{OrbitStyle::Free};
-  QPoint        last_pos_{};
+  bool          rotating_{false};
   int           viewport_w_{1};
   int           viewport_h_{1};
 

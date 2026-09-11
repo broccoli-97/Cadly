@@ -6,12 +6,50 @@
 namespace cadly::app {
 
 namespace {
-QSettings settings_handle() {
-  return QSettings(QSettings::IniFormat, QSettings::UserScope, "Cadly", "Cadly");
+input::Preferences read_input_preferences(QSettings& settings) {
+  return {
+    input::navigation_scheme_from_key(
+      settings.value("display/navigation_scheme").toString().toStdString()),
+    input::orbit_style_from_key(
+      settings.value("display/orbit_style").toString().toStdString()),
+  };
 }
 }
 
 Settings::Settings(QObject* parent) : QObject(parent) {}
+
+Settings::Settings(const QString& file_name, QObject* parent)
+  : QObject(parent), file_name_(file_name) {}
+
+QSettings Settings::settings_handle() const {
+  if (!file_name_.isEmpty()) return QSettings(file_name_, QSettings::IniFormat);
+  return QSettings(QSettings::IniFormat, QSettings::UserScope, "Cadly", "Cadly");
+}
+
+input::Preferences Settings::input_preferences() const {
+  auto s = settings_handle();
+  return read_input_preferences(s);
+}
+
+void Settings::set_input_preferences(input::Preferences preferences) {
+  preferences = input::normalized(preferences);
+  auto s = settings_handle();
+  const auto previous = read_input_preferences(s);
+  // Retain these legacy paths and tokens: external consumers such as Quick
+  // Look read them too. Write only changed fields, preserving unknown future
+  // tokens in untouched fields and unrelated keys in this shared store.
+  if (previous.navigation_scheme != preferences.navigation_scheme) {
+    const auto key = input::navigation_scheme_key(preferences.navigation_scheme);
+    s.setValue("display/navigation_scheme",
+               QString::fromUtf8(key.data(), static_cast<int>(key.size())));
+  }
+  if (previous.orbit_style != preferences.orbit_style) {
+    const auto key = input::orbit_style_key(preferences.orbit_style);
+    s.setValue("display/orbit_style",
+               QString::fromUtf8(key.data(), static_cast<int>(key.size())));
+  }
+  s.sync();
+}
 
 QString Settings::last_open_directory() const {
   auto s = settings_handle();

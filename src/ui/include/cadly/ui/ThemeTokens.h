@@ -62,6 +62,13 @@ struct ThemeTokens {
   // selection pill, the viewport uses this.
   QColor viewport_highlight;
 
+  // Section fill (DisplayMode::section_cap_color). Pale copper separates
+  // the cut from grey surfaces and the saturated orange selection highlight.
+  QColor viewport_section;
+
+  // Matte reverse-side material for open surfaces and sectioned solids.
+  QColor viewport_backface;
+
   // Viewport gradient, pushed through DisplayMode::background_top/bottom.
   // Renderer-owned: the GL background pass draws it, not a Qt widget.
   QColor viewport_top;

@@ -51,7 +51,7 @@ struct Mesh {
   // vanishes. Closed solids leave this false and keep the cheaper single-sided
   // cull. Set by the importer (see OcctShapeToMesh); orthogonal to a material
   // being intrinsically two-sided (Material::double_sided) — the renderer
-  // culls only when neither flag asks for both faces.
+  // also draws both faces when a section opens an otherwise closed solid.
   bool double_sided{false};
 
   // One level-of-detail in the BRep edge LOD ladder. Each LOD is a complete

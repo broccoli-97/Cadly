@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cadly/renderer/SectionPlane.h"
 #include "cadly/scene/Math.h"
 
 #include <cstdint>
@@ -17,6 +18,19 @@ struct ResourceHandle {
 
 struct MeshHandle     : ResourceHandle {};
 struct MaterialHandle : ResourceHandle {};
+
+// The app's world-axis palette (X, Y, Z), in sRGB — written straight out by the
+// overlay and section shaders, no linearisation. Shared by the corner
+// orientation triad and the section rotate rings so that a red ring and the
+// triad's red X arm are unmistakably the same axis; two different reds would
+// quietly undo the one thing the colour coding is for. Desaturated on purpose:
+// full-strength RGB fights the Graphite shell and competes with the
+// signal-orange selection wash.
+inline const scene::vec3 kAxisColor[3] = {
+  {0.84f, 0.30f, 0.33f},
+  {0.30f, 0.62f, 0.38f},
+  {0.32f, 0.49f, 0.83f},
+};
 
 // Display options pushed in by the UI layer. The renderer interprets them; the
 // scene itself doesn't need to know what's on.
@@ -45,6 +59,9 @@ struct DisplayMode {
   scene::vec3 hidden_line_color{0.82f, 0.84f, 0.88f};
   scene::vec3 background_top   {0.42f, 0.44f, 0.48f};
   scene::vec3 background_bottom{0.22f, 0.23f, 0.26f};
+  // Shaded back faces of open surfaces and sectioned solids use a matte cool
+  // tint. Supplied in sRGB; the surface shader linearises it before lighting.
+  scene::vec3 backface_color   {0.471f, 0.600f, 0.678f};
 
   // Rotation pivot indicator. The UI toggles this on while the user is
   // orbiting and feeds the world-space pivot through `rotation_pivot`. The
@@ -83,6 +100,51 @@ struct DisplayMode {
   // re-walking the node hierarchy; Node::ghosted keeps marking "outside
   // the isolate focus" either way. Ignored while nothing is ghosted.
   bool        hide_ghosted     {false};
+
+  // Section view (剖切): one clip plane that cuts the model open so internal
+  // features can be inspected, with the exposed cut face filled in so the
+  // solid still reads as solid rather than as a hollow shell.
+  //
+  // The clip itself is a half-space test in the vertex/geometry stages
+  // (gl_ClipDistance) applied to surfaces, BRep edges, and silhouettes alike —
+  // anything less and the model would be cut in one pass and whole in another.
+  // The fill ("cap") is a separate stencil pass: the renderer counts front vs
+  // back faces of the clipped geometry per pixel, and wherever the two do not
+  // balance, the plane has passed through material and the cap quad draws
+  // there. See SectionPass for the algorithm and why counting rather than
+  // parity is required.
+  //
+  // Wireframe mode is clipped but NOT capped: there is no filled surface to
+  // cap, and a solid patch floating among BRep lines would read as an error.
+  bool         section_enabled   {false};
+  // The plane. `offset` is measured from the scene bounds centre, so the
+  // default cuts through the middle of whatever was imported and the UI gets a
+  // symmetric drag range — see SectionPlane.
+  SectionPlane section           {};
+  // Draw the translucent plane quad and the manipulator on it: the arrow that
+  // slides the plane along its normal, and the three world-axis rings that tilt
+  // it. Switching this off keeps the cut but hides the manipulator, which is
+  // what a user wants once the plane is where they want it (and what
+  // screenshots want). Like `show_hidden_edges`, the flag IS the user's
+  // preference — the renderer just ignores it while the section is off, so the
+  // UI never force-clears it.
+  bool         section_show_plane{true};
+  // Hatch the cut face with diagonal drafting strokes, evaluated in plane
+  // space so they do not swim while orbiting. In hidden-line mode the hatch is
+  // what makes the cap read as a section rather than as a blank patch of paper.
+  bool         section_hatch     {true};
+  // Blend the cut face over interior geometry in shaded mode. Hidden-line
+  // sections keep opaque paper and depth so their occluded edges stay dimmed.
+  bool         section_translucent{true};
+  // Hover/drag feedback on the manipulator, driven by the host's screen-space
+  // hit-test: which piece the cursor is over, or is currently dragging.
+  // Transient view state like `show_rotation_pivot`, not a preference. The
+  // renderer highlights that piece; None means nothing is hot.
+  SectionGizmoPart section_hot_part{SectionGizmoPart::None};
+  // Cut-face fill, in framebuffer sRGB like `selection_color`. The
+  // pale copper default matches the dark theme's viewport_section token;
+  // the UI overwrites it per theme.
+  scene::vec3  section_cap_color {0.906f, 0.749f, 0.588f};
 
   // Anti-aliasing. Off (0 or 1) renders directly to the host's default
   // framebuffer; any other value asks the renderer to allocate an offscreen

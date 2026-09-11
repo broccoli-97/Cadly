@@ -18,10 +18,6 @@ endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Qt auto-tooling. AUTORCC stays off — we ship resources explicitly.
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTOUIC ON)
-
 # Default install layout (used by the packaging milestone).
 include(GNUInstallDirs)
 if(NOT CADLY_INSTALL_BINDIR)
@@ -41,9 +37,20 @@ option(CADLY_BUILD_GUI           "Build the Qt GUI application" ON)
 option(CADLY_ENABLE_VULKAN       "Enable Vulkan backend (placeholder, off in MVP)" OFF)
 option(CADLY_WARNINGS_AS_ERRORS  "Treat compiler warnings as errors" OFF)
 
+# Qt auto-tooling is unnecessary in headless builds. AUTORCC stays off — we
+# ship resources explicitly. Qt-free input targets opt out in GUI builds too.
+set(CMAKE_AUTOMOC ${CADLY_BUILD_GUI})
+set(CMAKE_AUTOUIC ${CADLY_BUILD_GUI})
+
 # --- Compiler warning baseline --------------------------------------------
 add_library(cadly_warnings INTERFACE)
 add_library(Cadly::Warnings ALIAS cadly_warnings)
+
+if(WIN32)
+  # glcorearb.h includes windows.h for APIENTRY; its min/max macros otherwise
+  # collide with std::min/std::max under both MSVC and MinGW.
+  target_compile_definitions(cadly_warnings INTERFACE NOMINMAX)
+endif()
 
 if(MSVC)
   target_compile_options(cadly_warnings INTERFACE
@@ -51,12 +58,6 @@ if(MSVC)
     /wd4127 # conditional expression is constant (Qt headers)
     /wd4459 # declaration hides global
   )
-  # NOMINMAX: <GL/glcorearb.h> pulls in <windows.h> on Win32 to get APIENTRY,
-  # and windows.h defines min()/max() as function-like macros unless this is
-  # set — which then mangles every std::min/std::max call site into a C2589
-  # ("illegal token on right side of ::"). Define it for all first-party
-  # translation units, before any header is seen.
-  target_compile_definitions(cadly_warnings INTERFACE NOMINMAX)
   if(CADLY_WARNINGS_AS_ERRORS)
     target_compile_options(cadly_warnings INTERFACE /WX)
   endif()
@@ -148,11 +149,13 @@ endif()
 
 # --- Subdirectories --------------------------------------------------------
 add_subdirectory(src/platform)
+add_subdirectory(src/input)
 add_subdirectory(src/scene)
 add_subdirectory(src/renderer)
 add_subdirectory(src/renderer_gl)
 add_subdirectory(src/cad)
 if(CADLY_BUILD_GUI)
+  add_subdirectory(src/input_qt)
   add_subdirectory(src/ui)
   add_subdirectory(src/app)
 endif()
@@ -160,12 +163,9 @@ endif()
 if(CADLY_BUILD_TESTS)
   enable_testing()
   if(CADLY_BUILD_GUI)
-    # Optional on purpose: the vcpkg manifest builds qtbase without the
-    # "testlib" feature to hold down the hours-long from-source Windows build
-    # (see vcpkg.json), so Qt6Test only exists on the system-Qt configs. When
-    # it is absent, tests/CMakeLists.txt skips the GUI widget tests (loudly)
-    # and the Qt-free smoke test remains the cross-platform gate. Don't make
-    # this REQUIRED again — it turns every vcpkg configure into a hard error.
+    # System packages, including MSYS2, provide QtTest. Keep it optional for
+    # local vcpkg builds, whose manifest omits the qtbase "testlib" feature.
+    # Input policy, Qt adapters, settings, and camera tests also run without it.
     find_package(Qt6 QUIET COMPONENTS Test)
   endif()
   add_subdirectory(tests)

@@ -145,7 +145,29 @@ and auto-opens the log; success green-flashes and badges the strip toggle.
 | Text 1/2/3 | `#E6E8EC` / `#A0A6B0` / `#6E747E` | `#1E2126` / `#5A616C` / `#9AA0AA` |
 | Hairlines between regions / inside panels | `rgba(0,0,0,.45)` / `rgba(255,255,255,.07)` | `rgba(0,0,0,.16)` / `rgba(0,0,0,.10)` |
 | Viewport gradient (`DisplayMode`) | `#ACB0B7→#80838A` (unchanged) | `#DADDE2→#ABAFB7` |
+| Viewport selection highlight (`Node::selected`) | `#FF7A26` | `#E86210` |
+| Viewport section cut face (`DisplayMode::section_cap_color`) | `#E7BF96` | `#DFB389` |
+| Shaded surface back face (`DisplayMode::backface_color`) | `#7899AD` | `#65869C` |
 | Status colors | error `#E96B72` · warn `#FBC064` · ok `#2BB5A0` · info `#1BA8D5` (from `themes/dark.json`) | darkened variants |
+
+The selection and section tokens are deliberately far apart: a selected part and a
+section cut face can share a frame, so the highlight stays a saturated signal
+orange while the cut face is a desaturated warm tan — same warm family, but no
+chance of reading as the same state. Both go a notch deeper in the light theme
+to keep their weight against the lighter gradient.
+
+Open surfaces and solids opened by a section also draw their reverse sides.
+These use a matte blue-grey material with normal lighting, distinct from the
+front's imported material and the warm hatch overlay. Real cavity walls retain
+their own front-face material; empty openings receive no fill. Hidden-line
+mode keeps its technical paper treatment. This follows the separate two-sided
+material design exposed by Rhino's
+[DisplayMaterial.BackDiffuse and IsTwoSided](https://github.com/mcneel/rhinocommon/blob/master/dotnet/rhino/rhinosdkdisplaypipelinematerial.cs).
+
+The public STEP fixture at the same camera and cut depth, before and after
+rendering the retained back faces:
+
+![Section back-face comparison](../images/section-backfaces.png)
 
 Type: system stack (SF Pro on macOS; qlementine bundles Inter; Fusion uses the
 system font). 13px body, 11px secondary, 11px/600 uppercase section heads,

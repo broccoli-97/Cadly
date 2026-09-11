@@ -4,6 +4,7 @@
 #include "ToolbarWidget.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QHelpEvent>
 #include <QMenu>
@@ -33,6 +34,7 @@ class ToolbarTest : public QObject {
 
 private slots:
   void shaded_menu_contains_overlay_actions();
+  void section_axis_group_allows_no_selection();
   void long_tooltips_are_width_bounded();
   void rendered_long_tooltip_stays_local();
   void app_filter_keeps_tooltip_property_plain();
@@ -87,8 +89,34 @@ void ToolbarTest::shaded_menu_contains_overlay_actions() {
   menu->close();
 }
 
-void ToolbarTest::long_tooltips_are_width_bounded() {
-  const QString short_text = QStringLiteral("Recent files");
+// The section menu's "Normal to X/Y/Z" presets are one QActionGroup, and the
+// shell needs to be able to leave ALL of them unchecked: the rotate rings can
+// tilt the plane onto no world axis at all, and a checked preset beside a skew
+// plane misreports the orientation. A plain Exclusive group refuses that — it
+// forces the last tick back on — so the policy is load-bearing, not incidental.
+void ToolbarTest::section_axis_group_allows_no_selection() {
+  QActionGroup group(nullptr);
+  group.setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);
+
+  QAction x, y;
+  for (QAction* a : {&x, &y}) {
+    a->setCheckable(true);
+    group.addAction(a);
+  }
+
+  x.setChecked(true);
+  QVERIFY(x.isChecked());
+  // Still exclusive in the direction that matters: picking one drops the other.
+  y.setChecked(true);
+  QVERIFY(!x.isChecked());
+  QVERIFY(y.isChecked());
+  // And the checked one can be cleared without the group putting it back.
+  y.setChecked(false);
+  QVERIFY(!y.isChecked());
+  QVERIFY(!x.isChecked());
+}
+
+void ToolbarTest::long_tooltips_are_width_bounded() {  const QString short_text = QStringLiteral("Recent files");
   QCOMPARE(bounded_tooltip(short_text), short_text);
 
   const QString long_text = QStringLiteral(

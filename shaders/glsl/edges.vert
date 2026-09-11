@@ -20,4 +20,15 @@ void main() {
   vec4 view  = u_view * world;
   view.z += u_view_bias;
   gl_Position = u_proj * view;
+  // Section clip. Inert unless the host enabled GL_CLIP_DISTANCE0 — see
+  // u_clip_plane in common/frame_block.glsl. Measured on the UNBIASED world
+  // position: u_view_bias is a depth-only nudge to keep a line in front of its
+  // surface, and letting it move the clip test would trim edges at a slightly
+  // different plane than the faces they sit on.
+  //
+  // This program doubles as the section cap's stencil-counting pass (it is the
+  // only position-only program that already binds FrameBlock and takes
+  // u_model), so this line is what makes that pass count CLIPPED geometry —
+  // without it every closed solid balances and no cap is ever produced.
+  gl_ClipDistance[0] = dot(u_clip_plane, world);
 }

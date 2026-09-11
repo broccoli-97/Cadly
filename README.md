@@ -47,8 +47,8 @@ metallic-roughness with image-based lighting, tuned for industrial inspection.
 
 ## Build & run
 
-CMake presets (Ninja). System Qt 6 + OCCT on Linux; a vcpkg manifest
-(`vcpkg.json`) for Windows/portable builds.
+CMake presets (Ninja), using prebuilt Qt 6 + OCCT from apt on Linux,
+MSYS2 UCRT64 on Windows, and Homebrew on macOS.
 
 ```bash
 cmake --preset linux-release          # configure (RelWithDebInfo)
@@ -59,11 +59,30 @@ build/linux-release/bin/cadly [file.step]        # GUI; optional file opens at s
 build/linux-release/bin/cad_import_cli file.step # headless import, prints geo stats
 ```
 
+On Windows, install [MSYS2](https://www.msys2.org/) and open its **UCRT64**
+terminal. Run `pacman -Syu` first; if asked to close the terminal, reopen it
+and repeat the update. From the repository root:
+
+```bash
+bash scripts/setup-windows.sh        # install binary packages, including GCC
+cmake --preset windows-msys2-release
+cmake --build --preset windows-msys2-release
+ctest --preset windows-msys2-release
+build/windows-msys2-release/bin/cadly.exe [file.step]
+```
+
+Windows CI uses these same packages and commands, without building Qt/OCCT
+from source or maintaining a dependency binary cache. Packages track the
+MSYS2 repository; GCC and all libraries must come from UCRT64. The distributed
+app includes its runtime DLLs and runs without MSYS2 installed.
+
 Other presets: `linux-debug`, `linux-qt68-{debug,release}` (Qt 6.8 with the
-qlementine style), `linux-vcpkg-debug`, `windows-msvc-{debug,release}` (VS
-solution), `windows-ninja-{debug,release}` (single-config Ninja, expects MSVC in
-the environment). CI builds, tests, and packages on Linux and Windows; `v*`
-tags publish those packages on the [Releases](../../releases) page.
+qlementine style), `windows-msys2-debug`, and `macos-{debug,release}` (run
+`scripts/setup-macos.sh` first). Optional vcpkg presets remain available:
+`linux-vcpkg-debug`, `windows-msvc-{debug,release}` (VS solution), and
+`windows-ninja-{debug,release}` (MSVC from the environment). CI builds, tests,
+and packages on all three platforms; `v*` tags publish those packages on the
+[Releases](../../releases) page.
 
 ### Requirements
 

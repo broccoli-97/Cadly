@@ -17,6 +17,14 @@ namespace cadly::renderer_gl::detail {
 //
 // Field names match the GL function names so call sites read `gl.glClear(...)`
 // just like Qt's wrapper did — the conversion was mostly mechanical.
+//
+// A note on the GL 1.x entries below (glClear, glEnable, glViewport,
+// glStencilFunc, glColorMask, …): `wglGetProcAddress` is documented to return
+// NULL for pre-1.2 entry points, so a raw WGL loader would fail on them. Every
+// loader we actually use — QOpenGLContext::getProcAddress, SDL, GLFW, glX —
+// falls back to looking the symbol up in the GL module, which is why these
+// resolve. If you ever wire in a bare wglGetProcAddress host, it will need the
+// same fallback.
 struct GLFunctions {
   PFNGLACTIVETEXTUREPROC           glActiveTexture           = nullptr;
   PFNGLATTACHSHADERPROC            glAttachShader            = nullptr;
@@ -35,6 +43,8 @@ struct GLFunctions {
   PFNGLCLEARPROC                   glClear                   = nullptr;
   PFNGLCLEARCOLORPROC              glClearColor              = nullptr;
   PFNGLCLEARDEPTHFPROC             glClearDepthf             = nullptr;
+  PFNGLCLEARSTENCILPROC            glClearStencil            = nullptr;
+  PFNGLCOLORMASKPROC               glColorMask               = nullptr;
   PFNGLCOMPILESHADERPROC           glCompileShader           = nullptr;
   PFNGLCREATEPROGRAMPROC           glCreateProgram           = nullptr;
   PFNGLCREATESHADERPROC            glCreateShader            = nullptr;
@@ -70,6 +80,8 @@ struct GLFunctions {
   PFNGLGETSTRINGPROC               glGetString               = nullptr;
   PFNGLGETUNIFORMBLOCKINDEXPROC    glGetUniformBlockIndex    = nullptr;
   PFNGLGETUNIFORMLOCATIONPROC      glGetUniformLocation      = nullptr;
+  PFNGLGETFRAMEBUFFERATTACHMENTPARAMETERIVPROC
+                                   glGetFramebufferAttachmentParameteriv = nullptr;
   PFNGLLINEWIDTHPROC               glLineWidth               = nullptr;
   PFNGLLINKPROGRAMPROC             glLinkProgram             = nullptr;
   PFNGLPIXELSTOREIPROC             glPixelStorei             = nullptr;
@@ -79,6 +91,10 @@ struct GLFunctions {
   PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC glRenderbufferStorageMultisample = nullptr;
   PFNGLSCISSORPROC                glScissor                 = nullptr;
   PFNGLSHADERSOURCEPROC            glShaderSource            = nullptr;
+  PFNGLSTENCILFUNCPROC             glStencilFunc             = nullptr;
+  PFNGLSTENCILMASKPROC             glStencilMask             = nullptr;
+  PFNGLSTENCILOPPROC               glStencilOp               = nullptr;
+  PFNGLSTENCILOPSEPARATEPROC       glStencilOpSeparate       = nullptr;
   PFNGLTEXIMAGE2DPROC              glTexImage2D              = nullptr;
   PFNGLTEXPARAMETERIPROC           glTexParameteri           = nullptr;
   PFNGLUNIFORM1FPROC               glUniform1f               = nullptr;
