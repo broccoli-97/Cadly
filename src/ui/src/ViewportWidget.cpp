@@ -135,6 +135,7 @@ void ViewportWidget::resizeGL(int w, int h) {
 
 void ViewportWidget::paintGL() {
   if (!renderer_) return;
+  const bool new_scene = scene_dirty_ && scene_ && !scene_->meshes.empty();
   if (scene_dirty_) {
     renderer_->attach_scene(scene_);
     scene_dirty_ = false;
@@ -149,6 +150,7 @@ void ViewportWidget::paintGL() {
   QElapsedTimer t;
   t.start();
   renderer_->render(display_mode_);
+  if (new_scene) emit scene_rendered();
   if (renderer_->needs_redraw()) update();
   const float ms = static_cast<float>(t.nsecsElapsed()) / 1.0e6f;
   frame_ms_avg_ = frame_ms_avg_ <= 0.0f ? ms

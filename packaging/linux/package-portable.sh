@@ -109,7 +109,9 @@ is_system_runtime() {
 }
 
 mapfile -d '' runtime_roots < <(
-  printf '%s\0' "$package_dir/bin/cadly" "$package_dir/bin/cad_import_cli"
+  # The staged lib/ was cleared above. Resolve the executable dependencies
+  # through the build RUNPATH so locally patched OCCT toolkits are retained.
+  printf '%s\0' "$build_dir/bin/cadly" "$build_dir/bin/cad_import_cli"
   find "$package_dir/plugins" -type f -name '*.so' -print0
 )
 

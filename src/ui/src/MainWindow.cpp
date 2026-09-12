@@ -327,6 +327,8 @@ void save_import_options(QSettings& s, const cad::ImportOptions& o) {
   s.setValue("parallel_meshing",        o.parallel_meshing);
   s.setValue("load_colors",             o.load_colors);
   s.setValue("load_names",              o.load_names);
+  s.setValue("parallel_step_transfer",  o.parallel_step_transfer);
+  s.setValue("step_healing", o.step_healing_mode == cad::StepHealingMode::Fast ? "fast" : "full");
   s.endGroup();
 }
 
@@ -351,6 +353,9 @@ cad::ImportOptions load_import_options(QSettings& s) {
   o.parallel_meshing    = s.value("parallel_meshing",    o.parallel_meshing).toBool();
   o.load_colors    = s.value("load_colors",    o.load_colors).toBool();
   o.load_names     = s.value("load_names",     o.load_names).toBool();
+  o.parallel_step_transfer = s.value("parallel_step_transfer", o.parallel_step_transfer).toBool();
+  o.step_healing_mode = s.value("step_healing", "full").toString() == QLatin1String("fast")
+    ? cad::StepHealingMode::Fast : cad::StepHealingMode::Full;
   s.endGroup();
   return o;
 }

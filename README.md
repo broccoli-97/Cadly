@@ -79,6 +79,19 @@ an existing UCRT64 build, clear its CMake cache with
 and runs without MSYS2 installed. See [platform notes](docs/platform-divergence.md)
 for the OCCT import regression behind this toolchain choice.
 
+On Linux with shared OCCT 7.6.3, the build downloads pinned OCCT sources and
+rebuilds two toolkits locally to fix STEP scanning and polygon intersection
+hotspots. The system installation is unchanged. This needs `patch`; pass
+`-DCADLY_OCCT_PERFORMANCE_PATCHES=OFF` to use the system toolkits. Other OCCT
+versions use their installed toolkits. See the [import performance report](docs/research/05-step-import-deep-profile.md).
+
+STEP parts convert in parallel by default, with full geometry repair.
+`cad_import_cli file.step --profile --fingerprint` prints stage timings and
+output fingerprints; `--step-threads 1` selects ordinary serial conversion.
+The optional `--step-healing fast` (also available in Import Options) skips
+adjacent-edge intersection repair and may be unsuitable for damaged files.
+`cadly file.step --profile-import` measures open to the first presented frame.
+
 Other presets: `linux-debug`, `linux-qt68-{debug,release}` (Qt 6.8 with the
 qlementine style), `windows-msys2-debug`, and `macos-{debug,release}` (run
 `scripts/setup-macos.sh` first). Optional vcpkg presets remain available:

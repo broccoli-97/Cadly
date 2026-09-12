@@ -40,6 +40,8 @@ private:
   QCheckBox*      parallel_{nullptr};
   QCheckBox*      load_colors_{nullptr};
   QCheckBox*      load_names_{nullptr};
+  QComboBox*      step_healing_{nullptr};
+  QCheckBox*      parallel_step_{nullptr};
   bool            applying_{false};
 };
 

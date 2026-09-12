@@ -1,8 +1,9 @@
 # Cadly 产品、导入、渲染与代码调研
 
 本目录是 2026-07-18 针对当时 Cadly 工作树的调研交付物。报告将仓库实测、API 事实、
-产品能力声明和建议明确分开；没有修改产品代码。第 4 份已于 2026-08-13 按 commit
-`fb56f40` 重写并扩展到 UI 与功能，其余四份仍是 2026-07-18 的原始交付。
+产品能力声明和建议明确分开。第 4 份已于 2026-08-13 按 commit `fb56f40` 重写并扩展
+到 UI 与功能。第 5 份为 2026-09-10 新增的 STEP 深度 profiling、代码优化及验证记录；
+其余文档和 HTML 保留原始调研时点。
 
 ## 文档
 
@@ -11,14 +12,17 @@
 3. [渲染、材质、光照与 KeyShot 风格](03-rendering-material-lighting-keyshot.md)
 4. [架构、UI 与功能改进评审](04-code-architecture-review.md)（2026-08-13 复审，
    含对上一版 finding 的逐条对账）
-5. [交互式产品与视觉原型](cadly-inspection-studio.html)
+5. [STEP 读取与 OCCT 转换深度性能分析](05-step-import-deep-profile.md)（2026-09-10，
+   含已落地的优化、重复对照、GUI 首帧和部署验证）
+6. [交互式产品与视觉原型](cadly-inspection-studio.html)
 
 ## 最重要的跨报告结论
 
 - 产品核心不是支持更多 toolbar mode，而是“可信导入 -> 选择 -> 隐藏/隔离 -> 测量/剖切
   -> 保存审阅结果”的闭环。
-- OCCT 不是全部单线程；当前并行 mesh 有效，但 XCAF Transfer 是主要瓶颈。231 MB STEP
-  实测 98.3 秒，其中 ReadFile + Transfer 为 72.3 秒。
+- OCCT 不是全部单线程。2026-09 深度优化加入批量 STEP 扫描、精确求交加速和独立
+  body 并行转换；当前机器 RC 的默认完整导入中位数从 27.35 秒降至 15.28 秒，
+  仍未达到稳定秒开。旧报告的 98.3 秒大模型结果来自另一台机器，详见第 5 份。
 - 商业 SDK 的价值常在原生格式、PMI、容错、LOD/缓存和技术支持；没有统一的可信速度倍数，
   应以同一 scene 输出 contract 做试用 A/B。
 - 当前 PBR 框架已经存在；视觉差距主要是默认全金属、缺地面/接触阴影/AO、程序化低信息
@@ -42,4 +46,3 @@ taskset -c 0 build/linux-debug/bin/cad_import_cli \
 
 详细模型结果、硬件和限制见第二份报告。HTML 是独立设计资产，直接用浏览器打开，不依赖
 网络或构建产物。
-

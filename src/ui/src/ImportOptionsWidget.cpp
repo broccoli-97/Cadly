@@ -74,8 +74,20 @@ ImportOptionsWidget::ImportOptionsWidget(QWidget* parent) : QWidget(parent) {
   meta_form->addRow(load_colors_);
   meta_form->addRow(load_names_);
 
+  auto* step_box = new QGroupBox(tr("STEP import"), this);
+  auto* step_form = new QFormLayout(step_box);
+  step_healing_ = new QComboBox(this);
+  step_healing_->addItem(tr("Full repair"), static_cast<int>(cad::StepHealingMode::Full));
+  step_healing_->addItem(tr("Fast viewing"), static_cast<int>(cad::StepHealingMode::Fast));
+  step_healing_->setToolTip(tr("Fast viewing skips repair of intersections between adjacent edges. "
+                               "Use Full repair for damaged geometry. Mesh quality is unchanged."));
+  parallel_step_ = new QCheckBox(tr("Parallel part conversion"), this);
+  step_form->addRow(tr("Geometry repair"), step_healing_);
+  step_form->addRow(parallel_step_);
+
   outer->addWidget(mesh_box);
   outer->addWidget(meta_box);
+  outer->addWidget(step_box);
 
   const auto edited = [this]() {
     if (!applying_) emit options_edited();
@@ -89,7 +101,8 @@ ImportOptionsWidget::ImportOptionsWidget(QWidget* parent) : QWidget(parent) {
     connect(spin, &QDoubleSpinBox::valueChanged, this,
             [edited](double) { edited(); });
   }
-  for (auto* cb : {relative_, parallel_, load_colors_, load_names_}) {
+  connect(step_healing_, &QComboBox::currentIndexChanged, this, [edited](int) { edited(); });
+  for (auto* cb : {relative_, parallel_, load_colors_, load_names_, parallel_step_}) {
     connect(cb, &QCheckBox::toggled, this, [edited](bool) { edited(); });
   }
 
@@ -121,6 +134,8 @@ cad::ImportOptions ImportOptionsWidget::options() const {
   o.parallel_meshing        = parallel_->isChecked();
   o.load_colors             = load_colors_->isChecked();
   o.load_names              = load_names_->isChecked();
+  o.parallel_step_transfer  = parallel_step_->isChecked();
+  o.step_healing_mode = static_cast<cad::StepHealingMode>(step_healing_->currentData().toInt());
   return o;
 }
 
@@ -138,6 +153,9 @@ void ImportOptionsWidget::set_options(const cad::ImportOptions& o) {
   parallel_->setChecked(o.parallel_meshing);
   load_colors_->setChecked(o.load_colors);
   load_names_->setChecked(o.load_names);
+  parallel_step_->setChecked(o.parallel_step_transfer);
+  const int healing_index = step_healing_->findData(static_cast<int>(o.step_healing_mode));
+  step_healing_->setCurrentIndex(healing_index >= 0 ? healing_index : 0);
   update_enablement();
   applying_ = false;
 }

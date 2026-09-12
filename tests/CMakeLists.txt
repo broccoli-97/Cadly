@@ -72,6 +72,24 @@ target_link_libraries(cadly_occt_classification_test PRIVATE Cadly::Cad Cadly::W
 target_include_directories(cadly_occt_classification_test SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 add_test(NAME cadly_occt_classification COMMAND cadly_occt_classification_test)
 
+add_executable(cadly_cad_import_test cad_import_test.cpp)
+target_link_libraries(cadly_cad_import_test PRIVATE Cadly::Cad Cadly::Warnings)
+target_include_directories(cadly_cad_import_test PRIVATE ${CMAKE_SOURCE_DIR}/src/cad/src)
+if(OpenCASCADE_INCLUDE_DIR)
+  target_include_directories(cadly_cad_import_test SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
+endif()
+add_test(NAME cadly_cad_import COMMAND cadly_cad_import_test)
+
+if(TARGET cadly_occt_TKGeomAlgo)
+  get_target_property(occt_reference cadly_occt_TKGeomAlgo CADLY_OCCT_REFERENCE_SOURCE)
+  add_executable(cadly_occt_polygon_test occt_polygon_test.cpp "${occt_reference}")
+  set_source_files_properties("${occt_reference}" PROPERTIES
+    COMPILE_DEFINITIONS Intf_InterferencePolygon2d=CadlyReferenceInterferencePolygon2d)
+  target_link_libraries(cadly_occt_polygon_test PRIVATE Cadly::Cad Cadly::Warnings)
+  target_include_directories(cadly_occt_polygon_test SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
+  add_test(NAME cadly_occt_polygon COMMAND cadly_occt_polygon_test)
+endif()
+
 add_executable(cadly_ibl_bake_plan_test
   ibl_bake_plan_test.cpp
   ${CMAKE_SOURCE_DIR}/src/renderer_gl/src/IblBakePlan.cpp

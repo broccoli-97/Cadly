@@ -19,12 +19,14 @@
 #include <GCPnts_TangentialDeflection.hxx>
 #include <IMeshTools_Parameters.hxx>
 #include <Message_ProgressRange.hxx>
+#include <NCollection_DataMap.hxx>
 #include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Version.hxx>
 #include <StdPrs_ToolTriangulatedShape.hxx>
 #include <TColStd_Array1OfInteger.hxx>
+#include <TDF_ChildIterator.hxx>
 #include <TDF_LabelSequence.hxx>
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
@@ -35,6 +37,7 @@
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopTools_ShapeMapHasher.hxx>
 #include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
@@ -463,26 +466,11 @@ std::size_t append_face(scene::Mesh& mesh,
 
 std::optional<Quantity_Color>
 resolve_face_color(const Handle(XCAFDoc_ColorTool)& color_tool,
-                   const TopoDS_Shape& face) {
-  if (color_tool.IsNull()) return std::nullopt;
+                   const TDF_Label& label) {
+  if (color_tool.IsNull() || label.IsNull()) return std::nullopt;
   Quantity_Color c;
-  if (color_tool->GetColor(face, XCAFDoc_ColorSurf, c)) return c;
-  if (color_tool->GetColor(face, XCAFDoc_ColorGen,  c)) return c;
-  return std::nullopt;
-}
-
-std::optional<Quantity_Color>
-resolve_shape_color(const Handle(XCAFDoc_ColorTool)& color_tool,
-                    const TDF_Label& label,
-                    const TopoDS_Shape& shape) {
-  if (color_tool.IsNull()) return std::nullopt;
-  Quantity_Color c;
-  if (!label.IsNull()) {
-    if (color_tool->GetColor(label, XCAFDoc_ColorGen,  c)) return c;
-    if (color_tool->GetColor(label, XCAFDoc_ColorSurf, c)) return c;
-  }
-  if (color_tool->GetColor(shape, XCAFDoc_ColorGen,  c)) return c;
-  if (color_tool->GetColor(shape, XCAFDoc_ColorSurf, c)) return c;
+  if (color_tool->GetColor(label, XCAFDoc_ColorSurf, c)) return c;
+  if (color_tool->GetColor(label, XCAFDoc_ColorGen,  c)) return c;
   return std::nullopt;
 }
 
@@ -757,6 +745,9 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     XCAFDoc_DocumentTool::ShapeTool(doc->Main());
   Handle(XCAFDoc_ColorTool) color_tool =
     XCAFDoc_DocumentTool::ColorTool(doc->Main());
+  TDF_LabelSequence colors;
+  if (opts.load_colors) color_tool->GetColors(colors);
+  if (colors.IsEmpty()) color_tool.Nullify();
 
   // Allocate the default material slot so face submeshes can index it.
   scn->add_material(scene::Material::neutral_clay());
@@ -769,15 +760,10 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     return scn;
   }
 
-  // Triangulate the whole document in a single pass. BRepMesh_IncrementalMesh
-  // parallelizes across faces, so meshing every free shape at once keeps all
-  // cores busy. Meshing per-part during the walk instead (as shape_to_mesh
-  // still does below) serializes many small jobs, each with too few faces to
-  // fill the thread pool — the slow path on large assemblies. Located instances
-  // of a part share the same face TShapes, and a triangulation is stored in the
-  // face's local frame, so one mesher covers every occurrence; afterwards
-  // shape_to_mesh sees every face already triangulated and skips its safety
-  // mesher (which only runs for shapes this batch somehow missed).
+  // Size the complete assembly, then mesh its prototypes in one parallel
+  // batch. OCCT's mesher distinguishes located occurrences, even though
+  // they store triangulations in the same face TShapes. Passing the assembly
+  // itself repeats work for every instance of a part.
   ImportOptions resolved_opts = opts;
   {
     const auto phase_start = std::chrono::steady_clock::now();
@@ -796,13 +782,28 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     apply_resolved_tessellation(stats, resolved);
     note_unbounded_faces(stats, unbounded_faces);
     resolved_opts = resolved.options;
-    progress.update(0.45f, "Tessellating geometry...");
+    TopoDS_Compound prototypes;
+    builder.MakeCompound(prototypes);
+    TDF_LabelSequence definitions;
+    shape_tool->GetShapes(definitions);
+    std::unordered_set<const void*> seen_prototypes;
+    for (Standard_Integer i = 1; i <= definitions.Length(); ++i) {
+      const TDF_Label& label = definitions.Value(i);
+      if (!shape_tool->IsSimpleShape(label)) continue;
+      TopoDS_Shape shape;
+      if (shape_tool->GetShape(label, shape) && !shape.IsNull() &&
+          seen_prototypes.insert(shape.TShape().get()).second) {
+        builder.Add(prototypes, shape);
+      }
+    }
+    progress.update(0.62f, "Tessellating geometry...");
     // Bridge the sink into the mesher so the (potentially tens of seconds)
     // batch pass honours cancellation and advances the progress bar.
     Handle(OcctProgressBridge) mesh_bridge =
-      new OcctProgressBridge(progress, 0.45f, 0.70f,
+      new OcctProgressBridge(progress, 0.62f, 0.88f,
                              "Tessellating geometry...");
-    tessellate(all, resolved_opts, mesh_bridge->Start());
+    tessellate(seen_prototypes.empty() ? all : prototypes,
+               resolved_opts, mesh_bridge->Start());
     if (opts.profile_timings) {
       add_timing(stats, "batch document tessellation",
                  std::chrono::steady_clock::now() - phase_start);
@@ -863,8 +864,7 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     // Node::material_override instead. (The first caller's instance colour
     // used to be baked into the cached mesh, painting every later
     // occurrence with it.)
-    const auto default_color =
-      resolve_shape_color(color_tool, proto_label, shape);
+    const auto default_color = resolve_label_color(color_tool, proto_label);
     const auto phase_start = std::chrono::steady_clock::now();
     auto mesh = shape_to_mesh(shape, resolved_opts, stats);
     if (opts.profile_timings) {
@@ -875,6 +875,25 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
     mesh->name = read_label_name(proto_label);
     if (mesh->name.empty()) mesh->name = "mesh";
 
+    // Read the existing colour labels once. GetColor(TopoDS_Shape) searches
+    // the entire assembly and even creates labels for uncoloured faces;
+    // repeating that for every face makes extraction quadratic.
+    NCollection_DataMap<TopoDS_Shape, Quantity_Color, TopTools_ShapeMapHasher>
+      face_colors;
+    if (!color_tool.IsNull()) {
+      auto add_face_color = [&](const TDF_Label& sublabel) {
+        const auto color = resolve_face_color(color_tool, sublabel);
+        if (!color) return;
+        TopoDS_Shape subshape;
+        if (shape_tool->GetShape(sublabel, subshape) && !subshape.IsNull()) {
+          face_colors.Bind(subshape, *color);
+        }
+      };
+      add_face_color(proto_label);
+      for (TDF_ChildIterator child(proto_label, Standard_True); child.More(); child.Next()) {
+        add_face_color(child.Value());
+      }
+    }
     // Pair faces with submeshes through the recorded source_face_id:
     // append_face emits no submesh for faces without triangulation or below
     // the tiny-face threshold, so the submesh list is a subsequence of the
@@ -886,10 +905,9 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
          ex.More() && sub_i < mesh->submeshes.size();
          ex.Next(), ++face_id) {
       if (mesh->submeshes[sub_i].source_face_id != face_id) continue;
-      auto fc = resolve_face_color(color_tool, ex.Current());
-      mesh->submeshes[sub_i].material_index = fc
-        ? material_for_color(fc)
-        : material_for_color(default_color);
+      const auto* face_color = face_colors.Seek(ex.Current());
+      mesh->submeshes[sub_i].material_index = material_for_color(
+        face_color ? std::optional<Quantity_Color>(*face_color) : default_color);
       ++sub_i;
     }
     const auto idx = scn->add_mesh(mesh);
@@ -974,7 +992,7 @@ document_to_scene(const opencascade::handle<TDocStd_Document>& doc,
   const auto walk_start = std::chrono::steady_clock::now();
   for (Standard_Integer i = 1; i <= labels.Length(); ++i) {
     if (progress.cancelled()) break;
-    progress.update(static_cast<float>(i) / labels.Length(),
+    progress.update(0.88f + 0.11f * static_cast<float>(i - 1) / labels.Length(),
                     "Walking assembly...");
     walk(labels.Value(i), scene::Scene::kInvalid, "");
   }

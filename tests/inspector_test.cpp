@@ -68,6 +68,8 @@ void InspectorTest::import_reset_restores_backend_defaults() {
   custom.linear_deflection = 0.5;
   custom.parallel_meshing  = false;
   custom.load_colors       = false;
+  custom.parallel_step_transfer = false;
+  custom.step_healing_mode = cad::StepHealingMode::Fast;
   inspector.set_import_options(custom);
   inspector.set_review_before_import(true);
 
@@ -84,6 +86,8 @@ void InspectorTest::import_reset_restores_backend_defaults() {
   QCOMPARE(result.linear_deflection, defaults.linear_deflection);
   QCOMPARE(result.parallel_meshing,  defaults.parallel_meshing);
   QCOMPARE(result.load_colors,       defaults.load_colors);
+  QCOMPARE(result.parallel_step_transfer, defaults.parallel_step_transfer);
+  QCOMPARE(result.step_healing_mode, defaults.step_healing_mode);
   QVERIFY(inspector.review_before_import());
 }
 

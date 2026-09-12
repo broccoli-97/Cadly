@@ -42,6 +42,10 @@ public:
   void fit_view();
 
 signals:
+  // A newly attached scene has completed its first render submission.
+  // frameSwapped then marks presentation by the Qt compositor.
+  void scene_rendered();
+
   // Smoothed CPU cost of one paintGL pass, in milliseconds, emitted at most a
   // few times per second. Deliberately labelled "frame time" and not "fps" by
   // consumers: rendering is event-driven (paints only on input/dirty), so a

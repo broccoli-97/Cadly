@@ -1,7 +1,8 @@
 #include "cadly/cad/OcctStepImporter.h"
 
 #include "OcctShapeToMesh.h"
-#include "OcctProgressBridge.h"
+#include "OcctImportGuard.h"
+#include "OcctStepTransfer.h"
 #include "XcafDocumentLease.h"
 
 #include "cadly/platform/Log.h"
@@ -62,6 +63,12 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   result.scene = std::make_shared<scene::Scene>();
   result.scene->source_file = req.path;
 
+  occt::OcctImportGuard import_guard(progress);
+  if (!import_guard.acquired()) {
+    result.cancelled = true;
+    return result;
+  }
+
   if (!std::filesystem::exists(req.path)) {
     result.summary.diagnostics.push_back({DiagnosticSeverity::Error,
       "File does not exist: " + req.path.string()});
@@ -102,15 +109,9 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   }
   progress.update(0.25f, "Transferring shapes to OCAF document...");
 
-  // The bridge makes Transfer cancellable from inside OCCT (it is the
-  // single longest stage on big assemblies) and maps its internal progress
-  // onto the 25–40 % slice of the import.
-  Handle(occt::OcctProgressBridge) transfer_bridge =
-    new occt::OcctProgressBridge(progress, 0.25f, 0.40f,
-                                 "Transferring shapes to OCAF document...");
   phase_start = clock::now();
-  const bool transferred = reader.Transfer(doc_lease.doc(),
-                                           transfer_bridge->Start());
+  const bool transferred = occt::transfer_step(reader, doc_lease.doc(),
+    req.options, result.summary, progress);
   if (progress.cancelled()) {
     result.cancelled = true;
     return result;
@@ -121,7 +122,7 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
     return result;
   }
   if (req.options.profile_timings) {
-    result.summary.timings.push_back({"OCCT STEP XCAF transfer",
+    result.summary.timings.push_back({"OCCT STEP transfer total",
       std::chrono::duration_cast<std::chrono::milliseconds>(
         clock::now() - phase_start)});
   }
@@ -132,7 +133,7 @@ ImportResult OcctStepImporter::Import(const ImportRequest& req,
   result.scene->source_unit    = "mm"; // best-effort; OCCT scales to mm internally
   result.scene->unit_to_meters = unit_to_m;
 
-  progress.update(0.40f, "Tessellating geometry...");
+  progress.update(0.60f, "Tessellating geometry...");
   occt::ConversionStats stats;
   phase_start = clock::now();
   auto scn = occt::document_to_scene(doc_lease.doc(), TopoDS_Shape{},
