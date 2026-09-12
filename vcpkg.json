@@ -1,6 +1,6 @@
 {
   "name": "cadly",
-  "version-string": "0.1.0",
+  "version-string": "0.1.1",
   "description": "Native C++ desktop CAD viewer (STEP/IGES, OCCT, Qt6, OpenGL).",
   "dependencies": [
     "fmt",

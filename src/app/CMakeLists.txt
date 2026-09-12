@@ -25,6 +25,7 @@ target_include_directories(cadly
 )
 
 target_compile_features(cadly PRIVATE cxx_std_17)
+target_compile_definitions(cadly PRIVATE CADLY_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(cadly
   PRIVATE

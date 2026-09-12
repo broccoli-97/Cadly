@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
   QApplication app(argc, argv);
   app.setOrganizationName("Cadly");
   app.setApplicationName("Cadly");
-  app.setApplicationVersion("0.1.0");
+  app.setApplicationVersion(QStringLiteral(CADLY_VERSION));
   // No setWindowIcon call: on macOS an application icon set here would
   // shadow the bundle's cadly.icns in the Dock, and an *empty* QIcon reads
   // as "explicitly no icon". Linux/Windows window icons are a packaging
@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
   if (parser.isSet(logOpt)) {
     cadly::platform::init_logging(parser.value(logOpt).toUtf8().constData());
   }
-  CADLY_LOG_INFO("Cadly {} starting", "0.1.0");
+  CADLY_LOG_INFO("Cadly {} starting", CADLY_VERSION);
 
   // UI language, before any widget is constructed — the shell sets all its
   // strings once at build time, so a translator installed later would only
