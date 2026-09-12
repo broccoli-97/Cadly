@@ -25,7 +25,7 @@ to the renderer, never `QPainter`.
 
 Use `linux-release` for RelWithDebInfo, `linux-qt68-*` with local Qt 6.8.3, and
 `linux-vcpkg-debug` with `VCPKG_ROOT`. Windows contributors run
-`bash scripts/setup-windows.sh` in MSYS2 UCRT64 and use `windows-msys2-*`;
+`bash scripts/setup-windows.sh` in MSYS2 CLANG64 and use `windows-msys2-*`;
 `windows-ninja-*` and `windows-msvc-*` remain optional vcpkg presets.
 macOS contributors run `scripts/setup-macos.sh` (Homebrew deps) and use
 `macos-{debug,release}`; the GUI binary is

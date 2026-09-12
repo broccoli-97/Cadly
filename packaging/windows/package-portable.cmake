@@ -1,4 +1,4 @@
-# Run with the MSYS2 UCRT64 cmake from the repository root:
+# Run with the MSYS2 CLANG64 cmake from the repository root:
 # cmake -DBUILD_DIR=build/windows-msys2-release -DPACKAGE_DIR=package/cadly \
 #   -P packaging/windows/package-portable.cmake
 cmake_minimum_required(VERSION 3.24)
@@ -21,7 +21,7 @@ endforeach()
 
 find_program(windeployqt NAMES windeployqt6 REQUIRED)
 find_program(qtpaths NAMES qtpaths6 REQUIRED)
-find_program(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND NAMES objdump REQUIRED)
+find_program(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND NAMES llvm-objdump objdump REQUIRED)
 set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL objdump)
 execute_process(COMMAND "${qtpaths}" --query QT_INSTALL_BINS
   OUTPUT_VARIABLE qt_bin_dir OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -57,7 +57,7 @@ endforeach()
 file(WRITE "${PACKAGE_DIR}/bin/qt.conf" "[Paths]\nPrefix=.\nPlugins=.\n")
 
 # Include plugins as roots: windeployqt does not collect the full non-Qt DLL
-# closure of MSYS2 packages (OCCT, ICU, FreeType, GCC runtimes, etc.). Windows
+# closure of MSYS2 packages (OCCT, ICU, FreeType, C++ runtimes, etc.). Windows
 # API sets and system DLLs remain supplied by the user's OS.
 file(GLOB_RECURSE deployed_dlls "${PACKAGE_DIR}/bin/*.dll")
 file(GET_RUNTIME_DEPENDENCIES

@@ -86,10 +86,10 @@
     {
       "name": "windows-msys2-debug",
       "inherits": "base",
-      "displayName": "Windows Debug (MSYS2 UCRT64 Qt6 + OCCT)",
+      "displayName": "Windows Debug (MSYS2 CLANG64 Qt6 + OCCT)",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_CXX_COMPILER": "g++"
+        "CMAKE_CXX_COMPILER": "clang++"
       },
       "condition": {
         "type": "equals",
@@ -100,7 +100,7 @@
     {
       "name": "windows-msys2-release",
       "inherits": "windows-msys2-debug",
-      "displayName": "Windows Release (MSYS2 UCRT64 Qt6 + OCCT)",
+      "displayName": "Windows Release (MSYS2 CLANG64 Qt6 + OCCT)",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }

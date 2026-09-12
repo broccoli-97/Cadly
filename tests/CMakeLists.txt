@@ -67,6 +67,11 @@ target_compile_definitions(cadly_import_error_test
 )
 add_test(NAME cadly_import_error COMMAND cadly_import_error_test)
 
+add_executable(cadly_occt_classification_test occt_classification_test.cpp)
+target_link_libraries(cadly_occt_classification_test PRIVATE Cadly::Cad Cadly::Warnings)
+target_include_directories(cadly_occt_classification_test SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
+add_test(NAME cadly_occt_classification COMMAND cadly_occt_classification_test)
+
 add_executable(cadly_ibl_bake_plan_test
   ibl_bake_plan_test.cpp
   ${CMAKE_SOURCE_DIR}/src/renderer_gl/src/IblBakePlan.cpp

@@ -96,18 +96,27 @@ file typed with different casing.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Dependency source | apt (system Qt 6.4/OCCT 7.6) or vcpkg | MSYS2 UCRT64 binary packages (`scripts/setup-windows.sh`) | Homebrew (`scripts/setup-macos.sh`) |
+| Dependency source | apt (system Qt 6.4/OCCT 7.6) or vcpkg | MSYS2 CLANG64 binary packages (`scripts/setup-windows.sh`) | Homebrew (`scripts/setup-macos.sh`) |
 | Qt style | Fusion fallback (Qt < 6.8) unless `linux-qt68-*` | qlementine (MSYS2 Qt ≥ 6.8) | qlementine (Homebrew Qt ≥ 6.8) |
 | App artifact | portable tarball (`patchelf`, `$ORIGIN` rpaths) | self-contained dir (`packaging/windows/package-portable.cmake`: windeployqt + CMake runtime DLL scan) | `.dmg` with self-contained, ad-hoc-signed `Cadly.app` (`packaging/macos/package-app.sh`: macdeployqt + rpath/install-name rewrite; assets in `Contents/Resources`) |
 | Presets | `linux-*` | `windows-msys2-{debug,release}` | `macos-{debug,release}` |
 
-Windows CI installs current binary packages with pacman, including GCC, Qt,
+Windows CI installs current binary packages with pacman, including Clang, Qt,
 OCCT, and QtTest. It has no vcpkg baseline, NuGet feed, or dependency build
 cache to maintain. The `windows-msvc-*` and `windows-ninja-*` presets remain
 optional vcpkg development configurations; their libraries cannot be mixed
-with MinGW/UCRT64 libraries. Windows release packages bundle the GCC runtime
+with MinGW/CLANG64 libraries. Windows release packages bundle the libc++ runtime
 and do not require MSYS2 on the user's machine. CI checks the packaged GUI
 and STEP importer with MSYS2 removed from `PATH`.
+
+CLANG64 avoids an import crash in the GCC-built UCRT64 OCCT 7.9.3-3 package.
+Native Windows debugging traced it to `BRepClass3d_SClassifier::Perform()`:
+a recursive point-selection query called the line selector and passed an
+invalid curve object to `Extrema_ExtCC::Perform()`. Both the GUI and CLI
+crashed with an access violation during STEP shape healing. The
+`cadly_occt_classification` test reproduces that path with a generated rotated
+box, so CI exercises it without private CAD data. Qt, OCCT, and the compiler
+must all come from CLANG64; mixing UCRT64 libraries with libc++ is unsupported.
 
 On macOS the `cadly` target builds as `bin/cadly.app`; the GUI binary lives
 at `bin/cadly.app/Contents/MacOS/cadly` (dev builds still find shaders via

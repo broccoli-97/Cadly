@@ -8,7 +8,7 @@
 #     bundled with their runtime closure into a portable tarball.
 #     Pinned to ubuntu-24.04 (Qt 6.4, OCCT 7.6) so a runner-image bump can't
 #     silently change the toolchain the way `ubuntu-latest` would.
-#   - Windows: MSYS2 UCRT64 binary packages (Qt6 + OCCT), built with GCC
+#   - Windows: MSYS2 CLANG64 binary packages (Qt6 + OCCT), built with Clang
 #     and Ninja, deployed with windeployqt and CMake's runtime DLL scanner.
 #   - macOS: Homebrew Qt + OCCT on the Apple Silicon runner, deployed into a
 #     self-contained ad-hoc-signed Cadly.app via packaging/macos/package-app.sh
@@ -164,10 +164,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up MSYS2 UCRT64
+      - name: Set up MSYS2 CLANG64
         uses: msys2/setup-msys2@v2
         with:
-          msystem: UCRT64
+          msystem: CLANG64
           update: true
           cache: false
 
