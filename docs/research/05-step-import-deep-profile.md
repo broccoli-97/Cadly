@@ -120,6 +120,10 @@ legacy 修复 provider 在退出、异常和取消时恢复；worker 先 join �
 
 ## 完整修复与快速查看
 
+![公开 STEP 示例的导入选项](../images/step-import-options.png)
+
+图中使用公开的 `as1-ug-214.stp` 示例，展示完整修复与独立零件并行转换选项。
+
 **默认仍是 Full repair。** 可显式选择 `--step-healing fast`，或在导入选项中选择
 “快速查看”。它仅跳过相邻边的交叉修复，保留其他处理和相同的网格精度。
 这不是对任意坏模型都等价的开关；需要可靠的几何修复时使用 Full。
