@@ -1,17 +1,27 @@
 #pragma once
 
+#include "cadly/input/Navigation.h"
+
 #include <QObject>
 #include <QString>
 
+class QSettings;
+
 namespace cadly::app {
 
-// Thin wrapper over QSettings that exposes only the values the rest of the app
-// cares about. Keeps direct QSettings calls out of MainWindow and friends so
-// rename/migration stays local.
+// Persistence for application preferences. Navigation schema/migration stays
+// here, never in a viewport or editor. Display/layout state is still owned by
+// the shell; this facade only writes the keys it owns in the shared INI store.
 class Settings : public QObject {
   Q_OBJECT
 public:
   explicit Settings(QObject* parent = nullptr);
+  // Explicit store for tests / embedding; never redirects global QSettings
+  // paths or touches the user's normal configuration.
+  explicit Settings(const QString& file_name, QObject* parent = nullptr);
+
+  input::Preferences input_preferences() const;
+  void set_input_preferences(input::Preferences preferences);
 
   QString last_open_directory() const;
   void    set_last_open_directory(const QString& dir);
@@ -31,6 +41,10 @@ public:
   // shell; panel layout now persists as explicit keys written by MainWindow.)
   QByteArray window_geometry() const;
   void       set_window_geometry(const QByteArray& blob);
+
+private:
+  QSettings settings_handle() const;
+  QString file_name_;
 };
 
 } // namespace cadly::app

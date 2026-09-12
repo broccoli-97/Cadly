@@ -18,6 +18,7 @@ uniform float u_roughness;
 uniform float u_reflectance;         // dielectric F0 control (0..1)
 uniform vec3  u_emissive_color;
 uniform float u_emissive;
+uniform vec3  u_backface_color;     // sRGB inspection tint, independent of material
 uniform int   u_hidden_line;
 uniform vec3  u_hidden_line_color;
 
@@ -132,11 +133,11 @@ void main() {
   // actually reflects (the side environment), and Fresnel naturally drives
   // the rim toward pure reflection.
   //
-  // Back-facing fragments only reach the shader on double-sided / non-
-  // manifold geometry. There no clamp is meaningful (we're looking into
-  // the surface), so fall back to the historical normal-flip so the
-  // interior receives diffuse light at all.
-  vec3 N_raw = normalize(v_world_normal);
+  // Back faces are visible on open surfaces and solids opened by a section.
+  // Orient their normals toward the visible side before the same hemisphere
+  // clamp, so reverse sides receive light without silhouette reflection flips.
+  bool backface = !gl_FrontFacing;
+  vec3 N_raw = normalize(v_world_normal) * (backface ? -1.0 : 1.0);
   // A perspective camera has a finite eye, so its view direction varies over
   // the surface. Orthographic rays are parallel: using the nominal eye point
   // here makes V collapse to zero where deep zoom moves that point onto a
@@ -144,21 +145,22 @@ void main() {
   vec3 V = u_view_ref.w > 0.5
     ? normalize(u_view_ref.xyz - v_world_pos)
     : u_view_ref.xyz;
-  vec3 N;
-  if (gl_FrontFacing) {
-    float NoV_raw = dot(N_raw, V);
-    N = (NoV_raw < 0.0)
-      ? normalize(N_raw + V * (-NoV_raw + 1e-3))
-      : N_raw;
-  } else {
-    N = -N_raw;
-  }
+  float NoV_raw = dot(N_raw, V);
+  vec3 N = (NoV_raw < 0.0)
+    ? normalize(N_raw + V * (-NoV_raw + 1e-3))
+    : N_raw;
 
-  vec3 base = u_base_color.rgb * v_vertex_color.rgb;
-  float metallic  = clamp(u_metallic,  0.0, 1.0);
-  float roughness = clamp(u_roughness, 0.045, 1.0);
+  // Use a separate matte material for reverse sides. Front-side metalness or
+  // emission must not erase the orientation cue; selection and ghosting still
+  // apply below to both sides.
+  vec3 base = backface
+    ? pow(clamp(u_backface_color, 0.0, 1.0), vec3(2.2))
+    : u_base_color.rgb * v_vertex_color.rgb;
+  float metallic  = backface ? 0.0 : clamp(u_metallic, 0.0, 1.0);
+  float roughness = backface ? 0.85 : clamp(u_roughness, 0.045, 1.0);
+  float reflectance = backface ? 0.5 : u_reflectance;
 
-  vec3 F0_dielectric = vec3(0.16 * u_reflectance * u_reflectance);
+  vec3 F0_dielectric = vec3(0.16 * reflectance * reflectance);
   vec3 F0 = mix(F0_dielectric, base, metallic);
 
   vec3 Lo = vec3(0.0);
@@ -201,7 +203,8 @@ void main() {
     ambient = ibl + ambient_fallback * 0.15;
   }
 
-  vec3 color = ambient + Lo + u_emissive_color * u_emissive;
+  vec3 color = ambient + Lo;
+  if (!backface) color += u_emissive_color * u_emissive;
 
   // Screen-space feature-edge enhancement. The face-on view of an embossed
   // CAD part hides relief by construction — the plate face and the raised

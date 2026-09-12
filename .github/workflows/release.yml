@@ -36,7 +36,6 @@ jobs:
       linux-presets: '["linux-release"]'
     permissions:
       contents: read
-      packages: write
 
   publish:
     name: Publish release

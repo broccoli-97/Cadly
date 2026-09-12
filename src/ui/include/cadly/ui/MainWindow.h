@@ -22,12 +22,15 @@ class QSplitter;
 class QTabBar;
 class QToolButton;
 
+namespace cadly::input_qt { class InputPreferences; }
+
 namespace cadly::ui {
 
 class DiagnosticsStrip;
 class InspectorWidget;
 class PreferencesDialog;
 class IsolateBanner;
+class SectionBanner;
 class SidebarWidget;
 class ToolbarButton;
 class ToolbarWidget;
@@ -44,7 +47,8 @@ struct DocumentState;
 class MainWindow : public QMainWindow {
   Q_OBJECT
 public:
-  explicit MainWindow(QWidget* parent = nullptr);
+  explicit MainWindow(input_qt::InputPreferences& input_preferences,
+                      QWidget* parent = nullptr);
   ~MainWindow() override;
 
   // Recents / last-dir persistence lives in the app module (app::RecentFiles,
@@ -60,7 +64,8 @@ public:
 
   // Dev/test aid (paired with the app's --demo flag): drive a named UI state
   // — "wireframe", "hiddenline", "shaded-orbit:<yaw>,<pitch>",
-  //   "shadedmenu", "light", "display",
+  //   "shadedmenu", "light", "display", "section",
+  //   "section:<offset-fraction>", "section-behind",
   // "import", "views", "getinfo", "zerochrome" — without input injection,
   // so headless screenshot checks can exercise real action/popover code paths.
   void run_demo(const QString& name);
@@ -86,6 +91,7 @@ private slots:
   void on_toggle_perspective(bool on);
   void on_zero_chrome(bool on);
   void on_isolate_changed(std::uint32_t isolate_node);
+  void on_section_toggled(bool on);
   void on_about();
   void open_preferences();
 
@@ -106,6 +112,22 @@ private:
   void show_views_popover(QWidget* anchor);
   // Keep the isolate banner centred over the viewport's top edge.
   void position_isolate_banner();
+  // Section banner sits bottom-centre, so it never collides with the isolate
+  // banner (top-centre) or the HUD (top-right) when several modes are on.
+  void position_section_banner();
+  // Action lifecycle + banner + display refresh for section mode. Split out of
+  // on_section_toggled() so restoring a tab's state never re-runs the
+  // first-entry plane setup and clobbers the plane being restored.
+  void apply_section_mode_ui(bool on);
+  // Point the section plane along `normal`, re-centred on the model. Backs the
+  // axis presets and Align to View.
+  void set_section_normal(const scene::vec3& normal, bool recentre);
+  // Re-derive which axis preset (if any) is checked from the plane's normal.
+  // The rotate rings can leave it on no axis at all.
+  void sync_section_axis_actions();
+  // Refresh the banner's live readout from the current plane, and the enabled
+  // state of the commands that depend on it.
+  void update_section_banner();
 
   DocumentState* active_document() const;
   DocumentState* find_document(const QString& path) const;
@@ -139,6 +161,9 @@ private:
   // Floating capsule over the viewport while isolate mode is active; carries
   // the only always-visible way back out (the Back button).
   IsolateBanner*    isolate_banner_{nullptr};
+  // Same idea for section mode: live offset readout, Flip, and Exit, pinned to
+  // the viewport's bottom edge.
+  SectionBanner*    section_banner_{nullptr};
 
   QLabel* status_path_{nullptr};
   QLabel* status_stats_{nullptr};
@@ -167,6 +192,21 @@ private:
   // veil (unchecked, default) or hidden outright (checked). Checkbox state is
   // the persisted preference itself; only enabled/visible track isolate mode.
   QAction* act_isolate_hide_others_{nullptr};
+  // Section view (剖切). `act_section_` toggles the mode; the rest live in the
+  // toolbar chip's chevron menu and the View ▸ Section submenu, and follow the
+  // Dimmed-Hidden-Lines pattern: the checkable ones ARE the persisted
+  // preference, so only their enabled/visible state tracks the mode.
+  QAction* act_section_{nullptr};
+  QAction* act_section_flip_{nullptr};
+  QAction* act_section_reset_{nullptr};
+  QAction* act_section_show_plane_{nullptr};
+  QAction* act_section_hatch_{nullptr};
+  QAction* act_section_translucent_{nullptr};
+  QAction* act_section_axis_x_{nullptr};
+  QAction* act_section_axis_y_{nullptr};
+  QAction* act_section_axis_z_{nullptr};
+  QAction* act_section_axis_view_{nullptr};
+  QMenu*   section_menu_{nullptr};
   QAction* act_toggle_sidebar_{nullptr};
   QAction* act_toggle_inspector_{nullptr};
   QAction* act_toggle_strip_{nullptr};
@@ -181,6 +221,7 @@ private:
   QMenu* recents_menu_{nullptr};
 
   // --- state -------------------------------------------------------------
+  input_qt::InputPreferences& input_preferences_;
   std::vector<std::unique_ptr<DocumentState>> documents_;
   QString     last_open_dir_;
   QStringList recent_files_;

@@ -21,12 +21,22 @@ Only Zero Chrome needs an explicit per-platform binding.
 | Exit isolate / restore chrome | Esc | same | |
 
 Viewport navigation is likewise shared: the selected navigation scheme
-(Cadly, Blender, Rhino, Fusion 360, Maya — Inspector ▸ Display) uses the
+(Cadly, Blender, Rhino, Fusion 360, Maya — Preferences ▸ Navigation) uses the
 same binding table on every platform, with modifiers rendered natively
 (⌥-drag / ⌥⌘-drag on macOS, Alt / Alt+Ctrl elsewhere). The two trackpad
 rows — Alt+left orbit, Alt+Ctrl+left pan — exist in every scheme chiefly
 for trackpads: no middle button, and a held two-finger click is a poor
 orbit.
+
+Input normalization and gesture ownership live in `Cadly::Input` and its
+`Cadly::InputQt` adapter, not in the camera or settings window. `Primary` is
+Qt's logical Control modifier (Command on macOS); `Secondary` is Qt's Meta
+modifier (physical Control on macOS). No second platform-specific swap occurs.
+Logical pointer coordinates, late-modifier trackpad drags, exact modifier
+matching, and natural-scroll delta handling are covered by independent tests.
+The shared INI paths `display/navigation_scheme` and `display/orbit_style`
+remain unchanged. See [input-architecture.md](input-architecture.md) for the
+module boundaries, extension points, and regression matrix.
 
 Zero Chrome is the one case the automatic mapping gets wrong: `Qt::CTRL |
 Qt::Key_Period` would surface as **⌘.**, which macOS reserves as the
@@ -79,19 +89,43 @@ file typed with different casing.
 ## Window-system quirks
 
 - `main.cpp` forces `QT_QPA_PLATFORM=xcb` under WSLg only (`Q_OS_LINUX`).
-- MSVC gets `NOMINMAX` and `/W4`; Clang/AppleClang/GCC share the `-Wall
-  -Wextra -Wpedantic -Wshadow` baseline.
+- Windows builds define `NOMINMAX` under both MSVC and MinGW. MSVC uses `/W4`;
+  Clang/AppleClang/GCC share the `-Wall -Wextra -Wpedantic -Wshadow` baseline.
 
 ## Dependencies & packaging
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Dependency source | apt (system Qt 6.4/OCCT 7.6) or vcpkg | vcpkg manifest | Homebrew (`scripts/setup-macos.sh`) |
-| Qt style | Fusion fallback (Qt < 6.8) unless `linux-qt68-*` | qlementine (vcpkg Qt 6.11) | qlementine (Homebrew Qt ≥ 6.8) |
-| App artifact | portable tarball (`patchelf`, `$ORIGIN` rpaths) | self-contained dir (applocal DLLs + plugin copy) | `.dmg` with self-contained, ad-hoc-signed `Cadly.app` (`packaging/macos/package-app.sh`: macdeployqt + rpath/install-name rewrite; assets in `Contents/Resources`) |
-| Presets | `linux-*` | `windows-*` | `macos-{debug,release}` |
+| Dependency source | apt (system Qt 6.4/OCCT 7.6) or vcpkg | MSYS2 CLANG64 binary packages (`scripts/setup-windows.sh`) | Homebrew (`scripts/setup-macos.sh`) |
+| Qt style | Fusion fallback (Qt < 6.8) unless `linux-qt68-*` | qlementine (MSYS2 Qt ≥ 6.8) | qlementine (Homebrew Qt ≥ 6.8) |
+| App artifact | portable tarball (`patchelf`, `$ORIGIN` rpaths) | self-contained dir (`packaging/windows/package-portable.cmake`: windeployqt + CMake runtime DLL scan) | `.dmg` with self-contained, ad-hoc-signed `Cadly.app` (`packaging/macos/package-app.sh`: macdeployqt + rpath/install-name rewrite; assets in `Contents/Resources`) |
+| Presets | `linux-*` | `windows-msys2-{debug,release}` | `macos-{debug,release}` |
+
+Windows CI installs current binary packages with pacman, including Clang, Qt,
+OCCT, and QtTest. It has no vcpkg baseline, NuGet feed, or dependency build
+cache to maintain. The `windows-msvc-*` and `windows-ninja-*` presets remain
+optional vcpkg development configurations; their libraries cannot be mixed
+with MinGW/CLANG64 libraries. Windows release packages bundle the libc++ runtime
+and do not require MSYS2 on the user's machine. CI checks the packaged GUI
+and STEP importer with MSYS2 removed from `PATH`.
+
+CLANG64 avoids an import crash in the GCC-built UCRT64 OCCT 7.9.3-3 package.
+Native Windows debugging traced it to `BRepClass3d_SClassifier::Perform()`:
+a recursive point-selection query called the line selector and passed an
+invalid curve object to `Extrema_ExtCC::Perform()`. Both the GUI and CLI
+crashed with an access violation during STEP shape healing. The
+`cadly_occt_classification` test reproduces that path with a generated rotated
+box, so CI exercises it without private CAD data. Qt, OCCT, and the compiler
+must all come from CLANG64; mixing UCRT64 libraries with libc++ is unsupported.
 
 On macOS the `cadly` target builds as `bin/cadly.app`; the GUI binary lives
 at `bin/cadly.app/Contents/MacOS/cadly` (dev builds still find shaders via
 the `CADLY_SOURCE_ROOT` fallback). `cad_import_cli` stays a plain binary at
 `bin/cad_import_cli` on all platforms.
+
+GUI tests select Qt's offscreen platform and resolve its plugin directory
+from `Qt6::QOffscreenIntegrationPlugin`, including local vcpkg builds whose
+applocal deployment copies linked DLLs without platform plugins. A missing
+platform plugin can show a modal error dialog on a Windows runner without a
+console. Every test has a 60-second timeout, and Windows CI streams verbose
+test output to expose startup failures.

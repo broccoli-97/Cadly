@@ -15,7 +15,8 @@ public:
   // Pick an importer. Returns nullptr if no plugin recognised the path.
   ICadImporter* select(const std::filesystem::path& path) const;
 
-  // Convenience — imports `path` with default options.
+  // Convenience — imports `path` with default options. Importer exceptions
+  // become failed results with diagnostics, including OCCT failure messages.
   ImportResult import(const std::filesystem::path& path,
                       const ImportOptions& options = {},
                       IProgressSink* progress = nullptr) const;

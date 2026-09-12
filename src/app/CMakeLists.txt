@@ -1,9 +1,20 @@
+add_library(cadly_app_settings STATIC
+  src/Settings.cpp
+  include/cadly/app/Settings.h
+)
+add_library(Cadly::AppSettings ALIAS cadly_app_settings)
+target_include_directories(cadly_app_settings PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(cadly_app_settings
+  PUBLIC Cadly::Input Qt6::Core
+  PRIVATE Cadly::Warnings
+)
+
 add_executable(cadly
   src/main.cpp
-  src/Settings.cpp
   src/RecentFiles.cpp
   src/Theme.cpp
-  include/cadly/app/Settings.h
   include/cadly/app/RecentFiles.h
   include/cadly/app/Theme.h
 )
@@ -18,6 +29,7 @@ target_compile_features(cadly PRIVATE cxx_std_17)
 target_link_libraries(cadly
   PRIVATE
     Cadly::Ui
+    Cadly::AppSettings
     Cadly::Platform
     Cadly::Warnings
     Qt6::Widgets
@@ -79,6 +91,8 @@ if(Qt6LinguistTools_FOUND)
     ${CMAKE_SOURCE_DIR}/src/ui/include/*.h
     ${CMAKE_SOURCE_DIR}/src/app/src/*.cpp
     ${CMAKE_SOURCE_DIR}/src/app/include/*.h
+    ${CMAKE_SOURCE_DIR}/src/input_qt/src/*.cpp
+    ${CMAKE_SOURCE_DIR}/src/input_qt/include/*.h
   )
   qt_add_translations(cadly
     TS_FILES ${CMAKE_SOURCE_DIR}/translations/cadly_zh_CN.ts

@@ -109,6 +109,27 @@ ToolbarWidget::ToolbarWidget(const Actions& a, QWidget* parent)
   segments_->set_segment_menu(1, hidden_menu);
   layout->addWidget(segments_);
 
+  // Section split-button. Placed after the surface modes and behind a
+  // separator, so the toolbar reads "surface style │ section analysis │ app
+  // chrome": sectioning is not another way to shade the model, it is a
+  // different question being asked of it. Same joined main+chevron construction
+  // as Open above.
+  layout->addWidget(new ToolbarSeparator(this));
+  auto* section_frame = new SplitButtonFrame(this);
+  auto* section_group = new QHBoxLayout(section_frame);
+  section_group->setContentsMargins(0, 0, 0, 0);
+  section_group->setSpacing(1);
+  section_group->addWidget(make_button(a.section, section_frame,
+                                       /*show_text=*/true,
+                                       ToolbarButton::Emphasis::Accent));
+  section_menu_btn_ = new ToolbarButton(section_frame);
+  section_menu_btn_->setMenu(a.section_menu);
+  section_menu_btn_->setPopupMode(QToolButton::InstantPopup);
+  section_menu_btn_->setToolTip(tr("Section options"));
+  section_group->addWidget(section_menu_btn_);
+  section_frame->set_right_widget(section_menu_btn_);
+  layout->addWidget(section_frame);
+
   // Camera controls (Views / Fit / projection) and zero-chrome are HUD-only —
   // see the header comment. The toolbar's right side is appearance + panels.
   layout->addWidget(new ToolbarSeparator(this));

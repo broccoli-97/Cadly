@@ -1,10 +1,21 @@
-add_library(cadly_ui STATIC
+add_library(cadly_camera_controller STATIC
   src/CameraController.cpp
+  include/cadly/ui/CameraController.h
+)
+add_library(Cadly::CameraController ALIAS cadly_camera_controller)
+target_include_directories(cadly_camera_controller PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(cadly_camera_controller
+  PUBLIC Cadly::Input Cadly::Scene Qt6::Core
+  PRIVATE Cadly::Warnings
+)
+
+add_library(cadly_ui STATIC
   src/DiagnosticsStrip.cpp
   src/IconUtils.cpp
   src/ImportOptionsWidget.cpp
   src/InspectorWidget.cpp
-  src/NavigationScheme.cpp
   src/PreferencesDialog.cpp
   src/PreferencesDialog.h
   src/MainWindow.cpp
@@ -19,7 +30,6 @@ add_library(cadly_ui STATIC
   src/ViewportWidget.cpp
   src/ViewsGrid.cpp
 
-  include/cadly/ui/CameraController.h
   include/cadly/ui/MainWindow.h
   include/cadly/ui/ThemeTokens.h
   include/cadly/ui/ViewportWidget.h
@@ -56,6 +66,8 @@ target_link_libraries(cadly_ui
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     Qt6::Concurrent
+    Cadly::InputQt
+    Cadly::CameraController
     Cadly::Scene
     Cadly::Renderer
     Cadly::RendererGL

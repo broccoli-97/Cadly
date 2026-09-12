@@ -173,8 +173,19 @@ void main() {
   if (count < 2) return;
 
   gl_Position = project_contour(pts[0], ns[0]);
+  // Section clip. User clipping runs after the LAST vertex-processing stage, so
+  // for this program that is the geometry shader — writing gl_ClipDistance in
+  // silhouette.vert would have no effect. It also has to be re-set before each
+  // EmitVertex(), because every output variable becomes undefined after one.
+  // Inert unless the host enabled GL_CLIP_DISTANCE0.
+  //
+  // The GS still receives whole, unclipped triangles, so the crossing search and
+  // the surface reconstruction above are unaffected; only the emitted line gets
+  // trimmed at the plane.
+  gl_ClipDistance[0] = dot(u_clip_plane, vec4(pts[0], 1.0));
   EmitVertex();
   gl_Position = project_contour(pts[1], ns[1]);
+  gl_ClipDistance[0] = dot(u_clip_plane, vec4(pts[1], 1.0));
   EmitVertex();
   EndPrimitive();
 }
