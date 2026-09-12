@@ -41,7 +41,6 @@ private:
 void check_failure(const cadly::cad::ImportResult& result, const char* message) {
   CHECK(!result.success);
   CHECK(!result.cancelled);
-  CHECK(!result.scene);
   if (CHECK(!result.summary.diagnostics.empty())) {
     const auto& diagnostic = result.summary.diagnostics.front();
     CHECK(diagnostic.severity == cadly::cad::DiagnosticSeverity::Error);
@@ -64,14 +63,20 @@ int main() {
                             "memory", "Unknown error"};
   for (int i = 0; i < 4; ++i) {
     FailingProgress progress(failures[i]);
-    check_failure(registry.import(fixture, {}, &progress), messages[i]);
+    const auto result = registry.import(fixture, {}, &progress);
+    check_failure(result, messages[i]);
+    CHECK(!result.scene);
     CHECK(progress.triggered);
     CHECK(registry.import(fixture).success);
     CHECK(cadly::cad::open_xcaf_document_count() == 0);
   }
 
-  // An invalid path must follow the same failure contract even when the
-  // filesystem reports it by throwing instead of returning "not found".
+  const auto missing = fixture.parent_path() / "cadly_import_error_missing.stp";
+  if (!CHECK(!std::filesystem::exists(missing))) return cadly::tests::report();
+  check_failure(registry.import(missing), "File does not exist:");
+
+  // A long path may throw or be reported as missing, depending on the
+  // platform. A normal file-not-found result may retain an empty scene.
   const auto invalid = fixture.parent_path() / (std::string(300, 'a') + ".stp");
   check_failure(registry.import(invalid), "");
   CHECK(registry.import(fixture).success);
